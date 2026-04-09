@@ -39,8 +39,17 @@ LEADS_FILE = Path(__file__).parent / "leads.json"
 if not LEADS_FILE.exists():
     LEADS_FILE.write_text("[]")
 
-# OpenAI client
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+# OpenAI client (lazy init to avoid crash if key not set at import time)
+_client = None
+
+def get_client():
+    global _client
+    if _client is None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY not set")
+        _client = OpenAI(api_key=api_key)
+    return _client
 
 SYSTEM_PROMPT = f"""You are the AI assistant for The Outdoor Squad, an outdoor fitness community in Sydney's Inner West. You're friendly, energetic, and supportive — matching the squad's vibe.
 
@@ -89,7 +98,7 @@ async def chat(request: Request):
     recent = conversations[session_id][-20:]
 
     try:
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": SYSTEM_PROMPT}] + recent,
             max_tokens=300,
