@@ -122,6 +122,51 @@ async def chat(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/api/booking")
+async def booking(request: Request):
+    """Handle discovery call booking requests"""
+    body = await request.json()
+    name = body.get("name", "Unknown")
+    email = body.get("email", "")
+    business = body.get("business", "")
+    phone = body.get("phone", "")
+    date = body.get("date", "")
+    time = body.get("time", "")
+    notes = body.get("notes", "")
+
+    # Save booking
+    bookings_file = Path(__file__).parent / "bookings.json"
+    if not bookings_file.exists():
+        bookings_file.write_text("[]")
+    bookings = json.loads(bookings_file.read_text())
+    booking_data = {
+        "name": name, "email": email, "business": business,
+        "phone": phone, "date": date, "time": time,
+        "notes": notes, "created_at": datetime.now().isoformat()
+    }
+    bookings.append(booking_data)
+    bookings_file.write_text(json.dumps(bookings, indent=2))
+
+    # Send notification email to ourselves
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        msg = MIMEText(
+            f"New Discovery Call Booking!\n\n"
+            f"Name: {name}\nEmail: {email}\nBusiness: {business}\n"
+            f"Phone: {phone}\nDate: {date}\nTime: {time} AEST\n"
+            f"Notes: {notes}\n\n— AI Sprints Booking System"
+        )
+        msg["Subject"] = f"New Booking: {name} ({business or 'No business'})"
+        msg["From"] = "bookings@aisprints.com.au"
+        msg["To"] = "jacowilmjr@agentmail.to"
+        # Best effort — don't fail the booking if email fails
+    except Exception:
+        pass
+
+    return JSONResponse({"ok": True, "message": "Booking received"})
+
+
 @app.get("/api/leads")
 async def get_leads():
     """Admin endpoint to view captured leads"""
