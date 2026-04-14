@@ -46,12 +46,12 @@
                 <div class="os-header-avatar">💪</div>
                 <div>
                     <h4>Squad Assistant</h4>
-                    <span>Online — replies instantly</span>
+                    <span>Online • natural replies</span>
                 </div>
                 <button class="os-close" onclick="document.getElementById('os-chat-panel').classList.remove('open')">&times;</button>
             </div>
             <div class="os-messages" id="os-messages">
-                <div class="os-msg bot">Hey! 👋 Welcome to The Outdoor Squad! Got questions about our classes, locations, or getting started? I'm here to help!</div>
+                <div class="os-msg bot">Hey, welcome in. If you're wondering whether this would suit you, or just want to know how it works, send me whatever you're thinking.</div>
             </div>
             <div class="os-input-area">
                 <input type="text" id="os-input" placeholder="Ask me anything...">
@@ -109,7 +109,7 @@
             addMsg(data.reply || 'Sorry, something went wrong!', 'bot');
         } catch(e) {
             typing.remove();
-            addMsg('Sorry, having trouble connecting. Try again!', 'bot');
+            addMsg('Sorry, something glitched on my side. Give it another go in a sec.', 'bot');
         }
     }
 

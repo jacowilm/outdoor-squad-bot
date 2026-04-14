@@ -1,0 +1,239 @@
+# The Outdoor Squad — Call Prep
+
+## Goal for the Call
+Move from interest to a paid pilot.
+
+This is not a generic discovery chat. The aim is to:
+1. confirm their exact workflow and pains
+2. show a working solution tailored to them
+3. agree the fastest pilot scope
+4. leave with a clear next step, ideally a paid trial
+
+---
+
+## What They Already Told Us
+The lead wants a chatbot that can:
+- field leads and general enquiries
+- direct people to a free trial signup or a booked call
+- ask qualifying questions
+- handle objections
+- support nutrition upsells
+- automate some follow-up
+
+They also mentioned Zoovr and offered to share a chat example.
+
+Source:
+- `memory/2026-04-09.md`
+- `independence/scripts/reply_classifications.json`
+
+---
+
+## Call Agenda (15-20 min)
+
+### 1. Frame the call (1-2 min)
+Use:
+> Thanks for jumping on. I wanted to make this practical, so instead of just talking through ideas, I’ve prepared a simple prototype flow based on what you mentioned. I’d love to quickly confirm your current enquiry flow, show you how this could work for Outdoor Squad, and then see if it makes sense to pilot.
+
+### 2. Understand the current enquiry flow (4-5 min)
+Ask:
+- Where do most new enquiries come from right now, website, Instagram, phone, ads, somewhere else?
+- What are the most common questions people ask before joining?
+- What usually happens after someone shows interest today?
+- Where are leads currently getting lost or going cold?
+- Do you want the bot mainly to qualify, to book, or to do both?
+
+### 3. Clarify the open implementation details (4-5 min)
+Need answers to:
+- What exact qualifying questions should the bot ask?
+- What is the preferred CTA, free intro class, free trial, consultation, or something else?
+- Should the bot book directly into a calendar, or just capture details and notify the team?
+- What objections come up most often?
+- How should nutrition be introduced, immediately, later, or only for existing members?
+
+### 4. Show the demo (3-5 min)
+Demo path:
+- visitor asks a simple FAQ
+- bot answers in Outdoor Squad tone
+- bot identifies interest and asks qualifying questions
+- bot moves user toward the free intro class CTA
+- bot captures lead details
+- bot optionally surfaces nutrition support / upsell logic
+
+### 5. Close toward pilot (3-4 min)
+Use:
+> The main thing I’d suggest is we keep this really lean. We don’t need to build a giant system first. We can launch a focused version that handles the most common enquiries, qualifies leads, and pushes people into the right next step, then improve it from real conversations.
+
+Then offer a simple pilot.
+
+---
+
+## Demo Flow to Show
+
+### Demo 1 — New lead
+User:
+> Hey, I’m interested but I’m not very fit yet. What do you offer?
+
+Bot should:
+- reassure beginner-friendliness
+- explain outdoor group training
+- mention Inner West locations
+- offer free intro class
+- ask 1-2 qualifying questions
+
+### Demo 2 — Qualification
+User:
+> I want to lose weight and get back into training. I work full time so evenings are best.
+
+Bot should:
+- acknowledge goals
+- ask relevant qualifiers like training history, location, schedule preference
+- recommend next step
+- move toward booking / trial CTA
+
+### Demo 3 — Objection handling
+User:
+> I’m not sure if group training is for me.
+
+Bot should:
+- reduce risk
+- position free intro as low-pressure
+- explain coach support and all-level suitability
+- ask if they want the link or to speak to a coach
+
+### Demo 4 — Nutrition upsell
+User:
+> Do you also help with food?
+
+Bot should:
+- explain practical nutrition support
+- connect it to results
+- offer next step without sounding pushy
+
+---
+
+## Discovery Questions to Ask
+Keep these conversational, not interrogation-style.
+
+### Business / funnel
+- How many new enquiries do you get in a normal week?
+- Which channels bring the best-fit leads?
+- Do leads usually convert better when someone replies quickly?
+- Are missed or delayed replies a real issue now?
+
+### Qualification
+- What makes someone a good lead versus a bad-fit lead?
+- Which 3-5 questions do you wish every new lead answered upfront?
+- Do you want different flows for beginners, existing members, PT prospects, and nutrition prospects?
+
+### Booking / conversion
+- What is the ideal next step, free intro class, phone call, form, or direct message?
+- Do you want the assistant to book directly or just tee up the handoff?
+- What would make this feel like a win after 30 days?
+
+### Operations
+- Who follows up today?
+- Where do conversations currently live?
+- Do you want this only on the website first, or also on Instagram/WhatsApp later?
+
+---
+
+## Recommended Offer for Tomorrow
+Go in with a simple paid pilot.
+
+### Option A — Best option
+**Paid pilot, 2 weeks**
+- chatbot tailored to Outdoor Squad
+- website embed
+- FAQ + lead qualification
+- free intro / booking CTA
+- lead capture
+- one round of refinement from real chats
+
+Suggested structure:
+- setup fee + small monthly support
+- or one flat pilot fee
+
+### Option B — If price resistance shows up
+**Fast starter build**
+- single use case only: qualify and convert website enquiries
+- no complex integrations yet
+- prove value first, expand later
+
+### Positioning
+Do not sell “AI”. Sell:
+- faster responses to enquiries
+- fewer missed leads
+- more free intro bookings
+- less admin load
+- better follow-up consistency
+
+---
+
+## Suggested Pricing Framing
+Don’t overcomplicate this.
+
+Say something like:
+> I’d suggest we start with a lean pilot, get this live around your core enquiry flow, and use real conversations to improve it. That way you’re not paying for a bloated build before we know what actually converts best.
+
+If pressed, give a simple structure:
+- setup/build fee
+- monthly support/optimization fee
+
+If needed, offer a founder-friendly early pilot rate in exchange for speed and feedback.
+
+---
+
+## What a Good Outcome Looks Like
+Best case:
+- they like the prototype
+- they confirm the desired flow
+- they agree on pilot scope
+- they commit to next step and budget
+
+Acceptable case:
+- they give the exact qualification questions + CTA + objections
+- they send the Zoovr example
+- we agree on a revised prototype and a follow-up date
+
+Bad outcome to avoid:
+- vague “sounds cool, send me something” with no concrete next step
+
+---
+
+## Closing Script
+Use one of these.
+
+### Direct close
+> Based on what you’ve said, I think the smartest move is a lean pilot focused on handling enquiries, qualifying leads, and moving people into the free intro flow. If you want, I can tighten this around your exact process and get version one in place fast.
+
+### Soft close
+> If this feels aligned, the next step would be for me to lock the flow around your real enquiry process and launch a focused pilot rather than overbuilding it.
+
+### If they hesitate
+> Totally fine. In that case, the most useful thing would be for you to send me the current questions, CTA, and any example chats you like, and I’ll sharpen the prototype around that.
+
+---
+
+## Checklist Before the Call
+- [ ] Bot runs without breaking
+- [ ] 3-4 demo prompts tested
+- [ ] Free trial / booking CTA decided for the demo
+- [ ] One sentence offer ready
+- [ ] Price framing ready
+- [ ] Closing question ready
+- [ ] Notes doc open during the call
+
+---
+
+## My Recommendation
+Go in aiming to close a paid pilot.
+
+Don’t drift into generic “custom AI solutions” chat. Keep it grounded in:
+- enquiries
+- qualification
+- conversion
+- follow-up
+- time saved
+- missed leads prevented
+
+That’s the sale.

@@ -227,7 +227,7 @@
     <div class="demo-header">
         <h1>🏋️ The Outdoor Squad</h1>
         <p>AI Assistant Demo</p>
-        <div class="demo-badge">⚡ Built by AI Sprints</div>
+        <div class="demo-badge">⚡ Human-style chat demo</div>
     </div>
 
     <div class="demo-container">
@@ -236,23 +236,23 @@
                 <div class="chat-avatar">💪</div>
                 <div class="chat-header-info">
                     <h3>Squad Assistant</h3>
-                    <span>Online — typically replies instantly</span>
+                    <span>Online • thoughtful, natural replies</span>
                 </div>
             </div>
 
             <div class="chat-messages" id="messages">
                 <div class="message bot">
-                    Hey! 👋 Welcome to The Outdoor Squad! I'm here to help you get started on your fitness journey. Whether you've got questions about our classes, locations, or how it all works — just ask! What can I help you with today?
+                    Hey, welcome in. You can ask the normal stuff, or throw me the awkward real-life version, like being unfit, injured, busy, nervous, or not sure if this is your thing yet.
                 </div>
             </div>
 
             <div class="quick-replies" id="quickReplies">
-                <button class="quick-reply" onclick="sendQuick('What classes do you offer?')">Classes</button>
-                <button class="quick-reply" onclick="sendQuick('Where are you located?')">Locations</button>
-                <button class="quick-reply" onclick="sendQuick('How much does it cost?')">Pricing</button>
-                <button class="quick-reply" onclick="sendQuick('I want to try a free class')">Free Trial</button>
-                <button class="quick-reply" onclick="sendQuick('Do you do personal training?')">Personal Training</button>
-                <button class="quick-reply" onclick="sendQuick('Tell me about nutrition coaching')">Nutrition</button>
+                <button class="quick-reply" onclick="sendQuick('I want to get fitter but I\'m honestly a bit nervous to start')">Nervous beginner</button>
+                <button class="quick-reply" onclick="sendQuick('I\'m busy, inconsistent, and usually quit after two weeks. Be honest, would this still work for me?')">Busy + inconsistent</button>
+                <button class="quick-reply" onclick="sendQuick('I want to lose weight and sort my nutrition too, not just train')">Weight loss + nutrition</button>
+                <button class="quick-reply" onclick="sendQuick('How do your free intro sessions actually work?')">Free intro</button>
+                <button class="quick-reply" onclick="sendQuick('I\'ve got an old injury, is that going to make this a bad fit?')">Injury concern</button>
+                <button class="quick-reply" onclick="sendQuick('Does this only work for super fit people already?')">Not fit yet</button>
             </div>
 
             <div class="chat-input-area">
@@ -263,8 +263,8 @@
         </div>
 
         <div class="features-note">
-            <strong>Demo Features:</strong> FAQ handling • Lead qualification • Free trial booking • 
-            Objection handling • Nutrition upsell • Contact capture
+            <strong>Demo Focus:</strong> Human-style replies • curve-ball handling • natural qualification • free intro conversion • 
+            objection handling • relevant upsells • contact capture
         </div>
     </div>
 
@@ -319,11 +319,11 @@
                 if (data.reply) {
                     addMessage(data.reply, 'bot');
                 } else if (data.error) {
-                    addMessage('Sorry, something went wrong. Please try again!', 'bot');
+                    addMessage('Sorry, something glitched on my side. Try that once more.', 'bot');
                 }
             } catch (err) {
                 hideTyping();
-                addMessage('Sorry, I\'m having trouble connecting. Please try again in a moment!', 'bot');
+                addMessage('Sorry, I\'m having trouble connecting right now. Give it another go in a sec.', 'bot');
             }
         }
 
