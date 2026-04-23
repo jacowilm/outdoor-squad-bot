@@ -105,8 +105,11 @@
                 body: JSON.stringify({ message: text, session_id: SESSION_ID })
             });
             const data = await res.json();
-            typing.remove();
-            addMsg(data.reply || 'Sorry, something went wrong!', 'bot');
+            const delay = typeof data.reply_delay_ms === 'number' ? data.reply_delay_ms : 0;
+            setTimeout(() => {
+                typing.remove();
+                addMsg(data.reply || 'Sorry, something went wrong!', 'bot');
+            }, delay);
         } catch(e) {
             typing.remove();
             addMsg('Sorry, something glitched on my side. Give it another go in a sec.', 'bot');

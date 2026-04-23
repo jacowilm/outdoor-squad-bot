@@ -314,13 +314,16 @@
                     body: JSON.stringify({ message: text, session_id: sessionId })
                 });
                 const data = await res.json();
-                hideTyping();
-                
-                if (data.reply) {
-                    addMessage(data.reply, 'bot');
-                } else if (data.error) {
-                    addMessage('Sorry, something glitched on my side. Try that once more.', 'bot');
-                }
+                const delay = typeof data.reply_delay_ms === 'number' ? data.reply_delay_ms : 0;
+                setTimeout(() => {
+                    hideTyping();
+
+                    if (data.reply) {
+                        addMessage(data.reply, 'bot');
+                    } else if (data.error) {
+                        addMessage('Sorry, something glitched on my side. Try that once more.', 'bot');
+                    }
+                }, delay);
             } catch (err) {
                 hideTyping();
                 addMessage('Sorry, I\'m having trouble connecting right now. Give it another go in a sec.', 'bot');

@@ -12,6 +12,7 @@ Features:
 """
 import os
 import json
+import random
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, Request
@@ -50,6 +51,9 @@ def get_client():
             raise RuntimeError("OPENAI_API_KEY not set")
         _client = OpenAI(api_key=api_key)
     return _client
+
+MIN_REPLY_DELAY_MS = 900
+MAX_REPLY_DELAY_MS = 2600
 
 SYSTEM_PROMPT = f"""You are the chat assistant for The Outdoor Squad, an outdoor fitness community in Sydney's Inner West.
 
@@ -152,9 +156,12 @@ async def chat(request: Request):
         if lead_info:
             save_lead(lead_info)
 
+        reply_delay_ms = random.randint(MIN_REPLY_DELAY_MS, MAX_REPLY_DELAY_MS)
+
         return JSONResponse({
             "reply": reply,
             "session_id": session_id,
+            "reply_delay_ms": reply_delay_ms,
         })
 
     except Exception as e:
