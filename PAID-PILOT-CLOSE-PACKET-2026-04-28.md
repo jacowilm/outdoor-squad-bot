@@ -68,3 +68,7 @@ Use it only after the live demo/discovery, not as a substitute for closing. The 
 
 New guardrail: if the call cannot close live, the minimum acceptable outcome is proposal sent + explicit decision date, preferably Friday.
 
+
+
+## 2026-04-29 08:00 follow-up discipline added
+A post-call follow-up pack now exists at `POST-CALL-FOLLOW-UP-2026-04-29.md`. Use it immediately after the call if Nicholas does not pay/agree live. The follow-up must ask for one of three outcomes: start the paid pilot, send launch materials, or commit to a Friday decision point.

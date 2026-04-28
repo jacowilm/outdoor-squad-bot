@@ -251,3 +251,6 @@ Don’t drift into generic “custom AI solutions” chat. Keep it grounded in:
 - missed leads prevented
 
 That’s the sale.
+
+## 2026-04-29 08:00 follow-up discipline
+A post-call follow-up pack now exists at `POST-CALL-FOLLOW-UP-2026-04-29.md`. If Nicholas does not agree/pay live, send the matching follow-up immediately so the thread asks for one of three outcomes: start the paid pilot, send launch materials, or commit to a Friday decision point.
