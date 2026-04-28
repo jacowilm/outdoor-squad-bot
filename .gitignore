@@ -3,3 +3,6 @@ __pycache__/
 .env
 leads.json
 venv/
+
+# Local demo runtime logs
+local-demo.log
