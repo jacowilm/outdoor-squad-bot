@@ -214,6 +214,18 @@ Use one of these.
 
 ---
 
+
+## 20:00 Revenue Pulse Update — Close Discipline
+
+Nicholas has confirmed **Thursday 2pm**. The next highest-leverage move is not more generic demo polishing; it is keeping the call anchored to a paid pilot. Use `PAID-PILOT-CLOSE-PACKET-2026-04-28.md` as the close sheet.
+
+Pilot anchor to use if pricing comes up:
+- **$299 setup for a 14-day pilot**
+- then **$149/month only if useful enough to keep**
+- fallback: **$199 narrow website FAQ + qualification + free intro handoff** if price resistance appears
+
+Success condition for the call: paid pilot agreed, or exact scope + decision date agreed. Do not accept vague “send me something” without a follow-up date.
+
 ## Checklist Before the Call
 - [ ] Bot runs without breaking
 - [ ] 3-4 demo prompts tested

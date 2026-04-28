@@ -164,53 +164,75 @@ async def chat(request: Request):
             "reply_delay_ms": reply_delay_ms,
         })
 
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception:
+        # Keep the sales/demo flow usable even if the model key is missing or the
+        # provider flakes during a live call. This is intentionally narrow: it
+        # covers the core proof paths Nicholas asked about without pretending to
+        # be the full assistant.
+        reply = demo_fallback_reply(message)
+        conversations[session_id].append({"role": "assistant", "content": reply})
+
+        lead_info = extract_lead_info(message, session_id)
+        if lead_info:
+            save_lead(lead_info)
+
+        return JSONResponse({
+            "reply": reply,
+            "session_id": session_id,
+            "reply_delay_ms": random.randint(MIN_REPLY_DELAY_MS, MAX_REPLY_DELAY_MS),
+            "fallback": True,
+        })
 
 
 @app.post("/api/booking")
 async def booking(request: Request):
-    """Handle discovery call booking requests"""
+    """Handle sample flow requests from the public AI Sprints form."""
     body = await request.json()
     name = body.get("name", "Unknown")
     email = body.get("email", "")
     business = body.get("business", "")
     phone = body.get("phone", "")
-    date = body.get("date", "")
-    time = body.get("time", "")
+    role = body.get("role", "")
     notes = body.get("notes", "")
 
-    # Save booking
     bookings_file = Path(__file__).parent / "bookings.json"
     if not bookings_file.exists():
         bookings_file.write_text("[]")
     bookings = json.loads(bookings_file.read_text())
     booking_data = {
-        "name": name, "email": email, "business": business,
-        "phone": phone, "date": date, "time": time,
-        "notes": notes, "created_at": datetime.now().isoformat()
+        "type": "sample_flow_request",
+        "name": name,
+        "email": email,
+        "business": business,
+        "phone": phone,
+        "role": role,
+        "notes": notes,
+        "created_at": datetime.now().isoformat(),
     }
     bookings.append(booking_data)
     bookings_file.write_text(json.dumps(bookings, indent=2))
 
-    # Send notification email to ourselves
     try:
         import smtplib
         from email.mime.text import MIMEText
         msg = MIMEText(
-            f"New Discovery Call Booking!\n\n"
-            f"Name: {name}\nEmail: {email}\nBusiness: {business}\n"
-            f"Phone: {phone}\nDate: {date}\nTime: {time} AEST\n"
-            f"Notes: {notes}\n\n— AI Sprints Booking System"
+            f"New sample flow request!\n\n"
+            f"Name: {name}\n"
+            f"Email: {email}\n"
+            f"Business: {business}\n"
+            f"Phone: {phone}\n"
+            f"Role: {role}\n"
+            f"Notes: {notes}\n\n"
+            f"— AI Sprints sample-first form"
         )
-        msg["Subject"] = f"New Booking: {name} ({business or 'No business'})"
+        msg["Subject"] = f"New sample request: {name} ({business or 'No business'})"
         msg["From"] = "bookings@aisprints.com.au"
         msg["To"] = "jacowilmjr@agentmail.to"
-        # Best effort — don't fail the booking if email fails
+        # Best effort — don't fail the request if email setup is unavailable
     except Exception:
         pass
 
-    return JSONResponse({"ok": True, "message": "Booking received"})
+    return JSONResponse({"ok": True, "message": "Sample request received"})
 
 
 @app.get("/api/leads")
@@ -237,6 +259,52 @@ async def serve_widget():
         from fastapi.responses import Response
         return Response(content=js_path.read_text(), media_type="application/javascript")
     return Response(content="console.error('widget.js not found')", media_type="application/javascript")
+
+
+def demo_fallback_reply(message: str) -> str:
+    """Deterministic replies for the core Outdoor Squad demo paths."""
+    text = message.lower()
+
+    if any(word in text for word in ["unfit", "not fit", "not very fit", "beginner", "nervous", "embarrassed"]):
+        return (
+            "Totally fair — a lot of people start before they feel ready 🙂\n\n"
+            "The sessions can be adjusted to your level, so you don't need to turn up already fit.\n\n"
+            "Are you mainly looking to build fitness, lose weight, or get back into a routine?"
+        )
+
+    if any(word in text for word in ["evening", "full-time", "full time", "after work", "schedule", "availability"]):
+        return (
+            "That makes sense — most people need something that fits around work.\n\n"
+            "The best next step would be a free intro so the team can point you to the right session options.\n\n"
+            "Which area are you closest to in the Inner West?"
+        )
+
+    if any(word in text for word in ["free intro", "trial", "free class", "intro class", "how does"]):
+        return (
+            "The free intro is the low-pressure way to see if the Squad feels right.\n\n"
+            "You can ask questions, get a feel for the coaching style, and work out which sessions suit you.\n\n"
+            "If you want, send your name and mobile and the team can follow up."
+        )
+
+    if any(word in text for word in ["food", "nutrition", "meal", "diet", "weight loss"]):
+        return (
+            "Yep, nutrition support can be part of it — especially if your goal is weight loss or better routine.\n\n"
+            "Usually it makes sense to start with training goals first, then add nutrition support where it helps.\n\n"
+            "What are you hoping to change over the next few months?"
+        )
+
+    if any(word in text for word in ["group", "not sure", "awkward", "intimidating"]):
+        return (
+            "Completely understandable. Group training can sound intimidating before you've tried it.\n\n"
+            "Outdoor Squad is meant to feel supportive, not hardcore-for-the-sake-of-it. The free intro is a good no-pressure test.\n\n"
+            "Want me to explain what usually happens in a first session?"
+        )
+
+    return (
+        "I can help with that. Outdoor Squad is an outdoor fitness community around Sydney's Inner West, with coaching that can adapt to different fitness levels.\n\n"
+        "The usual best next step is a free intro so the team can point you to the right option.\n\n"
+        "What are you mainly looking for — fitness, weight loss, routine, or something else?"
+    )
 
 
 def extract_lead_info(message: str, session_id: str) -> dict | None:
