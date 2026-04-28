@@ -26,6 +26,9 @@
         .os-msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 0.9rem; line-height: 1.4; }
         .os-msg.bot { background: #f0f0f0; align-self: flex-start; border-bottom-left-radius: 4px; }
         .os-msg.user { background: linear-gradient(135deg, #2d5016, #4a7c23); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .os-quick-replies { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+        .os-chip { border: 1px solid #d9e5d1; background: #f7faf5; color: #2d5016; border-radius: 999px; padding: 7px 10px; font-size: 0.78rem; cursor: pointer; }
+        .os-chip:hover { background: #edf5e9; }
         .os-input-area { display: flex; padding: 12px; gap: 8px; border-top: 1px solid #eee; }
         .os-input-area input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 20px; font-size: 0.9rem; outline: none; }
         .os-input-area input:focus { border-color: #4a7c23; }
@@ -53,6 +56,11 @@
             <div class="os-messages" id="os-messages">
                 <div class="os-msg bot">Hey, welcome in. If you're wondering whether this would suit you, or just want to know how it works, send me whatever you're thinking.</div>
             </div>
+            <div class="os-quick-replies" id="os-quick-replies">
+                <button class="os-chip" data-message="I'm interested but not very fit yet">Not very fit yet</button>
+                <button class="os-chip" data-message="I work full-time and need evening sessions">Evening sessions</button>
+                <button class="os-chip" data-message="How does the free intro class work?">Free intro</button>
+            </div>
             <div class="os-input-area">
                 <input type="text" id="os-input" placeholder="Ask me anything...">
                 <button id="os-send">➤</button>
@@ -68,6 +76,7 @@
     const input = document.getElementById('os-input');
     const sendBtn = document.getElementById('os-send');
     const msgs = document.getElementById('os-messages');
+    const quickReplies = document.getElementById('os-quick-replies');
 
     bubble.onclick = () => {
         panel.classList.toggle('open');
@@ -85,10 +94,11 @@
         msgs.scrollTop = msgs.scrollHeight;
     }
 
-    async function send() {
-        const text = input.value.trim();
+    async function send(presetText) {
+        const text = (presetText || input.value).trim();
         if (!text) return;
         input.value = '';
+        if (quickReplies) quickReplies.style.display = 'none';
         addMsg(text, 'user');
 
         // Typing indicator
@@ -116,6 +126,12 @@
         }
     }
 
-    sendBtn.onclick = send;
+    if (quickReplies) {
+        quickReplies.addEventListener('click', (e) => {
+            const chip = e.target.closest('.os-chip');
+            if (chip) send(chip.dataset.message || chip.textContent);
+        });
+    }
+    sendBtn.onclick = () => send();
     input.onkeypress = (e) => { if (e.key === 'Enter') send(); };
 })();
