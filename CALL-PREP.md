@@ -254,3 +254,6 @@ That’s the sale.
 
 ## 2026-04-29 08:00 follow-up discipline
 A post-call follow-up pack now exists at `POST-CALL-FOLLOW-UP-2026-04-29.md`. If Nicholas does not agree/pay live, send the matching follow-up immediately so the thread asks for one of three outcomes: start the paid pilot, send launch materials, or commit to a Friday decision point.
+
+## 2026-04-29 09:00 live call run sheet
+Use `CALL-RUN-SHEET-2026-04-30.md` during the call. It keeps the sequence simple: short framing, five demo prompts, five discovery questions, one paid-pilot close, and exact paths for think-about-it / price-resistance / feature-creep objections.
