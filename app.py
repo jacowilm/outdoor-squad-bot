@@ -279,6 +279,13 @@ def demo_fallback_reply(message: str) -> str:
             "Which area are you closest to in the Inner West?"
         )
 
+    if any(word in text for word in ["busy", "inconsistent", "quit", "routine", "motivation", "two weeks"]):
+        return (
+            "Honestly, that’s a really common pattern — people don’t usually need more willpower, they need something easy to keep showing up to.\n\n"
+            "The group structure and coaching can help with consistency because you’re not figuring it all out alone.\n\n"
+            "Would evenings, mornings, or weekends be easiest for you to stick with?"
+        )
+
     if any(word in text for word in ["free intro", "trial", "free class", "intro class", "how does"]):
         return (
             "The free intro is the low-pressure way to see if the Squad feels right.\n\n"
@@ -291,6 +298,13 @@ def demo_fallback_reply(message: str) -> str:
             "Yep, nutrition support can be part of it — especially if your goal is weight loss or better routine.\n\n"
             "Usually it makes sense to start with training goals first, then add nutrition support where it helps.\n\n"
             "What are you hoping to change over the next few months?"
+        )
+
+    if any(word in text for word in ["injury", "injured", "limitation", "bad knee", "back pain", "shoulder"]):
+        return (
+            "Good thing to flag. An old injury doesn’t automatically make it a bad fit, but it’s worth handling properly.\n\n"
+            "The sensible move is to tell the coach what’s going on so they can suggest adjustments and avoid anything silly.\n\n"
+            "What kind of injury are you working around?"
         )
 
     if any(word in text for word in ["group", "not sure", "awkward", "intimidating"]):
