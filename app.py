@@ -13,6 +13,7 @@ Features:
 import os
 import json
 import random
+import re
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, Request
@@ -264,6 +265,13 @@ async def serve_widget():
 def demo_fallback_reply(message: str) -> str:
     """Deterministic replies for the core Outdoor Squad demo paths."""
     text = message.lower()
+
+    if re.search(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', message) or re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', message):
+        return (
+            "Perfect — I’ve got those contact details.\n\n"
+            "The team can use that to follow up about the best free intro / coach-call option for you.\n\n"
+            "Before they reach out, what’s the main thing you want help with: fitness, weight loss, routine, or confidence getting started?"
+        )
 
     if any(word in text for word in ["unfit", "not fit", "not very fit", "beginner", "nervous", "embarrassed"]):
         return (
