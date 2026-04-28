@@ -233,6 +233,8 @@ Success condition for the call: paid pilot agreed, or exact scope + decision dat
 - [ ] One sentence offer ready
 - [ ] Price framing ready
 - [ ] Closing question ready
+- [ ] One-page paid pilot proposal ready if he asks for details
+- [ ] Decision-date fallback ready if he does not commit live
 - [ ] Notes doc open during the call
 
 ---

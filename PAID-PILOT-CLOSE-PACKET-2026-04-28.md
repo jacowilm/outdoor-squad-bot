@@ -56,3 +56,15 @@ The call is successful only if it ends with one of:
 - Zoovr chat/questions/CTA received + follow-up date agreed.
 
 Avoid ending with vague enthusiasm.
+
+## 2026-04-29 close asset added
+A sendable one-page proposal now exists at `OUTDOOR-SQUAD-PILOT-PROPOSAL-2026-04-29.md`.
+
+Use it only after the live demo/discovery, not as a substitute for closing. The order is:
+1. demo the actual flow,
+2. ask the paid-pilot close question,
+3. if he says yes, confirm scope + payment next step,
+4. if he hesitates or asks for details, send the one-page proposal and agree a decision date before leaving the thread.
+
+New guardrail: if the call cannot close live, the minimum acceptable outcome is proposal sent + explicit decision date, preferably Friday.
+
