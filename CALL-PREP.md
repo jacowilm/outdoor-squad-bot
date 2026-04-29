@@ -257,3 +257,6 @@ A post-call follow-up pack now exists at `POST-CALL-FOLLOW-UP-2026-04-29.md`. If
 
 ## 2026-04-29 09:00 live call run sheet
 Use `CALL-RUN-SHEET-2026-04-30.md` during the call. It keeps the sequence simple: short framing, five demo prompts, five discovery questions, one paid-pilot close, and exact paths for think-about-it / price-resistance / feature-creep objections.
+
+## 2026-04-29 18:30 payment collection guardrail
+A payment collection pack now exists at `PAYMENT-COLLECTION-READY-2026-04-29.md`. The funnel is weak if Nicholas says yes but there is no approved way to collect the $299 setup fee. If he is ready and no payment method is confirmed, ask Jacobo for Stripe/payment link, bank transfer, PayPal, or invoice details first. Do not improvise payment details, and do not share source/demo/install access until payment is confirmed.
