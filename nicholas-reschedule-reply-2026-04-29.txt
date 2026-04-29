@@ -1,0 +1,25 @@
+Hey Nicholas,
+
+No pain at all — sounds like a properly stacked week.
+
+Friday arvo is fine if it opens up, otherwise let’s push to next week. I’m happy to keep momentum async in the meantime.
+
+For your VA, the useful bits are:
+
+1. Preferred next step for a lead: free intro, coach call, trial session, or something else.
+2. The 3–5 questions you’d want every new lead to answer before you follow up.
+3. Common objections/questions: not fit enough, nervous about groups, injuries, schedule, pricing, nutrition, etc.
+4. The Zoovr chat/example flow if you can find it again.
+5. Where new lead notifications should go: email, form, Google Sheet, CRM, etc.
+6. Any wording you definitely like/dislike so the bot sounds like Outdoor Squad rather than generic fitness marketing.
+
+On your questions:
+
+1. Yes — after the initial payment, I can share the GitHub repo/source for the pilot. I’ll keep it simple enough that you’re not locked into me.
+2. Hosting is flexible. Fastest path is I host the pilot while we test it, but if you prefer control, we can deploy it under your own account so you own access from day one. My recommendation for you is: your hosting account, I set it up, and I support/improve it from there.
+
+So no issue on ownership/control — I’m not trying to build a black box you can’t access.
+
+Send whatever materials are easiest first, even if incomplete. I can work from rough notes and tighten the flow as we go.
+
+Jacobo
