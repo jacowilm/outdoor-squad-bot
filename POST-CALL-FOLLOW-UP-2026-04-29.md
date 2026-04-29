@@ -18,13 +18,12 @@ Confirmed scope for the 14-day pilot:
 
 Pilot: **$299 setup for 14 days**, then **$149/month only if it is useful enough to keep**.
 
-To get version one live quickly, send me:
+To get version one ready quickly, send me:
 1. preferred CTA: free intro, coach call, or another link,
 2. 3-5 questions every new lead should answer,
-3. where lead notifications should go,
-4. the Zoovr chat/example flow if you have it.
+3. where lead notifications should go.
 
-Once I have those, I’ll tune the flow and send the install snippet.
+I already have the chat/reference material, so no need to resend that. Once payment is confirmed, I’ll tune the flow and share the source/install path.
 
 ## If he asks to think about it
 
@@ -36,7 +35,7 @@ Here’s the lean version I’d suggest: a **14-day enquiry pilot** that answers
 
 Founder pilot: **$299 setup**, then **$149/month only if it earns its keep**. If you want to start even narrower, we can do website FAQ + qualification + free intro handoff for **$199** and add the rest later.
 
-Does **Friday** work as the decision point? If you send the Zoovr chat + preferred CTA before then, I’ll tune the pilot scope around your real flow.
+Does **Friday** work as the decision point? I already have the chat/reference material, so the only missing pieces are the preferred CTA, qualification questions, lead notification destination, and go-ahead/payment.
 
 ## If he likes it but won’t commit to price yet
 
@@ -61,3 +60,5 @@ Do not send a follow-up that only says "let me know what you think". Every follo
 - payment / agreement to start,
 - the missing launch materials,
 - a Friday decision point.
+
+Access guardrail: do **not** send Nicholas the hosted chatbot link, source repo, install snippet, or working deployment until Jacobo confirms the initial payment has been made.

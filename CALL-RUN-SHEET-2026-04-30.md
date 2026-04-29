@@ -5,7 +5,7 @@ Purpose: keep the call tight and convert Nicholas from interested/prototype mode
 ## 0. Call objective
 End with one of:
 1. **Paid pilot agreed** at $299 setup + optional $149/month continuation.
-2. **Launch materials requested** with explicit agreement to start once received.
+2. **Launch materials requested** with explicit agreement to start once received and payment confirmed.
 3. **Friday decision point** agreed if he needs to think.
 
 Do not end on vague enthusiasm.
@@ -42,7 +42,7 @@ Ask only what affects launch:
 Use the exact resistance path:
 
 ### Needs to think
-> “Totally fair. Should we set Friday as the decision point? I’ll send the short pilot summary, and if you send the Zoovr chat + preferred CTA before then I’ll tune the scope around your real flow.”
+> “Totally fair. Should we set Friday as the decision point? I already have the chat/reference material, so the only missing pieces are your preferred CTA, lead questions, notification destination, and go-ahead/payment.”
 
 ### Price resistance
 > “We can make version one narrower: website FAQs + qualification + free intro handoff for $199. If it earns its keep, we expand later.”
@@ -61,5 +61,9 @@ If he agrees or leans yes, get:
 - preferred CTA link / destination,
 - 3-5 qualification questions,
 - lead notification email,
-- Zoovr chat/example flow,
 - any must-use wording or FAQs.
+
+Already available: Nicholas's chat/reference material from the existing thread. Do not ask him to resend it.
+
+## 8. Access guardrail
+Do **not** send Nicholas the hosted chatbot link, source repo, install snippet, or working deployment until Jacobo confirms the initial payment has been made.

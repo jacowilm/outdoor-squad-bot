@@ -47,8 +47,9 @@ Pick one primary metric before launch:
 - preferred CTA: free intro, coach call, or another next step
 - 3-5 qualification questions every lead should answer
 - common objections / questions
-- current Zoovr chat or example flow, if available
 - where lead notifications should go
+
+Already available: Nicholas's chat/reference material from the existing thread. Do not ask him to resend it.
 
 ## Close question for the call
 > “If the demo matches the flow you want, shall we keep this narrow and start the 14-day pilot at $299, then judge it from real conversations?”
@@ -56,4 +57,7 @@ Pick one primary metric before launch:
 ## If he wants to think about it
 Do not leave it vague. Ask:
 
-> “Totally fine — should we set Friday as the decision point? If you send the Zoovr chat and preferred CTA before then, I’ll tune the pilot scope around that.”
+> “Totally fine — should we set Friday as the decision point? I already have the chat/reference material, so the remaining pieces are your preferred CTA, lead questions, notification destination, and go-ahead/payment.”
+
+## Access guardrail
+Do **not** share the hosted chatbot link, source repo, install snippet, or working deployment until Jacobo confirms the initial payment has been made.

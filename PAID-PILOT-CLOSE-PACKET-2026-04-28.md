@@ -24,7 +24,7 @@ If he hesitates on price:
 
 > “We can make the pilot even narrower: just website FAQs + qualification + free intro handoff for $199, then add nutrition/PT routing later if it earns its keep.”
 
-Do **not** offer more free build work unless he provides the Zoovr chat plus a booked follow-up date.
+Do **not** offer more free build work. Nicholas has already sent the chat/reference material, so the next gate is go-ahead/payment plus the remaining launch details.
 
 ## Discovery questions that directly support the close
 Ask only what affects the pilot scope:
@@ -47,13 +47,13 @@ Ask only what affects the pilot scope:
 ## If he asks for “send me something”
 Send this concise follow-up, not a giant proposal:
 
-> Hey Nicholas — good chatting. Suggested next step: a 14-day focused pilot for Outdoor Squad’s website enquiries. It would answer common questions, qualify leads, guide people toward the free intro / coach call, capture contact details, and handle the main beginner/schedule/group-training objections. Founder pilot pricing: $299 setup, then $149/month only if it’s useful enough to keep. If you send the Zoovr chat + your preferred CTA, I’ll tune the first version around that flow.
+> Hey Nicholas — good chatting. Suggested next step: a 14-day focused pilot for Outdoor Squad’s website enquiries. It would answer common questions, qualify leads, guide people toward the free intro / coach call, capture contact details, and handle the main beginner/schedule/group-training objections. Founder pilot pricing: $299 setup, then $149/month only if it’s useful enough to keep. I already have the chat/reference material, so the remaining pieces are your preferred CTA, lead questions, notification destination, and go-ahead/payment.
 
 ## Hard guardrail
 The call is successful only if it ends with one of:
 - paid pilot agreed;
 - exact pilot scope + price sent + decision date agreed;
-- Zoovr chat/questions/CTA received + follow-up date agreed.
+- missing launch details received + payment/decision date agreed.
 
 Avoid ending with vague enthusiasm.
 
@@ -67,6 +67,8 @@ Use it only after the live demo/discovery, not as a substitute for closing. The 
 4. if he hesitates or asks for details, send the one-page proposal and agree a decision date before leaving the thread.
 
 New guardrail: if the call cannot close live, the minimum acceptable outcome is proposal sent + explicit decision date, preferably Friday.
+
+Access guardrail: do **not** share the hosted chatbot link, source repo, install snippet, or working deployment until Jacobo confirms the initial payment has been made.
 
 
 
