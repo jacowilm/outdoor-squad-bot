@@ -2,13 +2,17 @@
 
 Purpose: remove the last first-revenue blocker if Nicholas says yes. Do **not** share source, hosted demo, install snippet, or repo access until Jacobo confirms payment is received.
 
-## Brutal blocker
-The close assets now ask for **$299 setup**, but there is no confirmed payment link / bank detail / invoice path stored in the Independence workspace. That means a positive Nicholas reply could still stall at "how do I pay?".
+## Payment path
+Jacobo confirmed PayID is acceptable when Nicholas is ready to pay.
+
+PayID: **jacobnomir@gmail.com**
+
+If Jacobo provides a Stripe/payment link, bank transfer, PayPal, or invoice instead, those are also acceptable. Do **not** improvise any other payment details.
 
 ## Immediate ask to Jacobo when Nicholas is ready
 Send this to Jacobo internally, not Nicholas:
 
-> Nicholas / Outdoor Squad is ready for the $299 pilot payment step. What payment method should I use: Stripe/payment link, bank transfer details, PayPal, or invoice? I won’t send source/demo/install access until you confirm the initial payment has landed.
+> Nicholas / Outdoor Squad is ready for the $299 pilot payment step. Please send me the PayID or preferred payment link/details to give him. I won’t send source/demo/install access until you confirm the initial payment has landed.
 
 ## Sendable Nicholas reply once Jacobo provides payment details
 Subject: Outdoor Squad pilot — payment + launch inputs
