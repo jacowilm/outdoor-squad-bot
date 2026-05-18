@@ -1096,20 +1096,21 @@ ADMIN_HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Outdoor Squad Bot Admin</title>
   <style>
-    :root { --forest: #173b18; --green: #2f641f; --lime: #8bc34a; --cream: #f5f2e8; --paper: #fffdf7; --ink: #17210f; --muted: #607052; --border: #dbe6cf; }
-    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: linear-gradient(180deg, rgba(23,59,24,.08), rgba(245,242,232,.72) 42%), var(--cream); color: var(--ink); }
-    header { background: radial-gradient(circle at top left, rgba(139,195,74,.32), transparent 34%), linear-gradient(135deg, var(--forest), var(--green)); color: white; padding: 20px 24px; border-bottom: 5px solid var(--lime); }
+    :root { --black: #000000; --charcoal: #39383d; --orange: #f26522; --orange-dark: #ea510a; --light: #e0e0e0; --paper: #ffffff; --ink: #000000; --muted: #4f4f4f; --border: #d8d8d8; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: linear-gradient(180deg, rgba(242,101,34,.10), rgba(246,246,246,.82) 42%), #f6f6f6; color: var(--ink); }
+    header { background: radial-gradient(circle at top left, rgba(242,101,34,.42), transparent 34%), linear-gradient(135deg, var(--black), var(--charcoal)); color: white; padding: 20px 24px; border-bottom: 5px solid var(--orange); }
     header h1 { font-size: 1.25rem; margin: 0 0 4px; letter-spacing: 0; }
     header p { margin: 0; opacity: .86; font-size: .9rem; }
     main { max-width: 1120px; margin: 0 auto; padding: 18px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
-    .card { background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 14px; box-shadow: 0 6px 20px rgba(23,59,24,.08); }
-    .metric { color: var(--forest); font-size: 1.8rem; font-weight: 800; margin-top: 8px; }
-    h2 { color: var(--forest); font-size: 1rem; margin: 24px 0 10px; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 12px; max-height: 420px; overflow: auto; }
+    .card { background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.08); }
+    .metric { color: var(--orange-dark); font-size: 1.8rem; font-weight: 800; margin-top: 8px; }
+    h2 { color: var(--black); font-size: 1rem; margin: 24px 0 10px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 12px; max-height: 420px; overflow: auto; line-height: 1.45; }
     table { width: 100%; border-collapse: collapse; background: var(--paper); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #edf1ea; vertical-align: top; font-size: .9rem; }
-    th { background: #e8f2df; color: var(--forest); }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eeeeee; vertical-align: top; font-size: .9rem; }
+    th { background: #f3f3f3; color: var(--black); border-top: 3px solid var(--orange); }
+    td:first-child, td:nth-child(2) { white-space: nowrap; }
     .muted { color: var(--muted); font-size: .86rem; }
   </style>
 </head>
