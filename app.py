@@ -148,6 +148,8 @@ if DEPLOYMENT_MODE not in {"review", "handoff"}:
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
 SUPABASE_TIMEOUT_SECONDS = 12.0
+CONVERSATION_CACHE_MAX_SESSIONS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_MAX", "200"))
+CONVERSATION_CACHE_TTL_SECONDS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_TTL_SECONDS", "3600"))
 SUPABASE_TABLES = {
     "conversations": "outdoor_squad_conversations",
     "events": "outdoor_squad_events",
@@ -312,6 +314,7 @@ def read_conversation_logs() -> list[dict]:
 
 def load_conversation(session_id: str) -> list[dict]:
     if session_id in conversations:
+        touch_conversation_cache(session_id)
         return conversations[session_id]
     messages: list[dict] = []
     if supabase_enabled():
@@ -330,10 +333,14 @@ def load_conversation(session_id: str) -> list[dict]:
         except Exception:
             messages = []
     conversations[session_id] = messages
+    touch_conversation_cache(session_id)
+    prune_conversation_cache(preserve=session_id)
     return conversations[session_id]
 
 
 def persist_conversation(session_id: str) -> None:
+    touch_conversation_cache(session_id)
+    prune_conversation_cache(preserve=session_id)
     if not supabase_enabled():
         return
     try:
@@ -844,6 +851,41 @@ def should_use_outage_fallback(message: str) -> bool:
 
 # In-memory conversation store (per session)
 conversations: dict[str, list] = {}
+conversation_last_access: dict[str, float] = {}
+
+
+def touch_conversation_cache(session_id: str) -> None:
+    conversation_last_access[session_id] = time.time()
+
+
+def prune_conversation_cache(preserve: str | None = None) -> None:
+    if not conversations:
+        return
+
+    now = time.time()
+    stale_sessions = [
+        session_id
+        for session_id, last_access in conversation_last_access.items()
+        if session_id != preserve and now - last_access > CONVERSATION_CACHE_TTL_SECONDS
+    ]
+    for session_id in stale_sessions:
+        conversations.pop(session_id, None)
+        conversation_last_access.pop(session_id, None)
+
+    if len(conversations) <= CONVERSATION_CACHE_MAX_SESSIONS:
+        return
+
+    overflow = len(conversations) - CONVERSATION_CACHE_MAX_SESSIONS
+    oldest_sessions = sorted(
+        (
+            (last_access, session_id)
+            for session_id, last_access in conversation_last_access.items()
+            if session_id != preserve
+        )
+    )
+    for _, session_id in oldest_sessions[:overflow]:
+        conversations.pop(session_id, None)
+        conversation_last_access.pop(session_id, None)
 
 
 def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
