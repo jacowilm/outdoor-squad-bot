@@ -533,7 +533,10 @@ def generate_openai_reply(message: str, session_id: str) -> str:
     response = get_client().chat.completions.create(
         **build_openai_request_params(message, session_id)
     )
-    return clean_agent_reply(response.choices[0].message.content)
+    reply = clean_agent_reply(response.choices[0].message.content)
+    if not reply:
+        raise RuntimeError("OpenAI returned an empty cleaned reply")
+    return reply
 
 
 def build_gemini_payload(message: str, session_id: str) -> dict:
@@ -584,7 +587,10 @@ def generate_gemini_reply(message: str, session_id: str) -> str:
     text = "\n".join(part.get("text", "") for part in parts if part.get("text"))
     if not text.strip():
         raise RuntimeError("Gemini returned an empty reply")
-    return clean_agent_reply(text)
+    reply = clean_agent_reply(text)
+    if not reply:
+        raise RuntimeError("Gemini returned an empty cleaned reply")
+    return reply
 
 
 def generate_ai_reply(message: str, session_id: str) -> tuple[str, str]:
@@ -1155,6 +1161,25 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "That sounds more like the SPT / 28-Day Kickstarter path than a basic group-class trial.\n\n"
             "SPT is small-group personal training: max 4 people, proper programming, assessment, nutrition support, and group classes included. The 28-Day Kickstarter is the trial version at $397.\n\n"
             "Are you looking for more coaching attention, or mostly a stronger routine?"
+        )
+
+    if (
+        any(word in text for word in ["training styles", "different training", "conditioning", "hiit", "bootcamp", "strength"])
+        and any(word in text for word in ["price", "prices", "cost", "membership", "how much"])
+    ):
+        return (
+            "Quick breakdown:\n\n"
+            "Training styles:\n"
+            "- Strength-focused sessions for getting stronger and moving better.\n"
+            "- Conditioning / HIIT / running work for fitness and endurance.\n"
+            "- Group-style sessions if you want a social, coached class.\n"
+            "- SPT if you want the most personalised option.\n\n"
+            "Pricing highlights:\n"
+            "- 1-Day Free Trial Pass: free.\n"
+            "- Casual drop-in: $37.\n"
+            "- Squad Ascent membership: $51/week for unlimited group classes.\n"
+            "- SPT starts from $125/week depending on setup.\n\n"
+            "If you want, I can narrow it down based on whether you care more about strength, weight loss, or routine."
         )
 
     if any(word in text for word in ["price", "cost", "how much", "$", "membership", "cancel", "pause", "contract"]):
