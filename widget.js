@@ -23,28 +23,28 @@
     // Inject styles
     const style = document.createElement('style');
     style.textContent = `
-        #os-chat-widget { position: fixed; bottom: 20px; right: 20px; z-index: 99999; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        #os-chat-bubble { width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, #2d5016, #4a7c23); color: white; border: none; cursor: pointer; font-size: 1.5rem; box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: transform 0.2s; display: flex; align-items: center; justify-content: center; }
+        #os-chat-widget { position: fixed; bottom: 20px; right: 20px; z-index: 99999; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #17210f; }
+        #os-chat-bubble { width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, #173b18, #2f641f); color: white; border: 2px solid #8bc34a; cursor: pointer; font-size: 1.5rem; box-shadow: 0 8px 24px rgba(23,59,24,0.28); transition: transform 0.2s, box-shadow 0.2s; display: flex; align-items: center; justify-content: center; }
         #os-chat-bubble:hover { transform: scale(1.1); }
-        #os-chat-bubble .badge { position: absolute; top: -2px; right: -2px; width: 16px; height: 16px; background: #e74c3c; border-radius: 50%; border: 2px solid white; }
-        #os-chat-panel { display: none; position: absolute; bottom: 70px; right: 0; width: 380px; max-height: 520px; background: white; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); overflow: hidden; flex-direction: column; }
+        #os-chat-bubble .badge { position: absolute; top: -2px; right: -2px; width: 16px; height: 16px; background: #8bc34a; border-radius: 50%; border: 2px solid white; }
+        #os-chat-panel { display: none; position: absolute; bottom: 70px; right: 0; width: 380px; max-height: 520px; background: #fffdf7; border: 1px solid #dbe6cf; border-radius: 10px; box-shadow: 0 14px 40px rgba(23,59,24,0.2); overflow: hidden; flex-direction: column; }
         #os-chat-panel.open { display: flex; }
-        .os-header { background: linear-gradient(135deg, #2d5016, #4a7c23); color: white; padding: 14px 18px; display: flex; align-items: center; gap: 10px; }
-        .os-header-avatar { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; }
+        .os-header { background: linear-gradient(135deg, #173b18, #2f641f); color: white; padding: 14px 18px; display: flex; align-items: center; gap: 10px; border-bottom: 4px solid #8bc34a; }
+        .os-header-avatar { width: 36px; height: 36px; border-radius: 50%; background: #8bc34a; color: #173b18; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: .78rem; letter-spacing: 0; }
         .os-header h4 { margin: 0; font-size: 0.95rem; }
         .os-header span { font-size: 0.75rem; opacity: 0.8; }
         .os-close { background: none; border: none; color: white; font-size: 1.2rem; cursor: pointer; margin-left: auto; }
         .os-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; max-height: 350px; }
         .os-msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 0.9rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .os-msg.bot { background: #f0f0f0; align-self: flex-start; border-bottom-left-radius: 4px; }
-        .os-msg.user { background: linear-gradient(135deg, #2d5016, #4a7c23); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .os-msg.bot { background: #ffffff; color: #111a0d; border: 1px solid #c8d9bc; align-self: flex-start; border-bottom-left-radius: 4px; }
+        .os-msg.user { background: linear-gradient(135deg, #173b18, #2f641f); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
         .os-quick-replies { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
-        .os-chip { border: 1px solid #d9e5d1; background: #f7faf5; color: #2d5016; border-radius: 999px; padding: 7px 10px; font-size: 0.78rem; cursor: pointer; }
-        .os-chip:hover { background: #edf5e9; }
-        .os-input-area { display: flex; padding: 12px; gap: 8px; border-top: 1px solid #eee; }
-        .os-input-area input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 20px; font-size: 0.9rem; outline: none; }
-        .os-input-area input:focus { border-color: #4a7c23; }
-        .os-input-area button { background: linear-gradient(135deg, #2d5016, #4a7c23); color: white; border: none; border-radius: 50%; width: 38px; height: 38px; cursor: pointer; font-size: 1rem; }
+        .os-chip { border: 1px solid #cfe3bf; background: #eef7e7; color: #173b18; border-radius: 999px; padding: 7px 10px; font-size: 0.78rem; cursor: pointer; }
+        .os-chip:hover { background: #dcefd0; }
+        .os-input-area { display: flex; padding: 12px; gap: 8px; border-top: 1px solid #dbe6cf; background: #fbfaf4; }
+        .os-input-area input { flex: 1; padding: 10px 14px; border: 1px solid #dbe6cf; border-radius: 20px; font-size: 0.9rem; outline: none; }
+        .os-input-area input:focus { border-color: #2f641f; }
+        .os-input-area button { background: linear-gradient(135deg, #173b18, #2f641f); color: white; border: none; border-radius: 50%; width: 38px; height: 38px; cursor: pointer; font-size: 1rem; }
         .os-typing span { display: inline-block; width: 6px; height: 6px; background: #999; border-radius: 50%; animation: os-bounce 1.4s infinite both; margin-right: 3px; }
         .os-typing span:nth-child(2) { animation-delay: 0.16s; }
         .os-typing span:nth-child(3) { animation-delay: 0.32s; }
@@ -58,10 +58,10 @@
     widget.innerHTML = `
         <div id="os-chat-panel">
             <div class="os-header">
-                <div class="os-header-avatar">💪</div>
+                <div class="os-header-avatar">OS</div>
                 <div>
-                    <h4>Squad Assistant</h4>
-                    <span>Online • natural replies</span>
+                    <h4>Robo-Nick</h4>
+                    <span>Outdoor Squad helper</span>
                 </div>
                 <button class="os-close" onclick="document.getElementById('os-chat-panel').classList.remove('open')">&times;</button>
             </div>
@@ -78,7 +78,7 @@
                 <button id="os-send">➤</button>
             </div>
         </div>
-        <button id="os-chat-bubble">💬<div class="badge"></div></button>
+        <button id="os-chat-bubble">OS<div class="badge"></div></button>
     `;
     document.body.appendChild(widget);
 

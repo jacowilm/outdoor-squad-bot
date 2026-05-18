@@ -6,10 +6,24 @@
     <title>The Outdoor Squad — AI Assistant Demo</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --squad-forest: #173b18;
+            --squad-green: #2f641f;
+            --squad-lime: #8bc34a;
+            --squad-cream: #f5f2e8;
+            --squad-paper: #fffdf7;
+            --squad-ink: #17210f;
+            --squad-muted: #607052;
+            --squad-border: #dbe6cf;
+        }
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f5f5;
+            background:
+                linear-gradient(180deg, rgba(23,59,24,0.08), rgba(245,242,232,0.7) 42%),
+                var(--squad-cream);
+            color: var(--squad-ink);
             min-height: 100vh;
             display: flex;
             flex-direction: column;
@@ -17,16 +31,20 @@
         }
 
         .demo-header {
-            background: linear-gradient(135deg, #2d5016 0%, #4a7c23 100%);
+            background:
+                radial-gradient(circle at top left, rgba(139,195,74,0.32), transparent 32%),
+                linear-gradient(135deg, var(--squad-forest) 0%, var(--squad-green) 100%);
             color: white;
             width: 100%;
-            padding: 40px 20px;
+            padding: 34px 20px 30px;
             text-align: center;
+            border-bottom: 5px solid var(--squad-lime);
         }
 
         .demo-header h1 {
-            font-size: 2rem;
+            font-size: 2.05rem;
             margin-bottom: 8px;
+            letter-spacing: 0;
         }
 
         .demo-header p {
@@ -36,9 +54,10 @@
 
         .demo-badge {
             display: inline-block;
-            background: rgba(255,255,255,0.2);
-            padding: 4px 12px;
-            border-radius: 20px;
+            background: rgba(255,255,255,0.14);
+            border: 1px solid rgba(255,255,255,0.26);
+            padding: 5px 12px;
+            border-radius: 999px;
             font-size: 0.8rem;
             margin-top: 12px;
         }
@@ -51,14 +70,15 @@
         }
 
         .chat-window {
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+            background: var(--squad-paper);
+            border: 1px solid var(--squad-border);
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(23, 59, 24, 0.13);
             overflow: hidden;
         }
 
         .chat-header {
-            background: linear-gradient(135deg, #2d5016 0%, #4a7c23 100%);
+            background: linear-gradient(135deg, var(--squad-forest), var(--squad-green));
             color: white;
             padding: 16px 20px;
             display: flex;
@@ -70,7 +90,8 @@
             width: 40px;
             height: 40px;
             border-radius: 50%;
-            background: rgba(255,255,255,0.2);
+            background: var(--squad-lime);
+            color: var(--squad-forest);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -88,7 +109,7 @@
         }
 
         .chat-messages {
-            height: 450px;
+            height: 320px;
             overflow-y: auto;
             padding: 20px;
             display: flex;
@@ -102,7 +123,6 @@
             border-radius: 16px;
             font-size: 0.95rem;
             line-height: 1.5;
-            animation: fadeIn 0.3s ease;
         }
 
         @keyframes fadeIn {
@@ -111,20 +131,23 @@
         }
 
         .message.bot {
-            background: #f0f0f0;
+            background: #ffffff;
+            color: #111a0d;
+            border: 1px solid #c8d9bc;
             align-self: flex-start;
             border-bottom-left-radius: 4px;
         }
 
         .message.user {
-            background: linear-gradient(135deg, #2d5016, #4a7c23);
+            background: linear-gradient(135deg, var(--squad-forest), var(--squad-green));
             color: white;
             align-self: flex-end;
             border-bottom-right-radius: 4px;
         }
 
         .message.typing {
-            background: #f0f0f0;
+            background: #ffffff;
+            border: 1px solid #c8d9bc;
             align-self: flex-start;
             border-bottom-left-radius: 4px;
         }
@@ -155,13 +178,14 @@
             display: flex;
             padding: 16px;
             gap: 8px;
-            border-top: 1px solid #eee;
+            border-top: 1px solid var(--squad-border);
+            background: #fbfaf4;
         }
 
         .chat-input-area input {
             flex: 1;
             padding: 12px 16px;
-            border: 1px solid #ddd;
+            border: 1px solid var(--squad-border);
             border-radius: 24px;
             font-size: 0.95rem;
             outline: none;
@@ -169,11 +193,11 @@
         }
 
         .chat-input-area input:focus {
-            border-color: #4a7c23;
+            border-color: var(--squad-green);
         }
 
         .chat-input-area button {
-            background: linear-gradient(135deg, #2d5016, #4a7c23);
+            background: linear-gradient(135deg, var(--squad-forest), var(--squad-green));
             color: white;
             border: none;
             border-radius: 50%;
@@ -196,9 +220,9 @@
         }
 
         .quick-reply {
-            background: #e8f5e1;
-            color: #2d5016;
-            border: 1px solid #c8e6b8;
+            background: #eef7e7;
+            color: var(--squad-forest);
+            border: 1px solid #cfe3bf;
             padding: 8px 14px;
             border-radius: 20px;
             font-size: 0.85rem;
@@ -207,70 +231,25 @@
         }
 
         .quick-reply:hover {
-            background: #d4edcc;
-            border-color: #4a7c23;
-        }
-
-        .features-note {
-            text-align: center;
-            padding: 20px;
-            color: #666;
-            font-size: 0.85rem;
-        }
-
-        .features-note strong {
-            color: #2d5016;
-        }
-
-        .owner-preview {
-            background: white;
-            border: 1px solid #dfe8d8;
-            border-radius: 16px;
-            padding: 18px;
-            margin-top: 18px;
-            box-shadow: 0 2px 14px rgba(0,0,0,0.06);
-        }
-
-        .owner-preview h2 {
-            color: #2d5016;
-            font-size: 1rem;
-            margin-bottom: 10px;
-        }
-
-        .owner-preview p, .owner-preview li {
-            color: #444;
-            font-size: 0.9rem;
-            line-height: 1.45;
-        }
-
-        .owner-preview ul {
-            margin: 10px 0 0 18px;
-        }
-
-        .owner-preview .price-line {
-            margin-top: 12px;
-            padding: 10px 12px;
-            border-radius: 10px;
-            background: #f0f7eb;
-            color: #2d5016;
-            font-weight: 600;
+            background: #dcefd0;
+            border-color: var(--squad-green);
         }
     </style>
 </head>
 <body>
     <div class="demo-header">
-        <h1>🏋️ The Outdoor Squad</h1>
-        <p>AI Assistant Demo</p>
-        <div class="demo-badge">⚡ Human-style chat demo</div>
+        <h1>The Outdoor Squad</h1>
+        <p>Robo-Nick review chat</p>
+        <div class="demo-badge">Outdoor Squad enquiry assistant</div>
     </div>
 
     <div class="demo-container">
         <div class="chat-window">
             <div class="chat-header">
-                <div class="chat-avatar">💪</div>
+                <div class="chat-avatar">OS</div>
                 <div class="chat-header-info">
-                    <h3>Squad Assistant</h3>
-                    <span>Online • thoughtful, natural replies</span>
+                    <h3>Robo-Nick</h3>
+                    <span>Online • Outdoor Squad helper</span>
                 </div>
             </div>
 
@@ -296,21 +275,6 @@
             </div>
         </div>
 
-        <div class="features-note">
-            <strong>Demo Focus:</strong> Human-style replies • curve-ball handling • natural qualification • free intro conversion • 
-            objection handling • relevant upsells • contact capture
-        </div>
-
-        <div class="owner-preview">
-            <h2>What the paid Outdoor Squad version would do</h2>
-            <p>A simple public enquiry link Nicholas can put in the website, Instagram bio, Linktree, Facebook, ads, or DMs — without needing native automation first.</p>
-            <ul>
-                <li>Sorts the enquiry type: free intro, group training, PT, nutrition, injury concern, or general question.</li>
-                <li>Captures the useful details before Nicholas replies: name, contact, goal, location, experience level, constraints, and preferred next step.</li>
-                <li>Sends a clean handoff summary so the follow-up starts warm instead of from scratch.</li>
-            </ul>
-            <div class="price-line">Build offer: $349 one-off. No required monthly retainer.</div>
-        </div>
     </div>
 
     <script>

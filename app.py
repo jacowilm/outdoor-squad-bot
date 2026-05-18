@@ -602,9 +602,7 @@ async def track_event(request: Request):
     return JSONResponse({"ok": True})
 
 
-@app.get("/api/metrics")
-async def get_metrics(_: str = Depends(require_admin)):
-    """Simple success metrics for the paid first version."""
+def build_metrics_payload() -> dict:
     events = read_events()
     conversations_started = {e.get("session_id") for e in events if e.get("event_type") == "conversation_started"}
     sessions_with_messages = {e.get("session_id") for e in events if e.get("event_type") == "message_received"}
@@ -633,7 +631,7 @@ async def get_metrics(_: str = Depends(require_admin)):
         if event.get("event_type") in outcome_counts:
             outcome_counts[event["event_type"]] += 1
 
-    return JSONResponse({
+    return {
         "conversations_started": len(conversations_started),
         "conversations_with_user_messages": len(sessions_with_messages),
         "completion_rate": safe_rate(len(sessions_with_completion), len(conversations_started)),
@@ -643,7 +641,13 @@ async def get_metrics(_: str = Depends(require_admin)):
         "outcomes": outcome_counts,
         "last_event_at": events[-1]["timestamp"] if events else None,
         "note": "Export events.jsonl for conversation review; use leads.json for human follow-up.",
-    })
+    }
+
+
+@app.get("/api/metrics")
+async def get_metrics(_: str = Depends(require_admin)):
+    """Simple success metrics for the paid first version."""
+    return JSONResponse(build_metrics_payload())
 
 
 @app.get("/api/conversation-logs")
@@ -656,7 +660,12 @@ async def get_conversation_logs(limit: int = 200, _: str = Depends(require_admin
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(_: str = Depends(require_admin)):
     """Small protected owner dashboard for Square-era operations."""
-    return HTMLResponse(ADMIN_HTML)
+    admin_data = {
+        "metrics": build_metrics_payload(),
+        "leads": json.loads(LEADS_FILE.read_text()),
+        "logs": read_conversation_logs()[-120:],
+    }
+    return HTMLResponse(ADMIN_HTML.replace("__ADMIN_DATA__", json.dumps(admin_data)))
 
 
 @app.get("/api/health")
@@ -1087,20 +1096,21 @@ ADMIN_HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Outdoor Squad Bot Admin</title>
   <style>
-    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f4; color: #17210f; }
-    header { background: #254713; color: white; padding: 18px 22px; }
-    header h1 { font-size: 1.15rem; margin: 0 0 4px; }
-    header p { margin: 0; opacity: .82; font-size: .88rem; }
+    :root { --forest: #173b18; --green: #2f641f; --lime: #8bc34a; --cream: #f5f2e8; --paper: #fffdf7; --ink: #17210f; --muted: #607052; --border: #dbe6cf; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: linear-gradient(180deg, rgba(23,59,24,.08), rgba(245,242,232,.72) 42%), var(--cream); color: var(--ink); }
+    header { background: radial-gradient(circle at top left, rgba(139,195,74,.32), transparent 34%), linear-gradient(135deg, var(--forest), var(--green)); color: white; padding: 20px 24px; border-bottom: 5px solid var(--lime); }
+    header h1 { font-size: 1.25rem; margin: 0 0 4px; letter-spacing: 0; }
+    header p { margin: 0; opacity: .86; font-size: .9rem; }
     main { max-width: 1120px; margin: 0 auto; padding: 18px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
-    .card { background: white; border: 1px solid #dfe6d9; border-radius: 8px; padding: 14px; }
-    .metric { font-size: 1.8rem; font-weight: 700; margin-top: 8px; }
-    h2 { font-size: 1rem; margin: 24px 0 10px; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: white; border: 1px solid #dfe6d9; border-radius: 8px; padding: 12px; max-height: 420px; overflow: auto; }
-    table { width: 100%; border-collapse: collapse; background: white; border: 1px solid #dfe6d9; border-radius: 8px; overflow: hidden; }
+    .card { background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 14px; box-shadow: 0 6px 20px rgba(23,59,24,.08); }
+    .metric { color: var(--forest); font-size: 1.8rem; font-weight: 800; margin-top: 8px; }
+    h2 { color: var(--forest); font-size: 1rem; margin: 24px 0 10px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 12px; max-height: 420px; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; background: var(--paper); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid #edf1ea; vertical-align: top; font-size: .9rem; }
-    th { background: #edf5e8; }
-    .muted { color: #5c6b53; font-size: .86rem; }
+    th { background: #e8f2df; color: var(--forest); }
+    .muted { color: var(--muted); font-size: .86rem; }
   </style>
 </head>
 <body>
@@ -1116,11 +1126,7 @@ ADMIN_HTML = """
     <pre id="logs">Loading...</pre>
   </main>
   <script>
-    async function loadJson(url) {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
-    }
+    window.__OS_ADMIN_DATA__ = __ADMIN_DATA__;
     function metric(label, value) {
       return '<div class="card"><div class="muted">' + label + '</div><div class="metric">' + value + '</div></div>';
     }
@@ -1132,15 +1138,11 @@ ADMIN_HTML = """
         return ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char]);
       });
     }
-    async function boot() {
-      const data = await Promise.all([
-        loadJson('/api/metrics'),
-        loadJson('/api/leads'),
-        loadJson('/api/conversation-logs?limit=120')
-      ]);
-      const metrics = data[0];
-      const leads = data[1];
-      const logs = data[2];
+    function boot() {
+      const data = window.__OS_ADMIN_DATA__ || {};
+      const metrics = data.metrics || { outcomes: {} };
+      const leads = data.leads || [];
+      const logs = data.logs || [];
       document.getElementById('metrics').innerHTML = [
         metric('Conversations started', metrics.conversations_started),
         metric('Completion rate', pct(metrics.completion_rate)),
@@ -1160,11 +1162,7 @@ ADMIN_HTML = """
         return row.timestamp + ' [' + row.session_id + '] ' + row.role + ': ' + row.content;
       }).join('\\n\\n') || 'No conversation logs yet.';
     }
-    boot().catch(function(err) {
-      document.getElementById('metrics').innerHTML = '<div class="card">Could not load admin data.</div>';
-      document.getElementById('leads').textContent = err.message;
-      document.getElementById('logs').textContent = '';
-    });
+    boot();
   </script>
 </body>
 </html>
