@@ -609,17 +609,22 @@ def clean_agent_reply(reply: str | None) -> str:
     text = text.replace("**", "")
     text = re.sub(r"^(great|good) question[!.,]?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(?<!\n)(Quick summary:)\s*", r"\1\n\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<!\n)(Which option|What kind of injury|What’s the main thing|What are you mainly looking for)", r"\n\n\1", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"(?<!\n)(Which option|What kind of injury|What(?:'|’)s the main thing|What are you mainly looking for)",
+        r"\n\n\1",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.sub(r"\s+-\s+", "\n- ", text)
     text = re.sub(
         r"(?<!\n)(Free 1-Day Trial|Free trial|Drop-in / Casual session|Drop-in|Squad Student|Squad Ascent|28-Day Kickstarter|Ongoing SPT|SPT)(?=\s*(?:[:$\-]))",
         r"\n- \1",
         text,
     )
-    text = re.sub(r"\s+(SPT:)", "\n\n\1", text)
-    text = re.sub(r"\s+(Group classes:)", "\n\1", text)
-    text = re.sub(r"\s+(Free trial:)", "\n\1", text)
-    text = re.sub(r"\s+(Option \d+:)", "\n\1", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+(SPT:)", r"\n\n\1", text)
+    text = re.sub(r"\s+(Group classes:)", r"\n\1", text)
+    text = re.sub(r"\s+(Free trial:)", r"\n\1", text)
+    text = re.sub(r"\s+(Option \d+:)", r"\n\1", text, flags=re.IGNORECASE)
     text = re.sub(r"\.\s+(?=-\s)", ".\n", text)
     text = re.sub(r"\n- ([^\n]+)\n- (\$[^\n]+)", r"\n- \1 - \2", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
