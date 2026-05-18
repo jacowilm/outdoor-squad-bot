@@ -1111,6 +1111,15 @@ async def serve_widget():
     return Response(content="console.error('widget.js not found')", media_type="application/javascript")
 
 
+@app.get("/widget-preview", response_class=HTMLResponse)
+async def widget_preview():
+    """Serve a simple page that mounts the embeddable widget."""
+    html_path = Path(__file__).parent / "widget_preview.html"
+    if html_path.exists():
+        return HTMLResponse(html_path.read_text())
+    return HTMLResponse("<h1>Widget preview not found</h1>", status_code=404)
+
+
 def should_use_local_tone_handler(message: str, session_id: str) -> bool:
     """Catch moments that need stateful tone more than generic AI/Q&A."""
     text = normalise_chat_text(message)
