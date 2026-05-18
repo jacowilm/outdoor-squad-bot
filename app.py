@@ -1163,6 +1163,9 @@ ADMIN_HTML = """
     th { background: #f3f3f3; color: var(--black); border-top: 3px solid var(--orange); }
     td:first-child, td:nth-child(2) { white-space: nowrap; }
     .muted { color: var(--muted); font-size: .86rem; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0 4px; flex-wrap: wrap; }
+    .toolbar-meta { color: var(--muted); font-size: .84rem; }
+    .toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 24px 0 10px; }
     .section-head h2 { margin: 0; }
     .button { display: inline-block; background: linear-gradient(135deg, var(--orange-dark), var(--orange)); color: white; border: 0; border-radius: 999px; padding: 8px 13px; font-size: .86rem; font-weight: 700; text-decoration: none; white-space: nowrap; }
@@ -1175,6 +1178,12 @@ ADMIN_HTML = """
     <p>Protected owner view for leads, success metrics, and conversation review.</p>
   </header>
   <main>
+    <div class="toolbar">
+      <div class="toolbar-meta" id="lastUpdated">Loading latest data…</div>
+      <div class="toolbar-actions">
+        <a class="button" href="/admin">Refresh Data</a>
+      </div>
+    </div>
     <section class="grid" id="metrics"></section>
     <div class="section-head">
       <h2>Captured Leads</h2>
@@ -1202,6 +1211,8 @@ ADMIN_HTML = """
       const metrics = data.metrics || { outcomes: {} };
       const leads = data.leads || [];
       const logs = data.logs || [];
+      const lastUpdated = metrics.last_event_at || new Date().toISOString();
+      document.getElementById('lastUpdated').textContent = 'Last updated: ' + lastUpdated + ' — auto-refreshes every 15s';
       document.getElementById('metrics').innerHTML = [
         metric('Conversations started', metrics.conversations_started),
         metric('Completion rate', pct(metrics.completion_rate)),
@@ -1220,6 +1231,9 @@ ADMIN_HTML = """
       document.getElementById('logs').textContent = logs.map(function(row) {
         return row.timestamp + ' [' + row.session_id + '] ' + row.role + ': ' + row.content;
       }).join('\\n\\n') || 'No conversation logs yet.';
+      window.setTimeout(function() {
+        window.location.reload();
+      }, 15000);
     }
     boot();
   </script>
