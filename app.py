@@ -767,6 +767,37 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 "You turn up, meet the coach, get a feel for the session, and they adjust things to your level rather than expecting you to keep up with everyone straight away.\n\n"
                 "If you want, I can also point you to the best location to start with."
             )
+    if ("food" in clean or "nutrition" in clean or "meal plan" in clean) and len(clean.split()) <= 6:
+        if "which bit feels like the bigger blocker right now" in previous or "training consistency or food" in previous:
+            return (
+                "Yep, fair call — if food is the bit wobbling, starting with the meal plan makes sense.\n\n"
+                "That gives you something practical straight away without overcomplicating it. Then training can layer in after that.\n\n"
+                "Do you want me to point you towards the free meal plan first, or are you also thinking about a trial session alongside it?"
+            )
+    if any(word in clean for word in {"training", "consistency", "routine"}) and len(clean.split()) <= 6:
+        if "which bit feels like the bigger blocker right now" in previous or "training consistency or food" in previous:
+            return (
+                "That makes sense — if consistency is the hard part, the simplest win is getting you into a routine you’ll actually stick to.\n\n"
+                "That’s where the free trial usually helps, because you can test the vibe before committing to anything bigger.\n\n"
+                "Do you want to start with the free trial, or were you more curious about the classes first?"
+            )
+    return None
+
+
+def known_goal_from_history(session_id: str) -> str | None:
+    joined = "\n".join(
+        m.get("content", "")
+        for m in load_conversation(session_id)
+        if m.get("role") == "user"
+    ).lower()
+    if any(word in joined for word in ["food", "nutrition", "meal plan", "weight loss", "lose weight"]):
+        return "weight loss / nutrition"
+    if any(word in joined for word in ["routine", "consistency", "consistent", "busy", "full-time", "after work"]):
+        return "routine / consistency"
+    if any(word in joined for word in ["confidence", "nervous", "not fit", "unfit", "beginner"]):
+        return "confidence getting started"
+    if "fitness" in joined:
+        return "general fitness"
     return None
 
 
@@ -1229,11 +1260,17 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     if re.search(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', message) or re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', message):
         name = extract_contact_name(message, session_id=session_id)
         intro = f"Perfect — I’ve got those contact details, {name.split()[0]}." if name else "Perfect — I’ve got those contact details."
-        follow_up = (
-            "The team can use that to follow up about the best free intro, SPT, or coach-call option for you."
-            if name
-            else "If you haven’t already, send your first name too so Nick or Lyn know who they’re replying to."
-        )
+        goal = known_goal_from_history(session_id)
+        if name:
+            follow_up = "The team can use that to follow up about the best free intro, SPT, or coach-call option for you."
+        else:
+            follow_up = "If you haven’t already, send your first name too so Nick or Lyn know who they’re replying to."
+        if goal:
+            return (
+                f"{intro}\n\n"
+                f"{follow_up}\n\n"
+                f"I’ve noted that the main thing is {goal}, so they’ve got a cleaner starting point when they reach out."
+            )
         return (
             f"{intro}\n\n"
             f"{follow_up}\n\n"
@@ -1398,29 +1435,17 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
     contact_stripped = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', explicit_source)
     contact_stripped = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', contact_stripped)
     explicit_name = re.search(
-        r"\b(?:my name is|name is|this is|call me)\s+([A-Za-z][A-Za-z'-]{1,})(?:\s+([A-Za-z][A-Za-z'-]{1,}))?",
+        r"\b(?:my name is|name is|this is|call me|i am|i'm|im|it is|it's|its)\s+([A-Za-z][A-Za-z'-]{1,})(?:\s+([A-Za-z][A-Za-z'-]{1,}))?",
         contact_stripped,
         flags=re.IGNORECASE,
     )
     if explicit_name:
-        captured = [part for part in explicit_name.groups() if part]
+        captured = [
+            part for part in explicit_name.groups()
+            if part and part.lower() not in {"and", "but"}
+        ]
         return " ".join(captured).title()
-
-    fallback_source = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', message)
-    fallback_source = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', fallback_source)
-    fallback_source = re.sub(r'\b(name is|my name is|this is|call me)\b', ' ', fallback_source, flags=re.IGNORECASE)
-    words = re.findall(r"[A-Za-z][A-Za-z'-]{1,}", fallback_source)
-    stop = {
-        "and", "email", "phone", "mobile", "number", "thanks", "thank", "cheers",
-        "camperdown", "redfern", "trial", "class", "fitness", "please", "my", "is",
-        "keen", "interested", "looking", "free", "after", "work", "evening", "evenings",
-        "morning", "mornings", "afternoon", "afternoons", "suit", "suits", "me",
-        "best", "main", "goal", "goals", "help", "with",
-    }
-    name_words = [w for w in words if w.lower() not in stop]
-    if not name_words:
-        return None
-    return " ".join(name_words[:2]).title()
+    return None
 
 
 def build_lead_summary(session_id: str, latest_message: str = "") -> dict:
