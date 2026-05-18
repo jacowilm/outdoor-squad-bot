@@ -150,6 +150,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SU
 SUPABASE_TIMEOUT_SECONDS = 12.0
 CONVERSATION_CACHE_MAX_SESSIONS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_MAX", "200"))
 CONVERSATION_CACHE_TTL_SECONDS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_TTL_SECONDS", "3600"))
+CONVERSATION_STATE_MAX_MESSAGES = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_STATE_MAX_MESSAGES", "60"))
 SUPABASE_TABLES = {
     "conversations": "outdoor_squad_conversations",
     "events": "outdoor_squad_events",
@@ -312,8 +313,18 @@ def read_conversation_logs() -> list[dict]:
     return logs
 
 
+def trim_conversation_state(messages: list[dict]) -> list[dict]:
+    """Keep active session state bounded; full review logs live elsewhere."""
+    if CONVERSATION_STATE_MAX_MESSAGES <= 0:
+        return messages
+    if len(messages) <= CONVERSATION_STATE_MAX_MESSAGES:
+        return messages
+    return messages[-CONVERSATION_STATE_MAX_MESSAGES:]
+
+
 def load_conversation(session_id: str) -> list[dict]:
     if session_id in conversations:
+        conversations[session_id] = trim_conversation_state(conversations[session_id])
         touch_conversation_cache(session_id)
         return conversations[session_id]
     messages: list[dict] = []
@@ -332,6 +343,7 @@ def load_conversation(session_id: str) -> list[dict]:
                 messages = rows[0]["messages"]
         except Exception:
             messages = []
+    messages = trim_conversation_state(messages)
     conversations[session_id] = messages
     touch_conversation_cache(session_id)
     prune_conversation_cache(preserve=session_id)
@@ -339,6 +351,8 @@ def load_conversation(session_id: str) -> list[dict]:
 
 
 def persist_conversation(session_id: str) -> None:
+    if session_id in conversations:
+        conversations[session_id] = trim_conversation_state(conversations[session_id])
     touch_conversation_cache(session_id)
     prune_conversation_cache(preserve=session_id)
     if not supabase_enabled():
