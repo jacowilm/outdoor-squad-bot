@@ -6,6 +6,8 @@ Scope: one practical/linkable first version that answers Outdoor Squad FAQs,
 routes prospects toward the right front door, and captures clean lead context.
 """
 import os
+import csv
+import io
 import json
 import random
 import re
@@ -213,6 +215,13 @@ Conversation rules:
 - Keep replies short and mobile-readable: usually 35-80 words, never a giant block
 - Format for a chat bubble: 1-3 short paragraphs, or max 3 very short bullets if a list is genuinely useful
 - Use real line breaks between ideas
+- Structure answers for scanning. If you compare options, put each option on its own short line.
+- Good option shape:
+  SPT: best if you want tighter coaching, programming, and nutrition support.
+  Group classes: best if you want routine, fresh air, and a lower-pressure start.
+  Free trial: easiest way to see if the vibe works.
+- Keep Nick's voice: natural, a little dry, practical, warm. Sound like a coach texting between sessions, not a brochure.
+- Avoid long setup paragraphs before the useful answer. One quick human reaction is enough.
 - Do not use Markdown formatting. No **bold**, no headings, no dense bullet walls.
 - If the user asks for "types", "options", or "what you do", do not list everything. Group the answer into 3-4 simple lines and invite them to pick a path.
 - For workout/class type questions, answer with training styles first, not product names: strength, conditioning/HiiT/run, bootcamp/group sessions, plus kids/YTP only if relevant. Do not describe YTP as a generic adult long-term plan; it is the youth program.
@@ -411,6 +420,11 @@ def clean_agent_reply(reply: str | None) -> str:
     text = (reply or "").strip()
     text = text.replace("**", "")
     text = re.sub(r"^(great|good) question[!.,]?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+-\s+", "\n- ", text)
+    text = re.sub(r"\s+(SPT:)", "\n\n\1", text)
+    text = re.sub(r"\s+(Group classes:)", "\n\1", text)
+    text = re.sub(r"\s+(Free trial:)", "\n\1", text)
+    text = re.sub(r"\s+(Option \d+:)", "\n\1", text, flags=re.IGNORECASE)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text
 
@@ -591,6 +605,38 @@ async def get_leads(_: str = Depends(require_admin)):
     return JSONResponse(leads)
 
 
+@app.get("/api/leads.csv")
+async def export_leads_csv(_: str = Depends(require_admin)):
+    """Admin CSV export for captured leads."""
+    leads = json.loads(LEADS_FILE.read_text())
+    columns = [
+        "timestamp",
+        "name",
+        "email",
+        "phone",
+        "route",
+        "location_preference",
+        "time_preference",
+        "concerns",
+        "handoff_summary",
+        "raw_message",
+        "session_id",
+    ]
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for lead in leads:
+        row = dict(lead)
+        if isinstance(row.get("concerns"), list):
+            row["concerns"] = "; ".join(row["concerns"])
+        writer.writerow(row)
+    return Response(
+        output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="outdoor-squad-leads.csv"'},
+    )
+
+
 @app.post("/api/event")
 async def track_event(request: Request):
     """Lightweight widget analytics for Nicholas/Lyn's weekly review."""
@@ -737,6 +783,8 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         return True
     if is_obvious_boundary_joke(text):
         return True
+    if any(word in text for word in ["nutrition", "meal", "diet", "weight loss", "lose weight"]):
+        return True
 
     # If the user repeats the same short message, answer the behaviour rather
     # than pretending it is a fresh FAQ.
@@ -876,9 +924,11 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
 
     if any(word in text for word in ["food", "nutrition", "meal", "diet", "weight loss"]):
         return (
-            "Yep, nutrition support can be part of it — especially if your goal is weight loss or better routine.\n\n"
-            "Usually it makes sense to start with training goals first, then add nutrition support where it helps.\n\n"
-            "What are you hoping to change over the next few months?"
+            "Yep — if weight loss is the goal, training and food need to stop fighting each other. Annoying, but true.\n\n"
+            "SPT: best if you want tighter coaching, programming, nutrition support, and progress tracking.\n"
+            "Group classes: best if you want routine, fresh air, and a lower-pressure start.\n"
+            "Free meal plan: handy if food is the bit that keeps wobbling.\n\n"
+            "Which bit feels like the bigger blocker right now: training consistency or food?"
         )
 
     if any(word in text for word in ["injury", "injured", "limitation", "bad knee", "back pain", "shoulder"]):
@@ -1101,6 +1151,7 @@ ADMIN_HTML = """
     header { background: radial-gradient(circle at top left, rgba(242,101,34,.42), transparent 34%), linear-gradient(135deg, var(--black), var(--charcoal)); color: white; padding: 20px 24px; border-bottom: 5px solid var(--orange); }
     header h1 { font-size: 1.25rem; margin: 0 0 4px; letter-spacing: 0; }
     header p { margin: 0; opacity: .86; font-size: .9rem; }
+    header a { color: white; text-underline-offset: 3px; }
     main { max-width: 1120px; margin: 0 auto; padding: 18px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
     .card { background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.08); }
@@ -1112,6 +1163,10 @@ ADMIN_HTML = """
     th { background: #f3f3f3; color: var(--black); border-top: 3px solid var(--orange); }
     td:first-child, td:nth-child(2) { white-space: nowrap; }
     .muted { color: var(--muted); font-size: .86rem; }
+    .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 24px 0 10px; }
+    .section-head h2 { margin: 0; }
+    .button { display: inline-block; background: linear-gradient(135deg, var(--orange-dark), var(--orange)); color: white; border: 0; border-radius: 999px; padding: 8px 13px; font-size: .86rem; font-weight: 700; text-decoration: none; white-space: nowrap; }
+    .button:hover { filter: brightness(.96); }
   </style>
 </head>
 <body>
@@ -1121,7 +1176,10 @@ ADMIN_HTML = """
   </header>
   <main>
     <section class="grid" id="metrics"></section>
-    <h2>Captured Leads</h2>
+    <div class="section-head">
+      <h2>Captured Leads</h2>
+      <a class="button" href="/api/leads.csv">Export CSV</a>
+    </div>
     <div id="leads" class="muted">Loading...</div>
     <h2>Recent Redacted Conversation Log</h2>
     <pre id="logs">Loading...</pre>
