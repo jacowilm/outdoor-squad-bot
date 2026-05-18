@@ -608,13 +608,57 @@ def clean_agent_reply(reply: str | None) -> str:
     text = (reply or "").strip()
     text = text.replace("**", "")
     text = re.sub(r"^(great|good) question[!.,]?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<!\n)(Quick summary:)\s*", r"\1\n\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<!\n)(Which option|What kind of injury|What’s the main thing|What are you mainly looking for)", r"\n\n\1", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+-\s+", "\n- ", text)
+    text = re.sub(
+        r"(?<!\n)(Free 1-Day Trial|Free trial|Drop-in / Casual session|Drop-in|Squad Student|Squad Ascent|28-Day Kickstarter|Ongoing SPT|SPT)(?=\s*(?:[:$\-]))",
+        r"\n- \1",
+        text,
+    )
     text = re.sub(r"\s+(SPT:)", "\n\n\1", text)
     text = re.sub(r"\s+(Group classes:)", "\n\1", text)
     text = re.sub(r"\s+(Free trial:)", "\n\1", text)
     text = re.sub(r"\s+(Option \d+:)", "\n\1", text, flags=re.IGNORECASE)
+    text = re.sub(r"\.\s+(?=-\s)", ".\n", text)
+    text = re.sub(r"\n- ([^\n]+)\n- (\$[^\n]+)", r"\n- \1 - \2", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text
+
+
+def recent_assistant_message(session_id: str) -> str:
+    for item in reversed(load_conversation(session_id)):
+        if item.get("role") == "assistant":
+            return item.get("content", "")
+    return ""
+
+
+def contextual_short_reply(message: str, session_id: str) -> str | None:
+    clean = normalise_chat_text(message)
+    previous = recent_assistant_message(session_id).lower()
+    if clean in {"no", "nope", "nah", "none"}:
+        if any(
+            phrase in previous
+            for phrase in [
+                "what kind of injury are you working around",
+                "injuries or limitations",
+                "limitations the coach should know",
+                "old injury",
+            ]
+        ):
+            return (
+                "Sweet — no injuries or limitations to flag.\n\n"
+                "That keeps it straightforward for the coach.\n\n"
+                "Are you leaning more towards a free trial, regular group training, or something more coached like SPT?"
+            )
+    if clean in {"yes", "yep", "yeah", "sure"}:
+        if "want me to explain what usually happens in a first session" in previous:
+            return (
+                "Usually it’s pretty simple.\n\n"
+                "You turn up, meet the coach, get a feel for the session, and they adjust things to your level rather than expecting you to keep up with everyone straight away.\n\n"
+                "If you want, I can also point you to the best location to start with."
+            )
+    return None
 
 
 def should_use_outage_fallback(message: str) -> bool:
@@ -988,6 +1032,8 @@ async def serve_widget():
 def should_use_local_tone_handler(message: str, session_id: str) -> bool:
     """Catch moments that need stateful tone more than generic AI/Q&A."""
     text = normalise_chat_text(message)
+    if contextual_short_reply(message, session_id):
+        return True
     if has_contact_details(message):
         return True
     if is_vague_message(text):
@@ -1031,6 +1077,10 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     """Deterministic replies for the core Outdoor Squad demo paths."""
     text = message.lower()
     clean = normalise_chat_text(message)
+
+    contextual_reply = contextual_short_reply(message, session_id)
+    if contextual_reply:
+        return contextual_reply
 
     if is_vague_message(clean):
         vague_count = sum(
