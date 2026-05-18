@@ -1225,7 +1225,9 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
     stop = {
         "and", "email", "phone", "mobile", "number", "thanks", "thank", "cheers",
         "camperdown", "redfern", "trial", "class", "fitness", "please", "my", "is",
-        "keen", "interested", "looking", "free", "after", "work",
+        "keen", "interested", "looking", "free", "after", "work", "evening", "evenings",
+        "morning", "mornings", "afternoon", "afternoons", "suit", "suits", "me",
+        "best", "main", "goal", "goals", "help", "with",
     }
     name_words = [w for w in words if w.lower() not in stop]
     if not name_words:
