@@ -606,24 +606,24 @@ def generate_ai_reply(message: str, session_id: str) -> tuple[str, str]:
 def clean_agent_reply(reply: str | None) -> str:
     """Keep chat output readable inside a small website bubble."""
     text = (reply or "").strip()
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
     text = text.replace("**", "")
     text = re.sub(r"^(great|good) question[!.,]?\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<!\n)(Quick summary:)\s*", r"\1\n\n", text, flags=re.IGNORECASE)
+    text = text.replace("•", "\n- ")
+    text = re.sub(r"^[*-]\s*", "- ", text, flags=re.MULTILINE)
+    text = re.sub(
+        r"\s+(Training styles:|Pricing highlights:|Options:|Quick summary:|SPT:|Group classes:|Free trial:|Free meal plan:)",
+        r"\n\n\1",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.sub(
         r"(?<!\n)(Which option|What kind of injury|What(?:'|’)s the main thing|What are you mainly looking for)",
         r"\n\n\1",
         text,
         flags=re.IGNORECASE,
     )
-    text = re.sub(r"\s+-\s+", "\n- ", text)
-    text = re.sub(
-        r"(?<!- )(?<!\n)(Free 1-Day Trial|Free trial|Drop-in / Casual session|Drop-in|Squad Student|Squad Ascent|28-Day Kickstarter|Ongoing SPT|SPT)(?=\s*(?:[:$\-]))",
-        r"\n- \1",
-        text,
-    )
-    text = re.sub(r"\s+(Option \d+:)", r"\n\1", text, flags=re.IGNORECASE)
-    text = re.sub(r"\.\s+(?=-\s)", ".\n", text)
-    text = re.sub(r"\n- ([^\n]+)\n- (\$[^\n]+)", r"\n- \1 - \2", text)
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text
@@ -647,6 +647,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 "injuries or limitations",
                 "limitations the coach should know",
                 "old injury",
+                "recent injury",
+                "long-term niggle",
+                "working around",
+                "injury",
+                "limitation",
+                "knee",
             ]
         ):
             return (
@@ -1069,7 +1075,8 @@ def is_vague_message(text: str) -> bool:
         "idk", "i dont know", "i don't know", "dunno", "not sure", "unsure",
         "maybe", "no idea", "hmm", "uh", "umm", "whatever", "?", "help",
     }
-    return text in vague or (len(text) <= 3 and text not in {"spt", "pt"})
+    short_but_meaningful = {"spt", "pt", "no", "nope", "nah", "yes", "yep"}
+    return text in vague or (len(text) <= 3 and text not in short_but_meaningful)
 
 
 def is_obvious_boundary_joke(text: str) -> bool:
