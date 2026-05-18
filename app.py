@@ -71,6 +71,7 @@ KB_PATH = Path(__file__).parent / "knowledge_base.md"
 KNOWLEDGE_BASE = KB_PATH.read_text() if KB_PATH.exists() else ""
 SOURCE_DOC_DIR = Path(__file__).parent / "source-docs" / "ocr-text"
 PRIVATE_FAQ_DIR = Path(__file__).parent / "source-docs" / "private-faq"
+SOURCE_ROOT_DIR = Path(__file__).parent / "source-docs"
 SOURCE_DOCS = []
 if SOURCE_DOC_DIR.exists():
     for source_path in sorted(SOURCE_DOC_DIR.glob("*.txt")):
@@ -78,6 +79,14 @@ if SOURCE_DOC_DIR.exists():
 if PRIVATE_FAQ_DIR.exists():
     for source_path in sorted(PRIVATE_FAQ_DIR.glob("*.txt")):
         SOURCE_DOCS.append({"title": source_path.stem, "text": source_path.read_text(errors="ignore")})
+    for source_path in sorted(PRIVATE_FAQ_DIR.glob("*.md")):
+        SOURCE_DOCS.append({"title": source_path.stem, "text": source_path.read_text(errors="ignore")})
+if SOURCE_ROOT_DIR.exists():
+    for source_path in sorted(SOURCE_ROOT_DIR.glob("*.txt")):
+        SOURCE_DOCS.append({"title": source_path.stem, "text": source_path.read_text(errors="ignore")})
+    readme_path = SOURCE_ROOT_DIR / "README.md"
+    if readme_path.exists():
+        SOURCE_DOCS.append({"title": readme_path.stem, "text": readme_path.read_text(errors="ignore")})
 SOURCE_DOCS.append({"title": "Outdoor Squad curated knowledge base", "text": KNOWLEDGE_BASE})
 
 STOPWORDS = {
