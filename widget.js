@@ -34,7 +34,7 @@
         .os-header h4 { margin: 0; font-size: 0.95rem; }
         .os-header span { font-size: 0.75rem; opacity: 0.8; }
         .os-close { background: none; border: none; color: white; font-size: 1.2rem; cursor: pointer; margin-left: auto; }
-        .os-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+        .os-messages { overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; max-height: min(360px, calc(100vh - 280px)); }
         .os-msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 0.9rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
         .os-msg.bot { background: #ffffff; color: #000000; border: 1px solid #d8d8d8; align-self: flex-start; border-bottom-left-radius: 4px; }
         .os-msg.user { background: linear-gradient(135deg, #ea510a, #f26522); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
@@ -72,7 +72,7 @@
                 <button class="os-close" onclick="document.getElementById('os-chat-panel').classList.remove('open')">&times;</button>
             </div>
             <div class="os-messages" id="os-messages">
-                <div class="os-msg bot">Hey, welcome in. If you're wondering whether this would suit you, or just want to know how it works, send me whatever you're thinking.</div>
+                <div class="os-msg bot">Hey, welcome in. Ask me about classes, prices, injuries, or whether this would suit you.</div>
             </div>
             <div class="os-quick-replies" id="os-quick-replies">
                 <button class="os-chip" data-message="I'm interested but not very fit yet">Not very fit yet</button>
