@@ -403,6 +403,7 @@ Conversation rules:
 - Keep replies short and mobile-readable: usually 35-80 words, never a giant block
 - Format for a chat bubble: 1-3 short paragraphs, or max 3 very short bullets if a list is genuinely useful
 - Use real line breaks between ideas
+- Never send one dense paragraph longer than 2 sentences. If the answer runs longer, break it into short blocks.
 - Structure answers for scanning. If you compare options, put each option on its own short line.
 - Good option shape:
   SPT: best if you want tighter coaching, programming, and nutrition support.
@@ -412,6 +413,7 @@ Conversation rules:
 - Avoid long setup paragraphs before the useful answer. One quick human reaction is enough.
 - Do not use Markdown formatting. No **bold**, no headings, no dense bullet walls.
 - If the user asks for "types", "options", or "what you do", do not list everything. Group the answer into 3-4 simple lines and invite them to pick a path.
+- If you mention prices, options, or comparisons, put each item on its own line instead of hiding it inside a paragraph.
 - For workout/class type questions, answer with training styles first, not product names: strength, conditioning/HiiT/run, bootcamp/group sessions, plus kids/YTP only if relevant. Do not describe YTP as a generic adult long-term plan; it is the youth program.
 - Do not sign messages with "Robo-Nick". The widget already shows who is speaking.
 - Do not paste links/phone/email unless the user is ready to book, asks for contact details, or shares contact details.
@@ -632,7 +634,68 @@ def clean_agent_reply(reply: str | None) -> str:
     )
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    return text
+    return format_reply_for_chat(text)
+
+
+def split_long_paragraph(paragraph: str) -> list[str]:
+    sentence_like = re.split(r"(?<=[.!?])\s+", paragraph.strip())
+    sentence_like = [part.strip() for part in sentence_like if part.strip()]
+    if len(sentence_like) <= 1:
+        return [paragraph.strip()]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    for sentence in sentence_like:
+        current.append(sentence)
+        joined = " ".join(current)
+        if len(joined) >= 120 or len(current) >= 2:
+            chunks.append(joined)
+            current = []
+    if current:
+        chunks.append(" ".join(current))
+    return chunks
+
+
+def format_reply_for_chat(text: str) -> str:
+    option_labels = [
+        "SPT:",
+        "Group classes:",
+        "Free trial:",
+        "Free meal plan:",
+        "Training styles:",
+        "Pricing highlights:",
+        "Options:",
+        "Quick breakdown:",
+        "Quick version:",
+    ]
+    label_pattern = "|".join(re.escape(label) for label in option_labels)
+    text = re.sub(r"\s+(?=(" + label_pattern + r"))", "\n\n", text)
+
+    blocks: list[str] = []
+    for raw_block in re.split(r"\n{2,}", text):
+        block = raw_block.strip()
+        if not block:
+            continue
+        if "\n" in block:
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            blocks.extend(lines)
+            continue
+        if block.startswith("- "):
+            blocks.append(block)
+            continue
+        if len(block) > 140:
+            blocks.extend(split_long_paragraph(block))
+            continue
+        blocks.append(block)
+
+    cleaned_blocks: list[str] = []
+    for block in blocks:
+        if block.startswith("- "):
+            cleaned_blocks.append(block)
+            continue
+        cleaned_blocks.append(block.strip())
+
+    return "\n\n".join(block for block in cleaned_blocks if block).strip()
 
 
 def recent_assistant_message(session_id: str) -> str:
