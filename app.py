@@ -621,12 +621,10 @@ def clean_agent_reply(reply: str | None) -> str:
         r"\n- \1",
         text,
     )
-    text = re.sub(r"\s+(SPT:)", r"\n\n\1", text)
-    text = re.sub(r"\s+(Group classes:)", r"\n\1", text)
-    text = re.sub(r"\s+(Free trial:)", r"\n\1", text)
     text = re.sub(r"\s+(Option \d+:)", r"\n\1", text, flags=re.IGNORECASE)
     text = re.sub(r"\.\s+(?=-\s)", ".\n", text)
     text = re.sub(r"\n- ([^\n]+)\n- (\$[^\n]+)", r"\n- \1 - \2", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text
 
