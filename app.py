@@ -1210,7 +1210,7 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
     contact_stripped = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', explicit_source)
     contact_stripped = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', contact_stripped)
     explicit_name = re.search(
-        r"\b(?:my name is|name is|i am|i'm|this is|call me)\s+([A-Za-z][A-Za-z'-]{1,})(?:\s+([A-Za-z][A-Za-z'-]{1,}))?",
+        r"\b(?:my name is|name is|this is|call me)\s+([A-Za-z][A-Za-z'-]{1,})(?:\s+([A-Za-z][A-Za-z'-]{1,}))?",
         contact_stripped,
         flags=re.IGNORECASE,
     )
@@ -1220,7 +1220,7 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
 
     fallback_source = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', message)
     fallback_source = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', fallback_source)
-    fallback_source = re.sub(r'\b(name is|my name is|i am|i\'m|this is|call me)\b', ' ', fallback_source, flags=re.IGNORECASE)
+    fallback_source = re.sub(r'\b(name is|my name is|this is|call me)\b', ' ', fallback_source, flags=re.IGNORECASE)
     words = re.findall(r"[A-Za-z][A-Za-z'-]{1,}", fallback_source)
     stop = {
         "and", "email", "phone", "mobile", "number", "thanks", "thank", "cheers",
