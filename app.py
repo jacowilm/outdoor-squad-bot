@@ -435,6 +435,8 @@ Conversation rules:
 - For workout/class type questions, answer with training styles first, not product names: strength, conditioning/HiiT/run, bootcamp/group sessions, plus kids/YTP only if relevant. Do not describe YTP as a generic adult long-term plan; it is the youth program.
 - Do not sign messages with "Robo-Nick". The widget already shows who is speaking.
 - Do not paste links/phone/email unless the user is ready to book, asks for contact details, or shares contact details.
+- Never claim an email, SMS, reminder, booking confirmation, meal plan delivery, or notification was sent unless this app actually did it.
+- This app does not send meal plans, SMS reminders, booking confirmations, or notifications by itself. When relevant, say the team can follow up or that you can point the user in the right direction.
 - Make replies easy to scan on a phone
 - Prefer this structure when it fits: quick reaction, direct answer, then one simple next step or question
 - Use line breaks naturally so each idea has room
@@ -458,6 +460,7 @@ Conversation rules:
 - Also avoid generic chatbot filler like 'I'm here to help', 'how can I assist', or 'what do you need help with today'. Sound like Nick's useful front-desk helper, not SaaS support.
 - Use the brand references as seasoning, not wallpaper. Crom, Conan, Tolkien, Princess Bride, RPG/dungeon jokes, and Inner West specifics are all fair game when they fit naturally.
 - Never force a joke into a sensitive, medical, or hesitant moment. Warmth and clarity beat cleverness.
+- Avoid repeating the same logistics line, weather note, or closing question across nearby replies. If the topic is similar, vary the phrasing and move the conversation forward instead of recycling the same sentence.
 - Avoid sounding too polished; a slightly natural spoken tone is better than perfect marketing copy
 - If the user is joking, uncertain, drunk, flirty, embarrassed, forgetful, or changing topic, stay steady and reply like a real person would
 - If contact details are shared, acknowledge them and say the team can follow up; do not pretend an external booking/CRM action already happened.
@@ -527,10 +530,18 @@ def relevant_source_context(message: str, session_id: str, limit: int = 5) -> st
 
 def build_agent_messages(message: str, session_id: str) -> list[dict]:
     context = relevant_source_context(message, session_id)
+    recent_assistant = [
+        m.get("content", "")
+        for m in load_conversation(session_id)[-6:]
+        if m.get("role") == "assistant"
+    ][-3:]
     source_prompt = f"""Relevant Outdoor Squad source context for this reply:
 {context}
 
-Now answer the user's latest message naturally as Robo-Nick. Use the source context, the conversation history, and the user's tone. If the source context does not contain an exact answer, say so briefly and route to a free trial or human follow-up instead of inventing."""
+Recent assistant phrasing to avoid repeating too closely:
+{chr(10).join('- ' + item[:220].replace(chr(10), ' ') for item in recent_assistant) if recent_assistant else '- none'}
+
+Now answer the user's latest message naturally as Robo-Nick. Use the source context, the conversation history, and the user's tone. If the source context does not contain an exact answer, say so briefly and route to a free trial or human follow-up instead of inventing. Do not repeat the same wording or logistics line from the recent assistant phrasing unless the user directly asks again for that exact detail."""
     recent = load_conversation(session_id)[-16:]
     return [
         {"role": "system", "content": BASE_AGENT_PROMPT},
@@ -661,7 +672,23 @@ def clean_agent_reply(reply: str | None) -> str:
     )
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
+    text = guard_operational_claims(text)
     return format_reply_for_chat(text)
+
+
+def guard_operational_claims(text: str) -> str:
+    lowered = text.lower()
+    if any(phrase in lowered for phrase in ["check your spam", "sent to your email", "emailed you the meal plan", "meal plan has been sent"]):
+        return (
+            "If you want the free 5-day meal plan, the team can send that through when they follow up.\n\n"
+            "If you’d rather, I can also point you towards the best training option to pair with it."
+        )
+    if any(phrase in lowered for phrase in ["sms was sent", "text was sent", "24-hour reminder", "booking confirmation has been sent"]):
+        return (
+            "I can’t confirm SMS or reminder sending from here.\n\n"
+            "If you want that sorted, Real Nick or the team can handle it directly when they follow up."
+        )
+    return text
 
 
 def split_long_paragraph(paragraph: str) -> list[str]:
@@ -1121,18 +1148,32 @@ async def health():
         api_key_sources.append("GEMINI_API_KEY")
     providers = configured_ai_providers()
     review_hosted = DEPLOYMENT_MODE == "review"
+    admin_configured = bool(ADMIN_PASSWORD)
+    trial_link_configured = TRIAL_LINK != "https://www.outdoorsquad.com.au"
+    source_chunks_loaded = len(SOURCE_CHUNKS) > 0
+    owner_key_configured = any(source.startswith("OUTDOOR_SQUAD_") for source in api_key_sources)
+    review_ready = (
+        DEPLOYMENT_MODE == "review"
+        and bool(providers)
+        and admin_configured
+        and trial_link_configured
+        and source_chunks_loaded
+    )
     handoff_ready = (
         DEPLOYMENT_MODE == "handoff"
         and bool(providers)
-        and bool(ADMIN_PASSWORD)
-        and TRIAL_LINK != "https://www.outdoorsquad.com.au"
-        and any(source.startswith("OUTDOOR_SQUAD_") for source in api_key_sources)
+        and admin_configured
+        and trial_link_configured
+        and source_chunks_loaded
+        and supabase_enabled()
+        and owner_key_configured
     )
 
     return JSONResponse({
         "ok": True,
         "deployment_mode": DEPLOYMENT_MODE,
         "review_hosted_by_ai_sprints": review_hosted,
+        "review_ready": review_ready,
         "handoff_ready": handoff_ready,
         "storage_backend": "supabase" if supabase_enabled() else "local_files",
         "supabase_configured": supabase_enabled(),
@@ -1143,8 +1184,9 @@ async def health():
         "api_key_sources": api_key_sources,
         "model": os.environ.get("OUTDOOR_SQUAD_OPENAI_MODEL", "gpt-5-mini"),
         "gemini_model": os.environ.get("OUTDOOR_SQUAD_GEMINI_MODEL", "gemini-2.5-flash"),
-        "admin_configured": bool(ADMIN_PASSWORD),
-        "trial_link_configured": TRIAL_LINK != "https://www.outdoorsquad.com.au",
+        "admin_configured": admin_configured,
+        "trial_link_configured": trial_link_configured,
+        "owner_key_configured": owner_key_configured,
         "human_email": HUMAN_EMAIL,
         "human_phone": HUMAN_PHONE,
         "source_chunks": len(SOURCE_CHUNKS),
