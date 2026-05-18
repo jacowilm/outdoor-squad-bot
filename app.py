@@ -616,6 +616,21 @@ def clean_agent_reply(reply: str | None) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text
 
+
+def should_use_outage_fallback(message: str) -> bool:
+    text = message.lower()
+    keyword_groups = [
+        ["free intro", "trial", "free class", "intro class"],
+        ["price", "cost", "how much", "membership", "casual", "drop-in", "drop in"],
+        ["spt", "semi-private", "semi private", "personal training", "kickstarter", "pt"],
+        ["kid", "kids", "child", "son", "daughter", "teen", "young", "ytp"],
+        ["unfit", "beginner", "nervous", "embarrassed"],
+        ["injury", "injured", "limitation", "bad knee", "back pain", "shoulder"],
+        ["food", "nutrition", "meal", "diet", "weight loss"],
+        ["where", "camperdown", "redfern", "parking", "public transport"],
+    ]
+    return any(any(word in text for word in group) for group in keyword_groups)
+
 # In-memory conversation store (per session)
 conversations: dict[str, list] = {}
 
@@ -709,7 +724,7 @@ async def chat(request: Request):
         # The client-ready product is the agent path above. Canned FAQ branches
         # are not the product. Only enable the old deterministic demo fallback
         # deliberately for offline development.
-        if os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1":
+        if os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message):
             reply = demo_fallback_reply(message, session_id=session_id)
         else:
             reply = (
@@ -724,7 +739,10 @@ async def chat(request: Request):
             save_lead(lead_info)
             log_event("lead_captured", **lead_info)
 
-        using_demo_fallback = os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1"
+        using_demo_fallback = (
+            os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1"
+            or should_use_outage_fallback(message)
+        )
         log_bot_reply(session_id, reply, fallback=using_demo_fallback)
 
         payload = {
@@ -981,7 +999,7 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
 
     # If the user repeats the same short message, answer the behaviour rather
     # than pretending it is a fresh FAQ.
-    user_messages = [m["content"] for m in conversations.get(session_id, []) if m.get("role") == "user"]
+    user_messages = [m["content"] for m in load_conversation(session_id) if m.get("role") == "user"]
     short_repeats = [normalise_chat_text(m) for m in user_messages if len(normalise_chat_text(m)) <= 18]
     return len(short_repeats) >= 2 and short_repeats[-1] == short_repeats[-2]
 
@@ -1017,7 +1035,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     if is_vague_message(clean):
         vague_count = sum(
             1
-            for m in conversations.get(session_id, [])
+            for m in load_conversation(session_id)
             if m.get("role") == "user" and is_vague_message(normalise_chat_text(m.get("content", "")))
         )
         if vague_count <= 1:
@@ -1040,9 +1058,16 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
         )
 
     if re.search(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', message) or re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', message):
+        name = extract_contact_name(message, session_id=session_id)
+        intro = f"Perfect — I’ve got those contact details, {name.split()[0]}." if name else "Perfect — I’ve got those contact details."
+        follow_up = (
+            "The team can use that to follow up about the best free intro, SPT, or coach-call option for you."
+            if name
+            else "If you haven’t already, send your first name too so Nick or Lyn know who they’re replying to."
+        )
         return (
-            "Perfect — I’ve got those contact details.\n\n"
-            "The team can use that to follow up about the best free intro, SPT, or coach-call option for you.\n\n"
+            f"{intro}\n\n"
+            f"{follow_up}\n\n"
             "Before they reach out, what’s the main thing you want help with: fitness, weight loss, routine, or confidence getting started?"
         )
 
@@ -1163,7 +1188,7 @@ def extract_lead_info(message: str, session_id: str) -> dict | None:
     if not info:
         return None
 
-    name = extract_contact_name(message)
+    name = extract_contact_name(message, session_id=session_id)
     if name:
         info['name'] = name
 
@@ -1174,9 +1199,15 @@ def extract_lead_info(message: str, session_id: str) -> dict | None:
     return info
 
 
-def extract_contact_name(message: str) -> str | None:
+def extract_contact_name(message: str, session_id: str = "default") -> str | None:
     """Best-effort name extraction when a visitor drops contact details."""
-    contact_stripped = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', message)
+    history = "\n".join(
+        m.get("content", "")
+        for m in load_conversation(session_id)
+        if m.get("role") == "user"
+    )
+    explicit_source = "\n".join(part for part in [history, message] if part).strip()
+    contact_stripped = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', explicit_source)
     contact_stripped = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', contact_stripped)
     explicit_name = re.search(
         r"\b(?:my name is|name is|i am|i'm|this is|call me)\s+([A-Za-z][A-Za-z'-]{1,})(?:\s+([A-Za-z][A-Za-z'-]{1,}))?",
@@ -1187,8 +1218,10 @@ def extract_contact_name(message: str) -> str | None:
         captured = [part for part in explicit_name.groups() if part]
         return " ".join(captured).title()
 
-    contact_stripped = re.sub(r'\b(name is|my name is|i am|i\'m|this is|call me)\b', ' ', contact_stripped, flags=re.IGNORECASE)
-    words = re.findall(r"[A-Za-z][A-Za-z'-]{1,}", contact_stripped)
+    fallback_source = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', message)
+    fallback_source = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', fallback_source)
+    fallback_source = re.sub(r'\b(name is|my name is|i am|i\'m|this is|call me)\b', ' ', fallback_source, flags=re.IGNORECASE)
+    words = re.findall(r"[A-Za-z][A-Za-z'-]{1,}", fallback_source)
     stop = {
         "and", "email", "phone", "mobile", "number", "thanks", "thank", "cheers",
         "camperdown", "redfern", "trial", "class", "fitness", "please", "my", "is",
@@ -1250,7 +1283,14 @@ def log_bot_reply(session_id: str, reply: str, fallback: bool = False):
         log_event("fallback_reply_used", session_id=session_id)
     if TRIAL_LINK.lower() in lower:
         log_event("booking_link_shown", session_id=session_id)
-    if HUMAN_EMAIL.lower() in lower or HUMAN_PHONE in reply or "team can follow up" in lower:
+    if (
+        HUMAN_EMAIL.lower() in lower
+        or HUMAN_PHONE in reply
+        or "team can follow up" in lower
+        or "team can use that to follow up" in lower
+        or "nick or lyn" in lower
+        or "saved your details" in lower
+    ):
         log_event("human_handoff_suggested", session_id=session_id)
     log_event("bot_reply_sent", session_id=session_id, reply_length=len(reply))
 
