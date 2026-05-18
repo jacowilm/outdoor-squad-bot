@@ -617,7 +617,7 @@ def clean_agent_reply(reply: str | None) -> str:
     )
     text = re.sub(r"\s+-\s+", "\n- ", text)
     text = re.sub(
-        r"(?<!\n)(Free 1-Day Trial|Free trial|Drop-in / Casual session|Drop-in|Squad Student|Squad Ascent|28-Day Kickstarter|Ongoing SPT|SPT)(?=\s*(?:[:$\-]))",
+        r"(?<!- )(?<!\n)(Free 1-Day Trial|Free trial|Drop-in / Casual session|Drop-in|Squad Student|Squad Ascent|28-Day Kickstarter|Ongoing SPT|SPT)(?=\s*(?:[:$\-]))",
         r"\n- \1",
         text,
     )
