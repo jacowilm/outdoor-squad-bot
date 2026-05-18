@@ -1,0 +1,495 @@
+
+
+--- PAGE 1 ---
+The Outdoor Squad — Offer Architecture
+Why this document exists
+Most fitness businesses make pricing decisions one product at a time and end up with an offer
+ladder that's confusing for prospects, hard for staff to explain, and leaks revenue through poorly-
+positioned options. The point of this document is to be the single source of truth on what The
+Outdoor Squad sells, who each product is for, how the products relate to each other, and how
+prospects move through them.
+Use this document when:
+
+e Pricing or repricing any product
+
+¢ Designing a launch (the new product needs a place in the ladder)
+
+¢ Briefing the team on how to talk about offers
+
+¢ Training the chatbot on what to recommend to whom
+
+¢ Writing website copy for any product page
+
+e Reviewing whether the ladder is still working (quarterly)
+This document captures the offer architecture as of May 2026, immediately following the SPT
+and YTP launches and the retirement of Squad Ignite and standalone Nutrition Coaching.
+The full offer ladder
+Eight products. Four for adults, one for kids, two trial pathways, one for casual drop-ins. Plus 1:1
+PT held in reserve as an unmarketed option.
+
+
+--- PAGE 2 ---
+Product Price What it is Primary audience
+1-Day Free Trial Pass Free Single class as a guest Cold prospects
+5-Day High-Protein Free (lead Email opt-in, downloadable Cold prospects
+Meal Plan magnet) meal plan
+Drop-in / Casual $37 Single class,nomembership _ Visitors, lapsed members
+Session
+Squad Student $25/wk Unlimited group classes Students (verified)
+YTP (Young'N'Strong) $25/wk Saturday class (Wed 4pm to Kids 10-17
+follow)
+Squad Ascent $51/wk Unlimited group classes Adult group members
+SPT 2x + Group $125/wk 2x SPT sessions + unlimited Serious trainees, specific
+group Classes goals
+SPT 3x + Group $175/wk 3x SPT sessions + unlimited Highly committed trainees
+group classes
+28-Day Kickstarter $397 28 days of SPT + nutrition SPT trial / Avatar 4 entry
+plan + assessment
+1:1 Personal Training $150/session One-on-one coaching Niche cases only — not
+actively promoted
+Everything below this table is the why behind each row, and the strategic logic that makes the
+ladder work as a system.
+The products in detail
+1-Day Free Trial Pass
+Role in the ladder: Primary acquisition mechanism. The first promise to a cold prospect.
+Whoit's for: Avatar 1 (Desk-Bound Professional) primarily, plus Avatar 3 (Holistic Mover) and
+any prospect who needs to "see what it's like" before committing. Avatar 2 (Strength Seeker)
+sometimes uses this; more often skips it for the Kickstarter.
+What's included: One free class at any standard time slot, both locations. Pre-trial email with
+what to expect, what to bring, where to park, who to look for.
+
+
+--- PAGE 3 ---
+What's NOT included: Multiple sessions, nutrition consult, movement screen, SPT.
+
+Conversion target: Trial-to-paid within 14 days. Trial > Squad Ascent is the most common path.
+Strategic notes: This is your front door. The trial experience needs to be ruthlessly good — warm
+welcome, name remembered, clear next-step conversation at the end. Trial conversion rate is one
+of the most important metrics in the whole business; treat it as such.
+
+5-Day High-Protein Australian Meal Plan (lead magnet)
+
+Role in the ladder: Email list builder. Lower commitment than the trial pass, captures prospects
+who aren't ready to physically show up yet.
+
+Whoit's for: All avatars at the awareness stage. Particularly strong for Avatar 1 (curious but
+anxious) and Avatar 3 (researcher type who wants something useful before committing).
+What's included: Downloadable meal plan delivered by email; opt-in to the email nurture
+sequence afterwards.
+
+Strategic notes: A lead magnet's job isn't to be perfect — it's to be useful enough that the
+prospect feels they got something good, while gently building the case for full membership. The
+follow-up email sequence is what converts; the meal plan itself is the door-opener. Both need to
+be good. Worth a refresh annually.
+
+Drop-in / Casual Session — $37
+
+Role in the ladder: Friction. Designed not to be cheap.
+
+Who it's for: Visitors to Sydney, lapsed members coming back to test the waters, people whose
+schedule genuinely can't accommodate a regular membership.
+
+What's included: One session, any standard time slot.
+
+Strategic notes: $37 looks expensive against $51/wk for 5+ sessions, and that's deliberate. A $37
+drop-in price sends the message "the membership is the obvious choice." If casual drop-in
+prospects buy it twice, conversation about membership starts.
+
+This is also a useful price anchor. When prospects ask "how much is it?" the high-end honest
+answer ($175/wk SPT 3x), the middle answer ($51/wk Squad Ascent), and the casual answer
+($37/session) make the membership look like the rational decision before you say a word about
+it.
+
+
+--- PAGE 4 ---
+Squad Student — $25/wk
+
+Role in the ladder: Affordable entry for a specific demographic. Pricing access without diluting
+the main product.
+
+Whoit's for: Tertiary students (verified). Adjacent demographic to Avatar 2 (some young
+Strength Seekers are still students).
+
+What's included: Unlimited group classes — same product as Squad Ascent, different price,
+eligibility-gated.
+
+Strategic notes: Students who train at TOS as students tend to graduate into Squad Ascent / SPT
+members later in life. The lifetime value of a student member is meaningfully higher than the
+weekly revenue suggests. Verify student status to prevent abuse, but otherwise let it run.
+
+YTP (Young'N'Strong) — $25/wk
+
+Role in the ladder: A new audience entirely. The parent buys; the kid uses.
+
+Who it's for: Avatar 5 (parent-buyer) of a 10-17-year-old. Often an existing TOS member who
+wants their kid to do what they do.
+
+What's included: Saturday 9:15am class at Camperdown. Wednesday 4pm slot to follow as
+demand warrants. Coached by qualified, WWCC-checked trainers.
+
+What's NOT included: Adult classes, nutrition (kids nutrition is parent-led).
+
+Strategic notes: Pricing is sharp. Don't apologise for it — at $25/wk it's accessible and at par with
+kids' soccer or swim school. The single biggest YTP marketing channel is parents who already
+train at TOS. The single biggest YTP risk is mixed age range disappointing both ends of the
+cohort — watch this in the first 6-8 weeks and split into 10-13 / 14-17 brackets if numbers
+warrant.
+
+YTP also unlocks a family revenue dynamic. A family with two kids in YTP and a parent in Squad
+Ascent or SPT is paying $100-225/wk to The Outdoor Squad. That's the kind of LTV that builds a
+business. Worth designing family bundle bonuses (not discounts) into the YTP page once it's
+stable — e.g. parent of a YTP child gets free movement screen, free nutrition consult, etc., as add-
+ons to their existing membership.
+
+Squad Ascent — $51/wk
+
+Role in the ladder: The core product. The membership that defines The Outdoor Squad as a
+business.
+
+
+--- PAGE 5 ---
+Who it's for: Avatars 1 and 3 primarily — Desk-Bound Professionals and Holistic Movers. Avatar
+2 (Strength Seekers) may start here before upgrading to SPT.
+What's included: Unlimited group classes across all class types (Strength'N'Tone, HiiT'N'Run,
+Buff'N'Puff, Power'N'Pilates, Yoga Squad, Outdoor Hyrox, Core'N'Sore) at both locations.
+What's NOT included: Personalised programming, nutrition coaching, formal movement screen,
+regular 1:1 assessment, SPT slots, 1:1 PT.
+Strategic notes: This is the product that the brand's reputation is built on. It carries the largest
+volume of members and provides the community foundation that makes the rest of the offer
+ladder make sense. Don't mess with it. Don't discount it. Don't add complexity that dilutes
+"$51/wk for unlimited group." The simplicity is part of the value.
+Squad Ascent is also where the long-term member relationship is forged. SPT members come
+and go through life seasons; Squad Ascent members stay for years. The retention of this product
+is the retention of the business.
+SPT 2x + Group — $125/wk
+Role in the ladder: The serious-trainee upgrade. Where members go when they want
+personalisation, accountability, and real progression alongside the community they're already
+part of.
+Whoit's for: Avatar 4 (SPT Prospect) primarily — and the most common entry path is Sub-type
+A (existing group member upgrading). Also Avatar 2 (Strength Seekers wanting structured
+programming) and a slice of Avatar 3 (Holistic Movers wanting longevity-focused work).
+What's included:
+
+¢ 2SPT sessions per week (4-person max)
+
+¢ Unlimited group classes (every Squad Ascent class included)
+
+¢ Personalised programming on a 6-week cycle
+
+¢ Movement screen and personalised warm-up (free, on starting)
+
+e 12-week assessment cadence (regardless of join date)
+
+¢ Nutrition plan and tracking
+
+¢ Regular reviews and program adjustments
+What's NOT included: 1:1 PT (different product), unlimited SPT slots (capped at 2/wk on this
+tier).
+Pricing logic: $125/wk = $62.50 per SPT session, with unlimited group bundled in at zero
+additional cost. Compared to 1:1 PT at $150/session, SPT works out at less than half the per-
+
+
+--- PAGE 6 ---
+session rate while adding community, more sessions per week, and full programming
+infrastructure. The pricing makes the upgrade decision easy for serious trainees.
+Capacity note: 4-person max. This is the sweet spot — small enough to feel personal and deliver
+real coaching attention, large enough to be commercially viable at this price point. Don't expand
+to 5 or 6 — at that point the product becomes a small group class, not SPT, and the differentiation
+collapses.
+SPT 3x + Group — $175/wk
+Role in the ladder: The committed-athlete tier. For members training seriously who want to
+make SPT the foundation of their week.
+Whoit's for: Avatar 2 (Strength Seekers), highly engaged Avatar 4 prospects, and members
+specifically training for events (Hyrox, hikes, sport prep). Also a small subset of Avatar 3 who are
+full-on about longevity and willing to invest in it.
+What's included: Same as SPT 2x, but with 3 SPT sessions per week instead of 2.
+Pricing logic: $175/wk = $58.30 per SPT session (with group bundled). The per-session rate goes
+down as commitment goes up — the standard volume-discount logic of paid memberships.
+Simple to explain: "more sessions, slightly less per session." Don't lose this — it's the rational
+reason to step up.
+Capacity note: As above. Same room, same trainer attention, just one more session per week for
+the member.
+28-Day Kickstarter — $397
+Role in the ladder: SPT trial product. The most important new launch product because it's how
+cold prospects experience SPT without committing to ongoing fees.
+Whoit's for: Avatar 4 (SPT Prospect) primarily, especially Sub-types B (PT-curious newcomer)
+and C (buddy/pair). Sub-type A (upgrading existing member) often skips this and goes straight
+to ongoing SPT.
+What's included:
+
+¢ 4weeks of SPT (8 sessions if 2x/wk)
+
+« Movement screen and personalised warm-up
+
+¢ 28-day nutrition plan
+
+¢ Initial assessment (baseline measurements, movement, key lifts)
+
+« Finalassessment (progress data, program for next cycle)
+
+
+--- PAGE 7 ---
+¢ Unlimited group classes for the 28 days
+What's NOT included: Ongoing membership (this is a trial / bridge product).
+Pricing logic: $397 = $99/wk averaged. Roughly 20% premium over SPT 2x at $125/wk standard
+rate, justified by the assessment + nutrition plan + onboarding bundle. Designed to be a no-
+brainer "try before you commit" play that's profitable on its own.
+Conversion target: Kickstarter members converting to ongoing SPT 2x or 3x at the end of the 28
+days. Goal conversion rate: 70%+. Track this — it's the single most diagnostic metric of SPT
+product-market fit.
+Strategic notes: The Kickstarter is also the natural product to lead the launch campaign with
+("Mates + Weights = Meights — try our 28-day SPT Kickstarter together"). It's a complete
+product the prospect can evaluate, not a vague "join us" pitch.
+For existing group members upgrading during the launch window: include launch bonuses
+(longer pause window, free guest pass, complimentary follow-up nutrition consult, etc.) — value-
+stack, not discount. Same $397 price; more in the box.
+1:1 Personal Training — $150/session
+Role in the ladder: Niche premium product. Available, not actively promoted.
+Who it's for: Cases where SPT genuinely won't work — rehab clients, severe social anxiety
+preventing group settings, very advanced or specialised athletic prep, members in crisis or
+transition who need maximum personalisation. Also kept available for existing 1:1 PT clients who
+don't want to switch.
+What's included: One coaching session, fully personalised, any standard time/location.
+Pricing logic: Lifted from $125 to $150 for two reasons. First, it makes the SPT comparison even
+more obvious ($150 for one PT session vs $125/wk for two SPT sessions plus group). Second, $125
+was under-market for an experienced trainer in the Inner West; $150 brings it in line.
+Strategic positioning: When a prospect enquires about 1:1 PT, the conversation goes: "We do
+offer 1:1 PT at $150 a session, and that's there for cases that genuinely need it. Most people who
+come to us thinking they need 1:1 actually get better results from SPT — same level of
+programming and attention, plus community, at half the per-session price. Worth me explaining
+how SPT works first?"
+That's the script. The bot should know it.
+Strategic notes: 1:1 PT is being deliberately de-emphasised, not killed. Don't market it on the
+website beyond a single line on the services page. Don't promote it in social. When prospects ask,
+
+
+--- PAGE 8 ---
+redirect to SPT. Existing 1:1 PT clients keep their access; new 1:1 enquiries get the redirect
+conversation.
+Operational policies that affect the offer ladder
+Membership terms
+
+e Squad Ascent, Squad Student, YTP: Weekly rolling. Cancel any time with 1 week's notice.
+
+¢ SPT (any tier): 12-week minimum term, then fortnight-to-fortnight rolling.
+
+¢ Drop-in: Per session, no commitment.
+
+¢ 1:1 PT: Per session or in packs (define pack pricing if you offer them).
+
+¢ 28-Day Kickstarter: Fixed 28-day term; converts to ongoing SPT or ends.
+Pause policy (applies to all weekly memberships)
+
+¢ Upto8 weeks per calendar year on hold
+
+¢ Minimum 1-week blocks
+
+e Requested in advance via email or in-app
+
+¢ Nomid-block partial pauses
+Cancellation and makeup (SPT-specific)
+
+e 24hours' notice required for cancellation of an SPT session
+
+« 1makeup session per calendar month allowed (use it or lose it; doesn't roll over)
+
+¢ No-shows forfeit the session
+
+¢ Rescheduling beyond 24 hours is at trainer's discretion
+Trial-to-paid conversion windows
+
+¢ 1-Day Free Trial Pass valid for one session within 14 days of issue
+
+¢ Strong follow-up sequence (email + SMS) over the 14 days
+
+¢ Hard nudge at day 7 and day 13 ("we'd love to see you back; here's how to make it happen")
+Annual prepayment option (SPT only)
+For SPT members specifically, an annual upfront payment option is available with a 5% discount.
+The logic: this is a cash-flow-driven discount, not a price-competition discount. The 5% comes
+from the cash flow benefit of upfront payment, not from caving to bargain-hunters. Annual
+prepay also signals and reinforces member commitment, which improves retention.
+
+
+--- PAGE 9 ---
+¢ SPT 2x annual: $6,175 (saves $325 vs $125/wk x 52)
+e SPT 3x annual: $8,645 (saves $455 vs $175/wk x 52)
+e Available on signup or at any 12-week renewal point
+¢ Non-refundable except by mutual agreement; pause policy still applies
+e Squad Ascent stays weekly-only — simplicity is part of its value
+This is the only discount in the offer architecture and is structurally different from bargain-
+hunter discounts that are off-strategy. Don't extend prepayment discounts to other products
+without thinking carefully about the precedent.
+The customer journey through the ladder
+Most prospects don't enter and stay at one tier — they move through the ladder over time.
+Designing the journey deliberately matters more than designing any single product well.
+The standard adult journey (Avatar 1 / Avatar 3)
+1. Awareness. Sees content (GBP, Pinterest, organic, word of mouth). Visits website.
+2. Interest. Downloads meal plan OR books trial.
+3. Trial. Comes to one session. Experiences the brand, the community, the format.
+4. First commitment. Joins Squad Ascent at $51/wk.
+5. Habituation. First 12 weeks. Most churn risk lives here. Trainer relationships, community
+ties, visible progress.
+6. Long-term member. Months 3-24. Squad Ascent regular. Possibly attends social events,
+brings friends.
+7. Optional upgrade. Specific trigger (goal, plateau, event, life change) causes interest in SPT.
+Conversion to SPT 2x.
+8. Long-term high-value member. SPT regular for 1-3 years. Possibly upgrades to SPT 3x.
+Possibly downgrades back to Squad Ascent during life stages.
+9. Lifetime advocate. Refers friends and family. Possibly enrolls a kid in YTP. May upgrade
+partner via Meights to SPT.
+The Strength Seeker journey (Avatar 2)
+1. Awareness. Often arrives via Instagram, Reddit, word-of-mouth from another lifter.
+2. Interest. Reads about programming, looks for credibility signals (kettlebell, strongman,
+Hyrox content).
+
+
+--- PAGE 10 ---
+3. Trial OR direct entry. Often skips the trial — books the Kickstarter or signs up direct to
+SPT.
+
+4. Conversion. Almost immediately a high-value member. SPT 2x or 3x within first month.
+
+5. Long-term high-value member. Stays for years if programming keeps them progressing.
+The Parent-Buyer journey (Avatar 5)
+
+1. Awareness. Often via existing parent network, school, or being a TOS member already.
+
+2. Trial. Brings kid to a session (or watches a session) before committing.
+
+3. Commitment. Enrols kid in YTP at $25/wk.
+
+4. Family expansion. Possibly enrols second child. Possibly upgrades own membership.
+
+5. Long-term family relationship. Multi-product household, often for years.
+The Re-engagement journey (lapsed members)
+
+1. Awareness. Receives outreach (Robo-Nick automation), or initiates contact themselves.
+
+2. Re-trial. Often via Drop-in (paid one-off) or special "welcome back" trial.
+
+3. Re-commitment. Squad Ascent or SPT depending on prior tier.
+Strategic notes on the ladder as a system
+Pricing logic in plain English
+
+* Casual: $37/session (Drop-in)
+
+« Group membership: ~$10/session at 5 sessions/wk ($51/wk Squad Ascent)
+
+« SPT membership: ~$60/session including group bundled in
+
+¢ Premium 1:1: $150/session
+Each step up the ladder roughly doubles the price and adds a meaningful tier of personalisation,
+programming, and accountability. That's how a good ladder feels — each step is a real choice, and
+the value differences are obvious.
+Why the SPT-as-2x-Group pricing works
+SPT at $125/wk is roughly 2.5x Squad Ascent at $51/wk. That's a meaningful step but not an
+unreachable one. For a member earning a professional salary, the upgrade decision is "do I want
+personalised programming and accountability for an extra $74/wk?" — that's the right question
+
+
+--- PAGE 11 ---
+to be asking. Most "yes" answers come from members 6-24 months into their Squad Ascent
+membership.
+Don't compress this gap by introducing a mid-tier product. The clarity of "group OR SPT" is part
+of why the ladder works.
+Why we don't offer SPT-only (without group)
+You could theoretically sell SPT 2x at $115/wk without group included. We're deliberately not
+doing that. Reasons:
+e It would create a weird ladder rung between Squad Ascent and SPT 2x
+¢ It would dilute SPT's positioning (SPT is the upgrade — group is a feature, not optional)
+¢ It would reduce session frequency for SPT members (they'd train 2x instead of 5x), which
+would hurt their results, which would hurt retention, which would hurt the product
+The "SPT + group bundled" architecture is a feature, not a constraint. It drives results and
+revenue simultaneously.
+Why 1:1 PT being de-emphasised matters more than killing it
+Keeping 1:1 PT at $150/session and not actively promoting it does three jobs at once:
+1. Anchors the price ladder — having a $150/session product available makes SPT look
+extraordinary value
+2. Serves edge cases — people who genuinely need 1:1 can still access it
+3. Doesn't force existing 1:1 clients to switch — preserves their relationship with their trainer
+4. Removes operational complexity by not needing a "1:1 PT marketing strategy" — the
+strategy is "redirect to SPT unless absolutely necessary"
+If 1:1 PT bookings drop to negligible levels over 12 months, you can quietly retire the product. If
+they don't, you've Kept revenue you'd otherwise have lost.
+What this ladder is missing (deliberately)
+These are products you could add but shouldn't:
+* Mid-tier semi-private (5-8 person small group). Compresses the SPT positioning. Don't.
+¢ Online programming product. Different business model, different operations, would
+distract from Bets 1 and 2.
+¢ Corporate / team training. Possibly worth doing in year 2 once the core is stable. Not now.
+¢ Anutrition-only product. Standalone hasn't worked; rolling it into SPT and Kickstarter is
+the right path.
+
+
+--- PAGE 12 ---
+¢ Discount packages of any kind. Off-brand and erodes price integrity. Value-stack instead.
+How this ladder talks to the rest of the business
+The chatbot
+The chatbot's product knowledge is this document. Make sure Jacobo trains the bot specifically
+on:
+
+e Which product to recommend to which avatar (the journey logic above)
+
+e The 1:1-PT-redirect script (default to SPT)
+
+¢ The Kickstarter as the trial product for SPT-curious prospects
+
+¢ The trial pass as the entry point for general prospects
+
+¢ Pricing and what's included for each product
+
+¢ The pause and cancellation policies (these will get asked frequently)
+The website
+Each product needs its own page or section, with a clear "who this is for" and clear progression to
+the next step in the ladder. The website is currently being rebuilt as part of Bet 3 — this offer
+architecture is the canonical product list for that rebuild.
+The team
+Trainers and the VA need to be able to talk about every product in the ladder confidently. A 30-
+minute team session walking through this document is worthwhile. The most common confused
+conversation will be "which product should I be on?" — every team member should be able to
+handle that.
+What's changing from the previous architecture
+For the team: the changes since the start of 2026 are:
+
+« Squad Ignite ($150/wk) — retired. Never landed; overlapped messily with SPT. Existing
+
+Squad Ignite members migrated to SPT 3x at $175/wk with a 30-day transition window.
+¢ Standalone Nutrition Coaching ($25/wk) — retired. Folded into SPT and into the
+Kickstarter. Existing nutrition-only clients offered SPT trial or Kickstarter at standard rate.
+¢ SPT 2xand SPT 3x — launched June 2026. New core products.
+« YTP(Young'N'Strong) — launched May 2026. New audience.
+
+
+--- PAGE 13 ---
+¢ 28-Day Kickstarter — launched June 2026. SPT trial product.
+
+¢ 1:1PT—repriced from $125 to $150/session, de-emphasised in marketing.
+
+* Onboarding session — was an optional $97 add-on. Now bundled free into all SPT
+signups and the Kickstarter.
+
+Open questions and things to revisit
+
+¢ Family /Meights bundle pricing. Once SPT is stable (6 months in?), worth designing a
+"two people sign up together" pricing for the buddy/pair sub-type.
+
+¢ YTPcapacity expansion. When does Wednesday 4pm slot launch? When does the age
+cohort split (10-13 / 14-17)?
+
+« Corporate /team SPT product. Year 2 question. Note for later.
+
+¢ Loyalty rewards for long-term members. Currently nothing formal at the 1-year, 3-year, 5-
+year mark. Worth designing — non-monetary recognition can drive significant retention.
+
+How to use and update this document
+
+e Review quarterly. Pricing, products, and strategic positioning of each tier.
+
+¢ Update when a product launches, changes price, or retires. Don't let the doc get stale—a
+stale offer architecture doc is worse than no doc.
+
+¢ Share with all team members and the VA. This isn't internal-only strategy — it's the
+operating manual for how every product works.
+
+¢ Runnew product ideas against this ladder. If a proposed new product doesn't have a clear,
+distinct rung in the ladder, don't launch it.

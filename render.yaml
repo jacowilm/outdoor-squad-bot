@@ -5,6 +5,24 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: OPENAI_API_KEY
+      - key: OUTDOOR_SQUAD_OPENAI_API_KEY
         sync: false
+      - key: OUTDOOR_SQUAD_OPENAI_MODEL
+        value: gpt-5-mini
+      - key: OUTDOOR_SQUAD_DEPLOYMENT_MODE
+        value: review
+      - key: OUTDOOR_SQUAD_GEMINI_API_KEY
+        sync: false
+      - key: OUTDOOR_SQUAD_GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: OUTDOOR_SQUAD_ADMIN_USERNAME
+        value: outdoorsquad
+      - key: OUTDOOR_SQUAD_ADMIN_PASSWORD
+        sync: false
+      - key: OUTDOOR_SQUAD_TRIAL_LINK
+        sync: false
+      - key: OUTDOOR_SQUAD_HUMAN_EMAIL
+        value: innerwest@outdoorsquad.com.au
+      - key: OUTDOOR_SQUAD_HUMAN_PHONE
+        value: 0402 439 361
     plan: free

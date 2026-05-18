@@ -6,7 +6,19 @@
  */
 (function() {
     const API_URL = document.currentScript.src.replace('/widget.js', '/api/chat');
+    const EVENT_URL = document.currentScript.src.replace('/widget.js', '/api/event');
     const SESSION_ID = 'widget-' + Math.random().toString(36).substr(2, 9);
+
+    function track(eventType, metadata) {
+        try {
+            fetch(EVENT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event_type: eventType, session_id: SESSION_ID, metadata: metadata || {} }),
+                keepalive: true
+            }).catch(() => {});
+        } catch(e) {}
+    }
 
     // Inject styles
     const style = document.createElement('style');
@@ -23,7 +35,7 @@
         .os-header span { font-size: 0.75rem; opacity: 0.8; }
         .os-close { background: none; border: none; color: white; font-size: 1.2rem; cursor: pointer; margin-left: auto; }
         .os-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; max-height: 350px; }
-        .os-msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 0.9rem; line-height: 1.4; }
+        .os-msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 0.9rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
         .os-msg.bot { background: #f0f0f0; align-self: flex-start; border-bottom-left-radius: 4px; }
         .os-msg.user { background: linear-gradient(135deg, #2d5016, #4a7c23); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
         .os-quick-replies { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
@@ -83,13 +95,21 @@
         if (panel.classList.contains('open')) {
             bubble.querySelector('.badge').style.display = 'none';
             input.focus();
+            track('widget_opened');
         }
     };
+
+    function formatBotText(text) {
+        return String(text || '')
+            .replace(/\*\*/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
 
     function addMsg(text, type) {
         const el = document.createElement('div');
         el.className = `os-msg ${type}`;
-        el.textContent = text;
+        el.textContent = type === 'bot' ? formatBotText(text) : text;
         msgs.appendChild(el);
         msgs.scrollTop = msgs.scrollHeight;
     }
@@ -97,6 +117,7 @@
     async function send(presetText) {
         const text = (presetText || input.value).trim();
         if (!text) return;
+        track(presetText ? 'quick_reply_clicked' : 'message_sent', { message_length: text.length });
         input.value = '';
         if (quickReplies) quickReplies.style.display = 'none';
         addMsg(text, 'user');

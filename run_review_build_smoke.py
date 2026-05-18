@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Outdoor Squad paid review-build smoke test.
+
+Runs the seven client-review paths without leaving QA rows in owner-facing
+lead, event, or conversation files. Exits non-zero until the AI backend is
+configured and every AI-backed path avoids the backend-unavailable message.
+"""
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import uuid
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+import app
+
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_FILES = [
+    BASE_DIR / "leads.json",
+    BASE_DIR / "events.jsonl",
+    BASE_DIR / "conversation_logs.jsonl",
+]
+
+CASES = [
+    ("beginner", "I'm pretty unfit and nervous. Is this okay for beginners?", True),
+    ("kickstarter", "What's the 28 day Kickstarter and who is it for?", True),
+    ("ytp", "Do you have anything for my 13 year old son?", True),
+    ("pricing", "How much does it cost after the free trial?", True),
+    ("injury", "I have a dodgy knee, can I still join?", True),
+    ("oddball", "Does this involve nudity or army yelling?", False),
+    (
+        "contact",
+        "I'm Sam, mobile 0412 345 678, keen to try an evening session in Camperdown.",
+        False,
+    ),
+]
+
+BACKEND_UNAVAILABLE = "trouble reaching the AI backend"
+
+
+@contextlib.contextmanager
+def preserve_data_files():
+    snapshots = {}
+    for path in DATA_FILES:
+        snapshots[path] = path.read_text() if path.exists() else None
+    try:
+        yield
+    finally:
+        for path, content in snapshots.items():
+            if content is None:
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
+            else:
+                path.write_text(content)
+
+
+def main() -> int:
+    client = TestClient(app.app)
+    failures: list[str] = []
+    mode = os.environ.get("OUTDOOR_SQUAD_DEPLOYMENT_MODE", "review").strip().lower()
+    if mode not in {"review", "handoff"}:
+        failures.append(f"Unknown OUTDOOR_SQUAD_DEPLOYMENT_MODE: {mode}")
+
+    with preserve_data_files():
+        health = client.get("/api/health").json()
+        print("health:", json.dumps(health, sort_keys=True))
+
+        if not health.get("ai_configured"):
+            failures.append("AI backend is not configured")
+        if not health.get("admin_configured"):
+            failures.append("Admin auth is not configured")
+        if mode == "handoff":
+            if not health.get("trial_link_configured"):
+                failures.append("Final trial/booking link is not configured")
+            if not health.get("handoff_ready"):
+                failures.append("Handoff mode is not ready for Nicholas-owned ownership")
+        elif not health.get("review_hosted_by_ai_sprints"):
+            failures.append("Review mode is not marked as AI Sprints-hosted")
+        if health.get("source_chunks", 0) < 1:
+            failures.append("source chunks are not loaded")
+
+        for name, message, requires_ai in CASES:
+            session_id = f"review-smoke-{name}-{uuid.uuid4().hex[:8]}"
+            response = client.post(
+                "/api/chat",
+                json={"session_id": session_id, "message": message},
+            )
+            data = response.json()
+            reply = (data.get("reply") or "").strip()
+            preview = " ".join(reply.split())[:180]
+            print(f"{name}: status={response.status_code} fallback={data.get('fallback')} reply={preview}")
+
+            if response.status_code != 200:
+                failures.append(f"{name}: HTTP {response.status_code}")
+            if not reply:
+                failures.append(f"{name}: empty reply")
+            if requires_ai and BACKEND_UNAVAILABLE in reply:
+                failures.append(f"{name}: AI backend unavailable")
+            if "**" in reply:
+                failures.append(f"{name}: markdown artifact leaked")
+            if any(phrase in reply.lower() for phrase in ["clothes at home", "nudity here!", "naked"]):
+                failures.append(f"{name}: unsafe boundary wording")
+            if len(reply) > 900:
+                failures.append(f"{name}: reply is too long for the widget")
+
+    if failures:
+        print("\nFAIL")
+        for failure in failures:
+            print(f"- {failure}")
+        return 1
+
+    print("\nPASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
