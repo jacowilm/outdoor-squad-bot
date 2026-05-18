@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -135,6 +136,16 @@ DEPLOYMENT_MODE = os.environ.get("OUTDOOR_SQUAD_DEPLOYMENT_MODE", "review").stri
 if DEPLOYMENT_MODE not in {"review", "handoff"}:
     DEPLOYMENT_MODE = "review"
 
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+SUPABASE_TIMEOUT_SECONDS = 12.0
+SUPABASE_TABLES = {
+    "conversations": "outdoor_squad_conversations",
+    "events": "outdoor_squad_events",
+    "conversation_logs": "outdoor_squad_conversation_logs",
+    "leads": "outdoor_squad_leads",
+}
+
 # Load leads file
 LEADS_FILE = Path(__file__).parent / "leads.json"
 if not LEADS_FILE.exists():
@@ -153,6 +164,183 @@ ADMIN_PASSWORD = os.environ.get("OUTDOOR_SQUAD_ADMIN_PASSWORD")
 
 # AI clients (lazy init to avoid crash if a key is not set at import time)
 _client = None
+
+
+def now_iso() -> str:
+    return datetime.now().isoformat()
+
+
+def read_json_array_file(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def append_jsonl_file(path: Path, payload: dict) -> None:
+    with path.open("a") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def supabase_enabled() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_KEY)
+
+
+def supabase_headers(*, prefer: str | None = None) -> dict[str, str]:
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+def supabase_request(
+    method: str,
+    table: str,
+    *,
+    params: dict | None = None,
+    json_body=None,
+    prefer: str | None = None,
+):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    response = httpx.request(
+        method,
+        url,
+        headers=supabase_headers(prefer=prefer),
+        params=params,
+        json=json_body,
+        timeout=SUPABASE_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    if not response.text.strip():
+        return None
+    return response.json()
+
+
+def sort_rows_by_timestamp(rows: list[dict], key: str = "timestamp") -> list[dict]:
+    return sorted(rows, key=lambda row: row.get(key) or "")
+
+
+def read_leads() -> list[dict]:
+    if supabase_enabled():
+        try:
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["leads"],
+                params={"select": "*", "order": "timestamp.asc"},
+            ) or []
+            for row in rows:
+                if not isinstance(row.get("concerns"), list):
+                    row["concerns"] = row.get("concerns") or []
+            return rows
+        except Exception:
+            pass
+    return read_json_array_file(LEADS_FILE)
+
+
+def read_events() -> list[dict]:
+    if supabase_enabled():
+        try:
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["events"],
+                params={"select": "*", "order": "timestamp.asc"},
+            ) or []
+            events = []
+            for row in rows:
+                metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+                events.append({
+                    "timestamp": row.get("timestamp"),
+                    "event_type": row.get("event_type"),
+                    "session_id": row.get("session_id"),
+                    **metadata,
+                })
+            return events
+        except Exception:
+            pass
+    events: list[dict] = []
+    if not EVENTS_FILE.exists():
+        return events
+    for line in EVENTS_FILE.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return events
+
+
+def read_conversation_logs() -> list[dict]:
+    if supabase_enabled():
+        try:
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["conversation_logs"],
+                params={"select": "timestamp,session_id,role,content", "order": "timestamp.asc"},
+            ) or []
+            return rows
+        except Exception:
+            pass
+    logs: list[dict] = []
+    if not CONVERSATION_LOG_FILE.exists():
+        return logs
+    for line in CONVERSATION_LOG_FILE.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            logs.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return logs
+
+
+def load_conversation(session_id: str) -> list[dict]:
+    if session_id in conversations:
+        return conversations[session_id]
+    messages: list[dict] = []
+    if supabase_enabled():
+        try:
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["conversations"],
+                params={
+                    "select": "messages",
+                    "session_id": f"eq.{session_id}",
+                    "limit": "1",
+                },
+            ) or []
+            if rows and isinstance(rows[0].get("messages"), list):
+                messages = rows[0]["messages"]
+        except Exception:
+            messages = []
+    conversations[session_id] = messages
+    return conversations[session_id]
+
+
+def persist_conversation(session_id: str) -> None:
+    if not supabase_enabled():
+        return
+    try:
+        supabase_request(
+            "POST",
+            SUPABASE_TABLES["conversations"],
+            params={"on_conflict": "session_id"},
+            json_body={
+                "session_id": session_id,
+                "messages": conversations.get(session_id, []),
+                "updated_at": now_iso(),
+            },
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
+    except Exception:
+        pass
 
 def get_client():
     global _client
@@ -278,7 +466,7 @@ def keyword_tokens(text: str) -> set[str]:
 
 def relevant_source_context(message: str, session_id: str, limit: int = 5) -> str:
     """Small local retrieval layer over Nicholas's docs/curated KB."""
-    history = conversations.get(session_id, [])[-8:]
+    history = load_conversation(session_id)[-8:]
     query = "\n".join([m.get("content", "") for m in history if m.get("role") == "user"] + [message])
     tokens = keyword_tokens(query)
     if not tokens:
@@ -314,7 +502,7 @@ def build_agent_messages(message: str, session_id: str) -> list[dict]:
 {context}
 
 Now answer the user's latest message naturally as Robo-Nick. Use the source context, the conversation history, and the user's tone. If the source context does not contain an exact answer, say so briefly and route to a free trial or human follow-up instead of inventing."""
-    recent = conversations[session_id][-16:]
+    recent = load_conversation(session_id)[-16:]
     return [
         {"role": "system", "content": BASE_AGENT_PROMPT},
         {"role": "system", "content": source_prompt},
@@ -460,12 +648,13 @@ async def chat(request: Request):
         return JSONResponse({"error": "No message provided"}, status_code=400)
 
     # Get or create conversation history
-    is_new_conversation = session_id not in conversations
+    history = load_conversation(session_id)
+    is_new_conversation = len(history) == 0
     if is_new_conversation:
-        conversations[session_id] = []
         log_event("conversation_started", session_id=session_id)
 
-    conversations[session_id].append({"role": "user", "content": message})
+    history.append({"role": "user", "content": message})
+    persist_conversation(session_id)
     log_chat_message(session_id, "user", message)
     log_event(
         "message_received",
@@ -476,7 +665,8 @@ async def chat(request: Request):
 
     if should_use_local_tone_handler(message, session_id):
         reply = demo_fallback_reply(message, session_id=session_id)
-        conversations[session_id].append({"role": "assistant", "content": reply})
+        history.append({"role": "assistant", "content": reply})
+        persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)
 
         lead_info = extract_lead_info(message, session_id)
@@ -495,7 +685,8 @@ async def chat(request: Request):
     try:
         reply, ai_provider = generate_ai_reply(message, session_id)
 
-        conversations[session_id].append({"role": "assistant", "content": reply})
+        history.append({"role": "assistant", "content": reply})
+        persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)
 
         # Check if lead info was shared (basic extraction)
@@ -524,7 +715,8 @@ async def chat(request: Request):
             reply = (
                 "I’m having trouble reaching the AI backend for a moment. Please try again in a few seconds."
             )
-        conversations[session_id].append({"role": "assistant", "content": reply})
+        history.append({"role": "assistant", "content": reply})
+        persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)
 
         lead_info = extract_lead_info(message, session_id)
@@ -601,14 +793,13 @@ async def booking(request: Request):
 @app.get("/api/leads")
 async def get_leads(_: str = Depends(require_admin)):
     """Admin endpoint to view captured leads"""
-    leads = json.loads(LEADS_FILE.read_text())
-    return JSONResponse(leads)
+    return JSONResponse(read_leads())
 
 
 @app.get("/api/leads.csv")
 async def export_leads_csv(_: str = Depends(require_admin)):
     """Admin CSV export for captured leads."""
-    leads = json.loads(LEADS_FILE.read_text())
+    leads = read_leads()
     columns = [
         "timestamp",
         "name",
@@ -661,7 +852,7 @@ def build_metrics_payload() -> dict:
             "human_handoff_suggested",
         }
     }
-    leads = json.loads(LEADS_FILE.read_text())
+    leads = read_leads()
     route_counts: dict[str, int] = {}
     outcome_counts: dict[str, int] = {
         "lead_captured": 0,
@@ -686,7 +877,7 @@ def build_metrics_payload() -> dict:
         "route_counts": route_counts,
         "outcomes": outcome_counts,
         "last_event_at": events[-1]["timestamp"] if events else None,
-        "note": "Export events.jsonl for conversation review; use leads.json for human follow-up.",
+        "note": "Supabase-backed owner analytics; local files remain fallback only.",
     }
 
 
@@ -708,7 +899,7 @@ async def admin_dashboard(_: str = Depends(require_admin)):
     """Small protected owner dashboard for Square-era operations."""
     admin_data = {
         "metrics": build_metrics_payload(),
-        "leads": json.loads(LEADS_FILE.read_text()),
+        "leads": read_leads(),
         "logs": read_conversation_logs()[-120:],
     }
     return HTMLResponse(ADMIN_HTML.replace("__ADMIN_DATA__", json.dumps(admin_data)))
@@ -741,6 +932,8 @@ async def health():
         "deployment_mode": DEPLOYMENT_MODE,
         "review_hosted_by_ai_sprints": review_hosted,
         "handoff_ready": handoff_ready,
+        "storage_backend": "supabase" if supabase_enabled() else "local_files",
+        "supabase_configured": supabase_enabled(),
         "ai_configured": bool(providers),
         "ai_provider": providers[0] if providers else None,
         "ai_providers": providers,
@@ -1009,7 +1202,7 @@ def extract_contact_name(message: str) -> str | None:
 
 def build_lead_summary(session_id: str, latest_message: str = "") -> dict:
     """Create a simple handoff summary for Nick/Lyn from the chat so far."""
-    messages = conversations.get(session_id, [])
+    messages = load_conversation(session_id)
     user_texts = [m["content"] for m in messages if m.get("role") == "user"]
     joined = "\n".join(user_texts + ([latest_message] if latest_message else []))
     lower = joined.lower()
@@ -1070,13 +1263,28 @@ def log_event(event_type: str, session_id: str = "unknown", **metadata):
         if key not in {"raw_message"} and value not in (None, "")
     }
     event = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_iso(),
         "event_type": event_type,
         "session_id": session_id,
         **safe_metadata,
     }
-    with EVENTS_FILE.open("a") as f:
-        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    if supabase_enabled():
+        try:
+            supabase_request(
+                "POST",
+                SUPABASE_TABLES["events"],
+                json_body={
+                    "timestamp": event["timestamp"],
+                    "event_type": event_type,
+                    "session_id": session_id,
+                    "metadata": safe_metadata,
+                },
+                prefer="return=minimal",
+            )
+            return
+        except Exception:
+            pass
+    append_jsonl_file(EVENTS_FILE, event)
 
 
 def safe_rate(numerator: int, denominator: int) -> float:
@@ -1094,47 +1302,42 @@ def redact_contact(text: str) -> str:
 def log_chat_message(session_id: str, role: str, content: str):
     """Store redacted conversation text for protected quality review."""
     event = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_iso(),
         "session_id": session_id,
         "role": role,
         "content": redact_contact(content)[:1600],
     }
-    with CONVERSATION_LOG_FILE.open("a") as f:
-        f.write(json.dumps(event, ensure_ascii=False) + "\n")
-
-
-def read_events() -> list[dict]:
-    events: list[dict] = []
-    if not EVENTS_FILE.exists():
-        return events
-    for line in EVENTS_FILE.read_text().splitlines():
-        if not line.strip():
-            continue
+    if supabase_enabled():
         try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return events
-
-
-def read_conversation_logs() -> list[dict]:
-    logs: list[dict] = []
-    if not CONVERSATION_LOG_FILE.exists():
-        return logs
-    for line in CONVERSATION_LOG_FILE.read_text().splitlines():
-        if not line.strip():
-            continue
-        try:
-            logs.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return logs
+            supabase_request(
+                "POST",
+                SUPABASE_TABLES["conversation_logs"],
+                json_body=event,
+                prefer="return=minimal",
+            )
+            return
+        except Exception:
+            pass
+    append_jsonl_file(CONVERSATION_LOG_FILE, event)
 
 
 def save_lead(lead_info: dict):
-    """Save lead to JSON file"""
-    leads = json.loads(LEADS_FILE.read_text())
-    leads.append(lead_info)
+    """Save lead to Supabase when configured, otherwise local JSON."""
+    normalized = dict(lead_info)
+    normalized.setdefault("concerns", [])
+    if supabase_enabled():
+        try:
+            supabase_request(
+                "POST",
+                SUPABASE_TABLES["leads"],
+                json_body=normalized,
+                prefer="return=minimal",
+            )
+            return
+        except Exception:
+            pass
+    leads = read_json_array_file(LEADS_FILE)
+    leads.append(normalized)
     LEADS_FILE.write_text(json.dumps(leads, indent=2))
 
 

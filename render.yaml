@@ -25,4 +25,8 @@ services:
         value: innerwest@outdoorsquad.com.au
       - key: OUTDOOR_SQUAD_HUMAN_PHONE
         value: 0402 439 361
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
     plan: free

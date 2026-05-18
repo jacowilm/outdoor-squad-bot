@@ -71,6 +71,8 @@ OUTDOOR_SQUAD_ADMIN_PASSWORD=strong_unique_password
 OUTDOOR_SQUAD_TRIAL_LINK=https://final-booking-url
 OUTDOOR_SQUAD_HUMAN_EMAIL=innerwest@outdoorsquad.com.au
 OUTDOOR_SQUAD_HUMAN_PHONE=0402 439 361
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
 ## Preflight before client demo or handoff
@@ -79,7 +81,13 @@ OUTDOOR_SQUAD_HUMAN_PHONE=0402 439 361
 - For final handoff, set `OUTDOOR_SQUAD_DEPLOYMENT_MODE=handoff`. `/api/health` must report `handoff_ready: true` before transferring ownership or installing publicly.
 - The host should use `OUTDOOR_SQUAD_OPENAI_API_KEY` for the preferred production key, with `OUTDOOR_SQUAD_GEMINI_API_KEY` available as a real secondary AI provider if Nicholas wants provider fallback. `OPENAI_API_KEY` and `GEMINI_API_KEY` are local/dev fallbacks only. For final handoff these must be Nicholas/The Outdoor Squad-owned billing, not Jacobo-owned billing.
 - `/api/health` should also show `api_key_sources` containing a Nicholas-owned provider key, `admin_configured: true`, and `trial_link_configured: true` before a client-ready install.
+- `/api/health` should report `storage_backend: "supabase"` before a client-ready install. Local files are fallback only.
 - Run `python3.11 run_review_build_smoke.py` before sending a progress update. It checks beginner/nervous, 28-Day Kickstarter/SPT, YTP/teen, pricing, injury/limitation, oddball/skeptical, and contact-detail capture, then restores QA data files so the owner dashboard stays clean.
 - Any AI-path response that says the backend cannot be reached means the demo is not ready to show, even if the local contact-detail handler still works.
 - 2026-05-17 evening update: the backend now tries configured AI providers in order: OpenAI first, then Gemini. This is still the same file-grounded Robo-Nick agent path; it is not the deterministic demo fallback.
 - 2026-05-17 20:00 update: AI provider calls now get one retry before moving on/failing, after a transient Gemini exception caused the Kickstarter/SPT review path to show the backend-unavailable message. `python3.11 -m py_compile app.py run_review_build_smoke.py` and the seven-path smoke now pass locally with Gemini, 117 source chunks, and restored QA data files.
+
+## Supabase storage
+- Apply `supabase_schema.sql` to the target Supabase project.
+- Backfill any local `leads.json`, `events.jsonl`, and `conversation_logs.jsonl` data with `python3 migrate_local_data_to_supabase.py`.
+- Session history now persists in `outdoor_squad_conversations`, so admin review survives Render restarts once Supabase is configured.
