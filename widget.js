@@ -23,18 +23,18 @@
     // Inject styles
     const style = document.createElement('style');
     style.textContent = `
-        #os-chat-widget { position: fixed; bottom: 20px; right: 20px; z-index: 99999; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #000000; }
+        #os-chat-widget { position: fixed; right: 20px; bottom: 20px; z-index: 99999; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #000000; }
         #os-chat-bubble { width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, #ea510a, #f26522); color: white; border: 2px solid #ffffff; cursor: pointer; font-size: 1.5rem; box-shadow: 0 8px 24px rgba(0,0,0,0.28); transition: transform 0.2s, box-shadow 0.2s; display: flex; align-items: center; justify-content: center; }
         #os-chat-bubble:hover { transform: scale(1.1); }
         #os-chat-bubble .badge { position: absolute; top: -2px; right: -2px; width: 16px; height: 16px; background: #f26522; border-radius: 50%; border: 2px solid white; }
-        #os-chat-panel { display: none; position: absolute; bottom: 70px; right: 0; width: 380px; max-height: 520px; background: #ffffff; border: 1px solid #d8d8d8; border-radius: 10px; box-shadow: 0 14px 40px rgba(0,0,0,0.22); overflow: hidden; flex-direction: column; }
+        #os-chat-panel { display: none; position: absolute; bottom: 70px; right: 0; width: min(380px, calc(100vw - 24px)); max-height: min(520px, calc(100vh - 92px)); background: #ffffff; border: 1px solid #d8d8d8; border-radius: 10px; box-shadow: 0 14px 40px rgba(0,0,0,0.22); overflow: hidden; flex-direction: column; }
         #os-chat-panel.open { display: flex; }
         .os-header { background: linear-gradient(135deg, #000000, #39383d); color: white; padding: 14px 18px; display: flex; align-items: center; gap: 10px; border-bottom: 4px solid #f26522; }
         .os-header-avatar { width: 36px; height: 36px; border-radius: 50%; background: #f26522; color: #ffffff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: .78rem; letter-spacing: 0; }
         .os-header h4 { margin: 0; font-size: 0.95rem; }
         .os-header span { font-size: 0.75rem; opacity: 0.8; }
         .os-close { background: none; border: none; color: white; font-size: 1.2rem; cursor: pointer; margin-left: auto; }
-        .os-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; max-height: 350px; }
+        .os-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
         .os-msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 0.9rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
         .os-msg.bot { background: #ffffff; color: #000000; border: 1px solid #d8d8d8; align-self: flex-start; border-bottom-left-radius: 4px; }
         .os-msg.user { background: linear-gradient(135deg, #ea510a, #f26522); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
@@ -48,6 +48,12 @@
         .os-typing span { display: inline-block; width: 6px; height: 6px; background: #999; border-radius: 50%; animation: os-bounce 1.4s infinite both; margin-right: 3px; }
         .os-typing span:nth-child(2) { animation-delay: 0.16s; }
         .os-typing span:nth-child(3) { animation-delay: 0.32s; }
+        @media (max-width: 640px) {
+            #os-chat-widget { left: 12px; right: 12px; bottom: 12px; }
+            #os-chat-panel { position: fixed; left: 12px; right: 12px; bottom: 84px; width: auto; max-height: calc(100vh - 110px); }
+            #os-chat-bubble { margin-left: auto; }
+            .os-msg { max-width: 92%; }
+        }
         @keyframes os-bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
     `;
     document.head.appendChild(style);
@@ -102,6 +108,9 @@
     function formatBotText(text) {
         return String(text || '')
             .replace(/\*\*/g, '')
+            .replace(/(Short version:)\s*/gi, '\n\n$1 ')
+            .replace(/([A-Za-z][A-Za-z /']+?:)\s*-\s+/g, '$1\n- ')
+            .replace(/\s-\s+(?=[A-Z])/g, '\n- ')
             .replace(/\n{3,}/g, '\n\n')
             .trim();
     }

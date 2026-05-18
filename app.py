@@ -670,12 +670,16 @@ def format_reply_for_chat(text: str) -> str:
     ]
     label_pattern = "|".join(re.escape(label) for label in option_labels)
     text = re.sub(r"\s+(?=(" + label_pattern + r"))", "\n\n", text)
+    text = re.sub(r"(Short version:)\s*", r"\n\n\1 ", text, flags=re.IGNORECASE)
+    text = re.sub(r"([A-Za-z][A-Za-z /']+?:)\s*-\s+", r"\1\n- ", text)
 
     blocks: list[str] = []
     for raw_block in re.split(r"\n{2,}", text):
         block = raw_block.strip()
         if not block:
             continue
+        if block.count(" - ") >= 2:
+            block = re.sub(r"\s-\s+", "\n- ", block)
         if "\n" in block:
             lines = [line.strip() for line in block.splitlines() if line.strip()]
             blocks.extend(lines)
