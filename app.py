@@ -709,7 +709,7 @@ def clean_agent_reply(reply: str | None) -> str:
     text = text.replace("**", "")
     text = re.sub(r"^[\s\-\u2013\u2014]+(?=\w)", "", text)
     text = re.sub(
-        r"^(?:nice(?: one)?|good call|love that|perfect|sweet)\s*(?:[\-\u2013\u2014]\s*)?",
+        r"^(?:nice(?: one)?|good call|love that|perfect|sweet)[\s,\-!\u2013\u2014]*",
         "",
         text,
         flags=re.IGNORECASE,
@@ -1345,6 +1345,8 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         return True
     if is_location_question(text):
         return True
+    if is_trial_question(text):
+        return True
     if any(word in text for word in ["nutrition", "meal", "diet", "weight loss", "lose weight"]):
         return True
 
@@ -1395,6 +1397,10 @@ def is_location_question(text: str) -> bool:
             "meet",
         ]
     )
+
+
+def is_trial_question(text: str) -> bool:
+    return any(word in text for word in ["free intro", "free trial", "trial", "free class", "intro class"])
 
 
 def demo_fallback_reply(message: str, session_id: str = "default") -> str:
