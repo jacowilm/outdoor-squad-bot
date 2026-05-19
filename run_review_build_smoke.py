@@ -179,6 +179,25 @@ def main() -> int:
         if "exact" in reply.lower() and "unavailable" in reply.lower():
             failures.append("location: claimed exact location unavailable")
 
+        goal_session = f"review-smoke-goal-choice-{uuid.uuid4().hex[:8]}"
+        app.conversations[goal_session] = [
+            {
+                "role": "assistant",
+                "content": "Are you mainly looking to build strength, lose weight, or get back into a routine?",
+            }
+        ]
+        second = client.post(
+            "/api/chat",
+            json={"session_id": goal_session, "message": "build strength"},
+        ).json().get("reply", "")
+        preview = " ".join(second.split())[:180]
+        print(f"goal-choice: reply={preview}")
+        if "Strength path" not in second:
+            failures.append("goal-choice: did not advance into strength path")
+        repeated_options = ["Free 1-day trial", "28-day Kickstarter", "Weight loss"]
+        if sum(1 for term in repeated_options if term.lower() in second.lower()) >= 2:
+            failures.append("goal-choice: repeated the previous broad options")
+
     if failures:
         print("\nFAIL")
         for failure in failures:

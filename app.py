@@ -908,6 +908,31 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 "That’s where the free trial usually helps, because you can test the vibe before committing to anything bigger.\n\n"
                 "Do you want to start with the free trial, or were you more curious about the classes first?"
             )
+    if is_goal_choice_reply(clean, session_id):
+        if any(word in clean for word in ["strength", "stronger", "get strong", "fitness"]):
+            return (
+                "Strength path, then.\n\n"
+                "For a lower-pressure start, the group strength sessions are the cleanest first step. If you want more coaching on technique and progression, SPT or the 28-Day Kickstarter makes more sense.\n\n"
+                "Are you after general strength and routine, or more hands-on coaching?"
+            )
+        if any(word in clean for word in ["weight loss", "lose weight"]):
+            return (
+                "Weight loss makes sense as the goal, but the useful lever is usually consistency plus food, not punishment sessions.\n\n"
+                "The free trial is a good first check for the training side, and the meal plan can help with the food side.\n\n"
+                "Is training consistency or nutrition the bigger blocker right now?"
+            )
+        if any(word in clean for word in ["routine", "consistency"]):
+            return (
+                "Routine it is.\n\n"
+                "The group classes are probably the best first fit: set times, a coach expecting you, and enough structure that you’re not making it up every week.\n\n"
+                "Would mornings, evenings, or weekends be easiest to stick to?"
+            )
+        if "confidence" in clean:
+            return (
+                "Confidence getting started is a very normal one.\n\n"
+                "The first move is not proving anything. It’s just turning up, meeting the coach, and getting options that match where you’re at.\n\n"
+                "Would Camperdown or Redfern be easier for a first session?"
+            )
     return None
 
 
@@ -923,6 +948,8 @@ def known_goal_from_history(session_id: str) -> str | None:
         return "routine / consistency"
     if any(word in joined for word in ["confidence", "nervous", "not fit", "unfit", "beginner"]):
         return "confidence getting started"
+    if any(word in joined for word in ["strength", "stronger", "get strong", "build strength"]):
+        return "strength"
     if "fitness" in joined:
         return "general fitness"
     return None
@@ -1371,6 +1398,8 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         return True
     if is_trial_question(text):
         return True
+    if is_goal_choice_reply(text, session_id):
+        return True
     if any(word in text for word in ["nutrition", "meal", "diet", "weight loss", "lose weight"]):
         return True
 
@@ -1425,6 +1454,46 @@ def is_location_question(text: str) -> bool:
 
 def is_trial_question(text: str) -> bool:
     return any(word in text for word in ["free intro", "free trial", "trial", "free class", "intro class"])
+
+
+def is_goal_choice_reply(text: str, session_id: str) -> bool:
+    if len(text.split()) > 5:
+        return False
+    previous = recent_assistant_message(session_id).lower()
+    asked_goal_choice = any(
+        phrase in previous
+        for phrase in [
+            "strength, weight loss, or routine",
+            "build strength, lose weight",
+            "build fitness, lose weight, or get back into a routine",
+            "what’s the main thing you want help with",
+            "what's the main thing you want help with",
+            "what are you mainly looking for",
+        ]
+    )
+    if not asked_goal_choice:
+        asked_goal_choice = (
+            "build strength" in previous
+            and ("lose weight" in previous or "weight loss" in previous)
+            and ("routine" in previous or "confidence" in previous or "fitness" in previous)
+        )
+    if not asked_goal_choice:
+        return False
+    return any(
+        phrase in text
+        for phrase in [
+            "strength",
+            "build strength",
+            "get strong",
+            "stronger",
+            "weight loss",
+            "lose weight",
+            "routine",
+            "consistency",
+            "confidence",
+            "fitness",
+        ]
+    )
 
 
 def demo_fallback_reply(message: str, session_id: str = "default") -> str:
