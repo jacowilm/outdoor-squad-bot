@@ -142,7 +142,7 @@ def main() -> int:
                 failures.append(f"{name}: HTTP {response.status_code}")
             if not reply:
                 failures.append(f"{name}: empty reply")
-            if reply.lower().startswith(("nice", "good call", "love that", "perfect")):
+            if reply.lower().startswith(("nice", "good call", "love that", "perfect", "sweet")):
                 failures.append(f"{name}: repetitive validation opener")
             if requires_ai and BACKEND_UNAVAILABLE in reply:
                 failures.append(f"{name}: AI backend unavailable")

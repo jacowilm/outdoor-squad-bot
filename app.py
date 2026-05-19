@@ -709,7 +709,7 @@ def clean_agent_reply(reply: str | None) -> str:
     text = text.replace("**", "")
     text = re.sub(r"^[\s\-\u2013\u2014]+(?=\w)", "", text)
     text = re.sub(
-        r"^(?:nice(?: one)?|good call|love that|perfect)\s*(?:[\-\u2013\u2014]\s*)?",
+        r"^(?:nice(?: one)?|good call|love that|perfect|sweet)\s*(?:[\-\u2013\u2014]\s*)?",
         "",
         text,
         flags=re.IGNORECASE,
