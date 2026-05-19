@@ -483,6 +483,7 @@ Conversation rules:
 - Prefer this structure when it fits: quick reaction, direct answer, then one simple next step or question
 - Use line breaks naturally so each idea has room
 - If you list options, each option should be one short line with a simple dash, no bold labels, and usually no more than 10 words before the explanation ends. Prefer 3 options; 4 is the absolute max.
+- Exception: if you write "Quick options:", keep the options in the same sentence, not as a broken bullet list.
 - Vary sentence structure, avoid repeating the same openings or closings
 - Do not use "Nice" as a default opener. If a previous assistant reply recently started with "Nice", "Perfect", "Love that", or "Good call", choose a different opening or answer directly.
 - Avoid repetitive validation at the start of every message. Often the best opening is the direct answer.
@@ -725,6 +726,7 @@ def clean_agent_reply(reply: str | None) -> str:
         text,
         flags=re.IGNORECASE,
     )
+    text = re.sub(r"Quick\s*\n+\s*options:", "Quick options:", text, flags=re.IGNORECASE)
     text = re.sub(
         r"(?<!\n)(Which option|What kind of injury|What(?:'|’)s the main thing|What are you mainly looking for)",
         r"\n\n\1",
@@ -734,7 +736,29 @@ def clean_agent_reply(reply: str | None) -> str:
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = guard_operational_claims(text)
+    text = compact_quick_options(text)
     return format_reply_for_chat(text)
+
+
+def compact_quick_options(text: str) -> str:
+    """Keep short quick-option answers inline inside the chat bubble."""
+    marker = "Quick options:"
+    lower = text.lower()
+    start = lower.find(marker.lower())
+    if start == -1:
+        return text
+
+    prefix = text[:start]
+    rest = text[start + len(marker):].strip()
+    if not rest:
+        return text
+
+    parts = [part.strip(" \n\t-") for part in re.split(r"(?:^|\n|\s)-\s+", rest) if part.strip(" \n\t-")]
+    if len(parts) < 2:
+        return text
+
+    compact = "; ".join(part.rstrip(".") for part in parts)
+    return f"{prefix}{marker} {compact}."
 
 
 def guard_operational_claims(text: str) -> str:

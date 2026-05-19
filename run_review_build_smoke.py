@@ -120,6 +120,11 @@ def main() -> int:
         for term in ["Camperdown", "Redfern", "Mallett St", "Waterloo", "Surry Hills"]:
             if term not in prompt_text:
                 failures.append(f"operating facts prompt missing location detail: {term}")
+        quick_options = app.clean_agent_reply(
+            "Quick options: - Free 1-day trial — easiest way to try a session. - 28-day Kickstarter — 4-week run with assessment + nutrition."
+        )
+        if "\n- Free 1-day trial" in quick_options or "Quick options:\n" in quick_options:
+            failures.append("quick options should stay inline")
 
         if failures:
             print("\nFAIL")
