@@ -27,7 +27,7 @@ from openai import OpenAI
 
 app = FastAPI(title="Outdoor Squad AI Assistant")
 security = HTTPBasic()
-APP_REVIEW_BUILD = "source-grounding-2026-05-19-repeat-guard"
+APP_REVIEW_BUILD = "source-grounding-2026-05-19-location-choice"
 
 
 def load_local_env_files() -> None:
@@ -886,16 +886,19 @@ def repeats_key_block(reply: str, previous: str) -> bool:
 def non_repeating_followup(message: str, session_id: str) -> str:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
+    if is_location_choice_reply(clean, session_id):
+        location = "Redfern" if "redfern" in clean else "Camperdown"
+        return location_choice_followup(location, session_id)
     if is_location_question(clean):
         if "redfern" in clean:
             return (
-                "Yep, that’s the Redfern option.\n\n"
-                "Next useful filter is convenience: are you choosing by travel time, parking, or class time?"
+                "Yep, that’s Redfern.\n\n"
+                "Next useful bit is what you want from the session: strength, fitness, weight loss, or just getting back into routine?"
             )
         if "camperdown" in clean:
             return (
-                "Yep, that’s the Camperdown option.\n\n"
-                "Next useful filter is convenience: are you choosing by travel time, parking, or class time?"
+                "Yep, that’s Camperdown.\n\n"
+                "Next useful bit is what you want from the session: strength, fitness, weight loss, or just getting back into routine?"
             )
         return (
             "Same two spots: Camperdown and Redfern.\n\n"
@@ -947,19 +950,14 @@ def recent_assistant_message(session_id: str) -> str:
 def contextual_short_reply(message: str, session_id: str) -> str | None:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
+    if is_location_choice_reply(clean, session_id):
+        location = "Redfern" if "redfern" in clean else "Camperdown"
+        return location_choice_followup(location, session_id)
     if is_location_question(clean):
         if "redfern" in clean and any(phrase in previous for phrase in ["redfern park", "redfern st", "redfern station"]):
-            return (
-                "Yep, that’s the Redfern option.\n\n"
-                "If you’re choosing between the two, pick Redfern if Waterloo, Surry Hills, or Redfern itself is easier for you. Otherwise Camperdown is usually the Inner West default.\n\n"
-                "Are you trying to choose the closest spot, or work out which class time fits?"
-            )
+            return location_choice_followup("Redfern", session_id)
         if "camperdown" in clean and any(phrase in previous for phrase in ["camperdown tennis", "mallett st", "newtown station"]):
-            return (
-                "Yep, Camperdown is the Camperdown Tennis / oval option.\n\n"
-                "That’s usually the better fit if you’re near Camperdown, Newtown, Stanmore, or that side of the Inner West.\n\n"
-                "Are you checking travel time, parking, or which class to try first?"
-            )
+            return location_choice_followup("Camperdown", session_id)
         if any(phrase in previous for phrase in ["two main training spots", "camperdown and redfern", "redfern park", "camperdown tennis"]):
             return (
                 "Same two spots: Camperdown and Redfern.\n\n"
@@ -1552,6 +1550,51 @@ def is_location_question(text: str) -> bool:
             "public transport",
             "meet",
         ]
+    )
+
+
+def is_location_choice_reply(text: str, session_id: str) -> bool:
+    if text not in {"redfern", "camperdown"}:
+        return False
+    previous = recent_assistant_message(session_id).lower()
+    return any(
+        phrase in previous
+        for phrase in [
+            "camperdown or redfern",
+            "which one is closer",
+            "which location",
+            "redfern sessions are at",
+            "camperdown sessions are at",
+            "looking at redfern specifically",
+            "comparing it with camperdown",
+            "are you trying to choose the closest spot",
+            "choosing between the two",
+        ]
+    )
+
+
+def known_location_from_history(session_id: str) -> str | None:
+    for item in reversed(load_conversation(session_id)):
+        if item.get("role") != "user":
+            continue
+        text = normalise_chat_text(item.get("content", ""))
+        if text == "redfern" or " redfern" in f" {text} ":
+            return "Redfern"
+        if text == "camperdown" or " camperdown" in f" {text} ":
+            return "Camperdown"
+    return None
+
+
+def location_choice_followup(location: str, session_id: str) -> str:
+    goal = known_goal_from_history(session_id)
+    if goal:
+        return (
+            f"{location} it is.\n\n"
+            f"I’ll keep that location in mind for the {goal} path. The next useful filter is timing: early morning, evening, or Saturday?"
+        )
+    return (
+        f"{location} it is.\n\n"
+        "Next useful bit is what you want from the session: strength, fitness, weight loss, or just getting back into routine?"
     )
 
 

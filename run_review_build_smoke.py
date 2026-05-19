@@ -217,6 +217,23 @@ def main() -> int:
         print(f"location-repeat: reply={preview}")
         if repeated.lower().count("redfern park") > 0 or "redfern st" in repeated.lower() or "700m" in repeated.lower():
             failures.append("location-repeat: repeated full Redfern logistics block")
+        if "Redfern it is" not in repeated or "strength, fitness, weight loss" not in repeated:
+            failures.append("location-repeat: did not commit to Redfern and advance")
+
+        location_choice_session = f"review-smoke-location-choice-{uuid.uuid4().hex[:8]}"
+        app.conversations[location_choice_session] = [
+            {"role": "assistant", "content": "Camperdown or Redfern? 🙂"},
+        ]
+        chosen_location = client.post(
+            "/api/chat",
+            json={"session_id": location_choice_session, "message": "Redfern"},
+        ).json().get("reply", "")
+        preview = " ".join(chosen_location.split())[:180]
+        print(f"location-choice: reply={preview}")
+        if "Redfern it is" not in chosen_location:
+            failures.append("location-choice: did not accept selected location")
+        if "Camperdown or Redfern" in chosen_location or "Which one is closer" in chosen_location:
+            failures.append("location-choice: re-asked the location menu")
 
         generic_repeat_session = f"review-smoke-generic-repeat-{uuid.uuid4().hex[:8]}"
         repeated_block = (
