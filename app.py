@@ -27,6 +27,7 @@ from openai import OpenAI
 
 app = FastAPI(title="Outdoor Squad AI Assistant")
 security = HTTPBasic()
+APP_REVIEW_BUILD = "source-grounding-2026-05-19-b72df16"
 
 
 def load_local_env_files() -> None:
@@ -1273,6 +1274,7 @@ async def health():
 
     return JSONResponse({
         "ok": True,
+        "review_build": APP_REVIEW_BUILD,
         "deployment_mode": DEPLOYMENT_MODE,
         "review_hosted_by_ai_sprints": review_hosted,
         "review_ready": review_ready,
