@@ -692,6 +692,7 @@ def clean_agent_reply(reply: str | None) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
     text = text.replace("**", "")
+    text = re.sub(r"^[\s\-\u2013\u2014]+(?=\w)", "", text)
     text = re.sub(r"^(great|good) question[!.,]?\s*", "", text, flags=re.IGNORECASE)
     text = text.replace("•", "\n- ")
     text = re.sub(r"^[*-]\s*", "- ", text, flags=re.MULTILINE)
