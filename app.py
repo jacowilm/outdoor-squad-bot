@@ -27,7 +27,7 @@ from openai import OpenAI
 
 app = FastAPI(title="Outdoor Squad AI Assistant")
 security = HTTPBasic()
-APP_REVIEW_BUILD = "source-grounding-2026-05-19-anti-repeat"
+APP_REVIEW_BUILD = "source-grounding-2026-05-19-repeat-guard"
 
 
 def load_local_env_files() -> None:
@@ -858,6 +858,85 @@ def format_reply_for_chat(text: str) -> str:
     return "\n\n".join(block for block in cleaned_blocks if block).strip()
 
 
+def reply_similarity(left: str, right: str) -> float:
+    left_tokens = keyword_tokens(left)
+    right_tokens = keyword_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / max(len(left_tokens), len(right_tokens))
+
+
+def repeats_key_block(reply: str, previous: str) -> bool:
+    reply_lower = reply.lower()
+    previous_lower = previous.lower()
+    key_phrases = [
+        "there are two main training spots",
+        "the barracks at camperdown tennis",
+        "redfern park, redfern st",
+        "redfern station is about 700m",
+        "squad ascent at $51",
+        "1-day free trial pass",
+        "28-day kickstarter",
+        "semi-private personal training",
+        "young'n'strong",
+    ]
+    return any(phrase in reply_lower and phrase in previous_lower for phrase in key_phrases)
+
+
+def non_repeating_followup(message: str, session_id: str) -> str:
+    clean = normalise_chat_text(message)
+    previous = recent_assistant_message(session_id).lower()
+    if is_location_question(clean):
+        if "redfern" in clean:
+            return (
+                "Yep, that’s the Redfern option.\n\n"
+                "Next useful filter is convenience: are you choosing by travel time, parking, or class time?"
+            )
+        if "camperdown" in clean:
+            return (
+                "Yep, that’s the Camperdown option.\n\n"
+                "Next useful filter is convenience: are you choosing by travel time, parking, or class time?"
+            )
+        return (
+            "Same two spots: Camperdown and Redfern.\n\n"
+            "Rather than bury you in the same details again, the useful question is: which suburb are you coming from?"
+        )
+    if is_trial_question(clean) or "free trial" in previous or "free intro" in previous:
+        return (
+            "The trial is still the right first step.\n\n"
+            "Next thing to narrow is simple: Camperdown or Redfern, then the team can point you to a sensible class time."
+        )
+    if any(word in clean for word in ["price", "cost", "membership", "option", "options", "spt", "kickstarter"]):
+        return (
+            "Rather than run through the same options again: are you leaning low-pressure group classes, or more coached SPT?"
+        )
+    if is_goal_choice_reply(clean, session_id):
+        return (
+            "Got it. I won’t re-list the menu again.\n\n"
+            "The next useful split is coaching level: group classes for routine, or SPT/Kickstarter if you want more hands-on technique and progression."
+        )
+    return (
+        "Got it. Rather than repeat the same details, let’s narrow the next step.\n\n"
+        "Are you choosing by location, class time, or how much coaching you want?"
+    )
+
+
+def prevent_repetitive_reply(reply: str, message: str, session_id: str) -> str:
+    recent_assistant = [
+        item.get("content", "")
+        for item in load_conversation(session_id)[-8:]
+        if item.get("role") == "assistant"
+    ][-3:]
+    if not recent_assistant:
+        return reply
+    for previous in recent_assistant:
+        if len(reply) < 120 or len(previous) < 120:
+            continue
+        if reply_similarity(reply, previous) >= 0.68 or repeats_key_block(reply, previous):
+            return non_repeating_followup(message, session_id)
+    return reply
+
+
 def recent_assistant_message(session_id: str) -> str:
     for item in reversed(load_conversation(session_id)):
         if item.get("role") == "assistant":
@@ -1074,6 +1153,7 @@ async def chat(request: Request):
 
     if should_use_local_tone_handler(message, session_id):
         reply = demo_fallback_reply(message, session_id=session_id)
+        reply = prevent_repetitive_reply(reply, message, session_id)
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)
@@ -1093,6 +1173,7 @@ async def chat(request: Request):
 
     try:
         reply, ai_provider = generate_ai_reply(message, session_id)
+        reply = prevent_repetitive_reply(reply, message, session_id)
 
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
@@ -1124,6 +1205,7 @@ async def chat(request: Request):
             reply = (
                 "I’m having trouble reaching the AI backend for a moment. Please try again in a few seconds."
             )
+        reply = prevent_repetitive_reply(reply, message, session_id)
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)

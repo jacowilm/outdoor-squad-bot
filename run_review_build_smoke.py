@@ -218,6 +218,18 @@ def main() -> int:
         if repeated.lower().count("redfern park") > 0 or "redfern st" in repeated.lower() or "700m" in repeated.lower():
             failures.append("location-repeat: repeated full Redfern logistics block")
 
+        generic_repeat_session = f"review-smoke-generic-repeat-{uuid.uuid4().hex[:8]}"
+        repeated_block = (
+            "There are two main training spots: Camperdown and Redfern.\n\n"
+            "Camperdown: The Barracks at Camperdown Tennis & Oval, Mallett St, Camperdown NSW 2050. Good for Camperdown, Newtown, Stanmore and nearby Inner West suburbs.\n\n"
+            "Redfern: Redfern Park, Redfern St, Redfern NSW 2016. Good for Redfern, Waterloo, Surry Hills and nearby spots.\n\n"
+            "Which one is closer for you?"
+        )
+        app.conversations[generic_repeat_session] = [{"role": "assistant", "content": repeated_block}]
+        guarded = app.prevent_repetitive_reply(repeated_block, "locations again", generic_repeat_session)
+        if guarded == repeated_block or "Mallett St" in guarded or "Redfern St" in guarded:
+            failures.append("generic-repeat: repeat guard did not replace duplicated block")
+
     if failures:
         print("\nFAIL")
         for failure in failures:
