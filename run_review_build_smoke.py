@@ -136,7 +136,7 @@ def main() -> int:
                 failures.append(f"{name}: unsafe boundary wording")
             if "specific program training" in reply.lower():
                 failures.append(f"{name}: incorrect SPT expansion")
-            if "book you" in reply.lower():
+            if "book you" in reply.lower() or "want to book" in reply.lower() or "would you like to book" in reply.lower():
                 failures.append(f"{name}: unsupported booking claim")
             if "\n\n-\n\n" in reply or reply.strip() == "-":
                 failures.append(f"{name}: lone bullet formatting artifact")

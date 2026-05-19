@@ -722,6 +722,12 @@ def guard_operational_claims(text: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
+    text = re.sub(
+        r"\b(?:want to|ready to|would you like to)\s+book\b[^?]*\?",
+        "Want me to point you toward the free intro?",
+        text,
+        flags=re.IGNORECASE,
+    )
     if any(phrase in lowered for phrase in ["check your spam", "sent to your email", "emailed you the meal plan", "meal plan has been sent"]):
         return (
             "If you want the free 5-day meal plan, the team can send that through when they follow up.\n\n"
