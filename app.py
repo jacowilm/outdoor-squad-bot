@@ -27,7 +27,7 @@ from openai import OpenAI
 
 app = FastAPI(title="Outdoor Squad AI Assistant")
 security = HTTPBasic()
-APP_REVIEW_BUILD = "source-grounding-2026-05-19-b72df16"
+APP_REVIEW_BUILD = "source-grounding-2026-05-19-style-location"
 
 
 def load_local_env_files() -> None:
@@ -708,6 +708,14 @@ def clean_agent_reply(reply: str | None) -> str:
     text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
     text = text.replace("**", "")
     text = re.sub(r"^[\s\-\u2013\u2014]+(?=\w)", "", text)
+    text = re.sub(
+        r"^(?:nice(?: one)?|good call|love that|perfect)\s*(?:[\-\u2013\u2014]\s*)?",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).lstrip()
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
     text = re.sub(r"^(great|good) question[!.,]?\s*", "", text, flags=re.IGNORECASE)
     text = text.replace("•", "\n- ")
     text = re.sub(r"^[*-]\s*", "- ", text, flags=re.MULTILINE)
@@ -1425,7 +1433,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
 
     if re.search(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', message) or re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', message):
         name = extract_contact_name(message, session_id=session_id)
-        intro = f"Perfect — I’ve got those contact details, {name.split()[0]}." if name else "Perfect — I’ve got those contact details."
+        intro = f"I’ve got those contact details, {name.split()[0]}." if name else "I’ve got those contact details."
         goal = known_goal_from_history(session_id)
         if name:
             follow_up = "The team can use that to follow up about the best free intro, SPT, or coach-call option for you."
