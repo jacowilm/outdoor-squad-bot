@@ -136,6 +136,10 @@ def main() -> int:
                 failures.append(f"{name}: unsafe boundary wording")
             if "specific program training" in reply.lower():
                 failures.append(f"{name}: incorrect SPT expansion")
+            if "book you" in reply.lower():
+                failures.append(f"{name}: unsupported booking claim")
+            if "\n\n-\n\n" in reply or reply.strip() == "-":
+                failures.append(f"{name}: lone bullet formatting artifact")
             if len(reply) > 900:
                 failures.append(f"{name}: reply is too long for the widget")
 

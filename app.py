@@ -716,6 +716,12 @@ def clean_agent_reply(reply: str | None) -> str:
 
 def guard_operational_claims(text: str) -> str:
     lowered = text.lower()
+    text = re.sub(
+        r"\b(?:want me to|should I|can I|I can)\s+book you\b[^?]*\?",
+        "Want me to point you toward the free intro?",
+        text,
+        flags=re.IGNORECASE,
+    )
     if any(phrase in lowered for phrase in ["check your spam", "sent to your email", "emailed you the meal plan", "meal plan has been sent"]):
         return (
             "If you want the free 5-day meal plan, the team can send that through when they follow up.\n\n"
@@ -749,6 +755,7 @@ def split_long_paragraph(paragraph: str) -> list[str]:
 
 
 def format_reply_for_chat(text: str) -> str:
+    text = re.sub(r"(?m)^-\s*\n+\s*(?=[A-Za-z][^:\n]{0,35}:)", "- ", text)
     option_labels = [
         "SPT:",
         "Group classes:",
@@ -786,6 +793,8 @@ def format_reply_for_chat(text: str) -> str:
 
     cleaned_blocks: list[str] = []
     for block in blocks:
+        if not block.strip(" -"):
+            continue
         if block.startswith("- "):
             cleaned_blocks.append(block)
             continue
