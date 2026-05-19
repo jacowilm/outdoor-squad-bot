@@ -40,6 +40,15 @@ CASES = [
 ]
 
 BACKEND_UNAVAILABLE = "trouble reaching the AI backend"
+REQUIRED_BRAND_TERMS = [
+    "Crom",
+    "Conan",
+    "Robo-Nick",
+    "Yo-gah",
+    "Puh-lah-tees",
+    "having a crack",
+    "carrying groceries at 75",
+]
 
 
 @contextlib.contextmanager
@@ -73,15 +82,36 @@ def main() -> int:
             failures.append("AI backend is not configured")
         if not health.get("admin_configured"):
             failures.append("Admin auth is not configured")
+        if not health.get("trial_link_configured"):
+            failures.append("Final trial/booking link is not configured")
         if mode == "handoff":
-            if not health.get("trial_link_configured"):
-                failures.append("Final trial/booking link is not configured")
             if not health.get("handoff_ready"):
                 failures.append("Handoff mode is not ready for Nicholas-owned ownership")
-        elif not health.get("review_hosted_by_ai_sprints"):
-            failures.append("Review mode is not marked as AI Sprints-hosted")
+        else:
+            if not health.get("review_hosted_by_ai_sprints"):
+                failures.append("Review mode is not marked as AI Sprints-hosted")
+            if not health.get("review_ready"):
+                failures.append("Review mode is not ready to send to Nicholas/Lyn")
         if health.get("source_chunks", 0) < 1:
             failures.append("source chunks are not loaded")
+
+        prompt_text = "\n\n".join(
+            message["content"]
+            for message in app.build_agent_messages(
+                "I'm into strength training and want to know if the Squad has personality.",
+                f"review-smoke-brand-{uuid.uuid4().hex[:8]}",
+            )
+            if message.get("role") == "system"
+        )
+        for term in REQUIRED_BRAND_TERMS:
+            if term not in prompt_text:
+                failures.append(f"brand voice prompt missing required reference: {term}")
+
+        if failures:
+            print("\nFAIL")
+            for failure in failures:
+                print(f"- {failure}")
+            return 1
 
         for name, message, requires_ai in CASES:
             session_id = f"review-smoke-{name}-{uuid.uuid4().hex[:8]}"
@@ -104,6 +134,8 @@ def main() -> int:
                 failures.append(f"{name}: markdown artifact leaked")
             if any(phrase in reply.lower() for phrase in ["clothes at home", "nudity here!", "naked"]):
                 failures.append(f"{name}: unsafe boundary wording")
+            if "specific program training" in reply.lower():
+                failures.append(f"{name}: incorrect SPT expansion")
             if len(reply) > 900:
                 failures.append(f"{name}: reply is too long for the widget")
 

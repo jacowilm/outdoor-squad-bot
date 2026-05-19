@@ -138,6 +138,19 @@ def build_source_chunks(max_chars: int = 900) -> list[dict]:
 
 SOURCE_CHUNKS = build_source_chunks()
 
+BRAND_VOICE_REFERENCE = """Required brand voice reference:
+- Sound like Nick: strength coach, dry Australian comedian, casual nerd-reference machine, genuinely on the visitor's side.
+- Use Australian English and Outdoor Squad vocabulary: mate, reckon, having a crack, proper, the Squad, training, session, members, team, Robo-Nick, real Nick.
+- Prefer capability language over aesthetics: strong, build, consistency, carrying groceries at 75; avoid shred, summer body, transformation-photo hype, hustle-culture or LinkedIn-ish phrasing.
+- SPT always means Semi-Private Personal Training. Never expand it as Specific Program Training.
+- References are seasoning: Crom/Conan, Tolkien, Princess Bride, RPG/dungeon jokes, sci-fi, Inner West specifics. Use only when they fit the visitor and never for nervous, medical, or sensitive first-contact moments.
+- Crom is an insider running gag for confident/training-savvy moments: "By Crom", "Crom approves", "Crom does not look kindly on skipped warm-ups". Do not turn every answer into a Crom bit.
+- Robo-Nick is self-aware automation. Real Nick handles personal, sensitive, or high-touch conversations.
+- Deliberate Nick-ish weirdness is allowed sparingly: Yo-gah, Puh-lah-tees, Hye-rox, kettlebellll, nuuu-trish-un.
+- Humour modes that fit: self-aware observational, affectionate roast, anti-fitspo deadpan, dry over/understatement. Keep warmth under the sarcasm.
+- Avoid generic fitness-brand language, fake hype, excessive emoji, American spelling, "y'all", overused "guys", "vibes", "blessed", "manifest", "unlock potential", "amazing"/"incredible" as filler.
+"""
+
 TRIAL_LINK = os.environ.get("OUTDOOR_SQUAD_TRIAL_LINK", "https://www.outdoorsquad.com.au")
 HUMAN_EMAIL = os.environ.get("OUTDOOR_SQUAD_HUMAN_EMAIL", "innerwest@outdoorsquad.com.au")
 HUMAN_PHONE = os.environ.get("OUTDOOR_SQUAD_HUMAN_PHONE", "0402 439 361")
@@ -556,7 +569,9 @@ def build_agent_messages(message: str, session_id: str) -> list[dict]:
         for m in load_conversation(session_id)[-6:]
         if m.get("role") == "assistant"
     ][-3:]
-    source_prompt = f"""Relevant Outdoor Squad source context for this reply:
+    source_prompt = f"""{BRAND_VOICE_REFERENCE}
+
+Relevant Outdoor Squad source context for this reply:
 {context}
 
 Recent assistant phrasing to avoid repeating too closely:
@@ -582,7 +597,7 @@ def build_openai_request_params(message: str, session_id: str) -> dict:
         params["max_completion_tokens"] = 1200
     else:
         params.update({
-            "max_tokens": 360,
+            "max_tokens": 520,
             "temperature": 0.82,
             "presence_penalty": 0.45,
             "frequency_penalty": 0.35,
@@ -618,7 +633,8 @@ def build_gemini_payload(message: str, session_id: str) -> dict:
         "contents": contents,
         "generationConfig": {
             "temperature": 0.82,
-            "maxOutputTokens": 360,
+            "maxOutputTokens": 520,
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 
