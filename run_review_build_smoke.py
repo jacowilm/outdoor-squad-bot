@@ -49,6 +49,13 @@ REQUIRED_BRAND_TERMS = [
     "having a crack",
     "carrying groceries at 75",
 ]
+REQUIRED_SOURCE_TITLES = [
+    "Brand voice guide",
+    "Master knowledge base",
+    "Offer architecture",
+    "Bot avatar routing",
+    "bot-faq-completed",
+]
 
 
 @contextlib.contextmanager
@@ -94,6 +101,10 @@ def main() -> int:
                 failures.append("Review mode is not ready to send to Nicholas/Lyn")
         if health.get("source_chunks", 0) < 1:
             failures.append("source chunks are not loaded")
+        loaded_titles = "\n".join(source.get("title", "") for source in app.SOURCE_DOCS)
+        for title in REQUIRED_SOURCE_TITLES:
+            if title not in loaded_titles:
+                failures.append(f"required source document not loaded: {title}")
 
         prompt_text = "\n\n".join(
             message["content"]
@@ -106,6 +117,9 @@ def main() -> int:
         for term in REQUIRED_BRAND_TERMS:
             if term not in prompt_text:
                 failures.append(f"brand voice prompt missing required reference: {term}")
+        for term in ["Camperdown", "Redfern", "Mallett St", "Waterloo", "Surry Hills"]:
+            if term not in prompt_text:
+                failures.append(f"operating facts prompt missing location detail: {term}")
 
         if failures:
             print("\nFAIL")
@@ -128,6 +142,8 @@ def main() -> int:
                 failures.append(f"{name}: HTTP {response.status_code}")
             if not reply:
                 failures.append(f"{name}: empty reply")
+            if reply.lower().startswith("nice"):
+                failures.append(f"{name}: repetitive 'Nice' opener")
             if requires_ai and BACKEND_UNAVAILABLE in reply:
                 failures.append(f"{name}: AI backend unavailable")
             if "**" in reply:
@@ -142,6 +158,21 @@ def main() -> int:
                 failures.append(f"{name}: lone bullet formatting artifact")
             if len(reply) > 900:
                 failures.append(f"{name}: reply is too long for the widget")
+
+        location_session = f"review-smoke-location-{uuid.uuid4().hex[:8]}"
+        response = client.post(
+            "/api/chat",
+            json={"session_id": location_session, "message": "what locations is there"},
+        )
+        data = response.json()
+        reply = (data.get("reply") or "").strip()
+        preview = " ".join(reply.split())[:180]
+        print(f"location: status={response.status_code} fallback={data.get('fallback')} reply={preview}")
+        for term in ["Camperdown", "Redfern"]:
+            if term not in reply:
+                failures.append(f"location: missing {term}")
+        if "exact" in reply.lower() and "unavailable" in reply.lower():
+            failures.append("location: claimed exact location unavailable")
 
     if failures:
         print("\nFAIL")

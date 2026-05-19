@@ -151,6 +151,13 @@ BRAND_VOICE_REFERENCE = """Required brand voice reference:
 - Avoid generic fitness-brand language, fake hype, excessive emoji, American spelling, "y'all", overused "guys", "vibes", "blessed", "manifest", "unlock potential", "amazing"/"incredible" as filler.
 """
 
+OPERATING_FACTS_REFERENCE = """Required operating facts:
+- Current main locations are Camperdown and Redfern.
+- Camperdown: The Barracks at Camperdown Tennis & Oval, Mallett St, Camperdown NSW 2050. Meeting point: Camperdown Tennis. Serves Camperdown, Newtown, Stanmore, and nearby Inner West suburbs. Parking around Australia St and Mallet St; Newtown Station is about 900m away; buses 413, 440, 480, and 483 stop on Parramatta Rd about 25m away.
+- Redfern: Redfern Park, Redfern St, Redfern NSW 2016. Meeting point: near the Park Cafe at the Sports Oval end; wet-weather fallback is undercover behind the cafe. Serves Redfern, Waterloo, and Surry Hills. Parking on Chalmers St and underground at Woolworths; Redfern Station is about 700m away; buses 310, 343, and 395 serve the area.
+- If asked what locations there are, answer directly with Camperdown and Redfern before asking which is closer. Never say exact locations or suburb names are unavailable.
+"""
+
 TRIAL_LINK = os.environ.get("OUTDOOR_SQUAD_TRIAL_LINK", "https://www.outdoorsquad.com.au")
 HUMAN_EMAIL = os.environ.get("OUTDOOR_SQUAD_HUMAN_EMAIL", "innerwest@outdoorsquad.com.au")
 HUMAN_PHONE = os.environ.get("OUTDOOR_SQUAD_HUMAN_PHONE", "0402 439 361")
@@ -476,6 +483,8 @@ Conversation rules:
 - Use line breaks naturally so each idea has room
 - If you list options, each option should be one short line with a simple dash, no bold labels, and usually no more than 10 words before the explanation ends. Prefer 3 options; 4 is the absolute max.
 - Vary sentence structure, avoid repeating the same openings or closings
+- Do not use "Nice" as a default opener. If a previous assistant reply recently started with "Nice", "Perfect", "Love that", or "Good call", choose a different opening or answer directly.
+- Avoid repetitive validation at the start of every message. Often the best opening is the direct answer.
 - Do not always end with a CTA, sometimes a simple helpful answer is better
 - Ask at most one question at a time unless the user clearly wants to move fast
 - If the user says "idk", "not sure", or gives a vague/low-effort answer, do not say generic assistant phrases like "I'm here to help with whatever you need". Narrow the path for them in a casual way: ask whether this is for them, their kid, prices, or trying a first class.
@@ -523,7 +532,7 @@ def keyword_tokens(text: str) -> set[str]:
     }
 
 
-def relevant_source_context(message: str, session_id: str, limit: int = 5) -> str:
+def relevant_source_context(message: str, session_id: str, limit: int = 8) -> str:
     """Small local retrieval layer over Nicholas's docs/curated KB."""
     history = load_conversation(session_id)[-8:]
     query = "\n".join([m.get("content", "") for m in history if m.get("role") == "user"] + [message])
@@ -545,6 +554,9 @@ def relevant_source_context(message: str, session_id: str, limit: int = 5) -> st
             score += 4
         if "avatar" in title and any(t in tokens for t in {"nervous", "kid", "daughter", "son", "strength", "weight", "routine", "busy"}):
             score += 3
+        if any(t in tokens for t in {"where", "location", "locations", "suburb", "suburbs", "meet", "parking", "transport", "bus", "camperdown", "redfern"}):
+            if any(word in chunk["text"].lower() for word in ["camperdown", "redfern", "mallett", "park cafe", "newtown", "waterloo", "surry hills"]):
+                score += 5
         if score:
             scored.append((score, chunk))
 
@@ -570,6 +582,8 @@ def build_agent_messages(message: str, session_id: str) -> list[dict]:
         if m.get("role") == "assistant"
     ][-3:]
     source_prompt = f"""{BRAND_VOICE_REFERENCE}
+
+{OPERATING_FACTS_REFERENCE}
 
 Relevant Outdoor Squad source context for this reply:
 {context}
@@ -629,7 +643,7 @@ def build_gemini_payload(message: str, session_id: str) -> dict:
         })
 
     return {
-        "systemInstruction": {"parts": [{"text": system_text}]},
+    "systemInstruction": {"parts": [{"text": system_text}]},
         "contents": contents,
         "generationConfig": {
             "temperature": 0.82,
@@ -1319,6 +1333,8 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         return True
     if is_obvious_boundary_joke(text):
         return True
+    if is_location_question(text):
+        return True
     if any(word in text for word in ["nutrition", "meal", "diet", "weight loss", "lose weight"]):
         return True
 
@@ -1351,6 +1367,24 @@ def is_vague_message(text: str) -> bool:
 
 def is_obvious_boundary_joke(text: str) -> bool:
     return any(word in text for word in ["nudity", "nude", "naked", "army yelling", "yelling", "drill sergeant"])
+
+
+def is_location_question(text: str) -> bool:
+    return any(
+        word in text
+        for word in [
+            "where",
+            "location",
+            "locations",
+            "suburb",
+            "suburbs",
+            "camperdown",
+            "redfern",
+            "parking",
+            "public transport",
+            "meet",
+        ]
+    )
 
 
 def demo_fallback_reply(message: str, session_id: str = "default") -> str:
@@ -1407,23 +1441,26 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "Before they reach out, what’s the main thing you want help with: fitness, weight loss, routine, or confidence getting started?"
         )
 
-    if any(word in text for word in ["where", "camperdown", "redfern", "parking", "bus", "public transport", "meet"]):
+    if is_location_question(normalise_chat_text(message)) or any(word in text for word in ["where", "camperdown", "redfern", "parking", "bus", "public transport", "meet"]):
         if "redfern" in text:
             return (
-                "Redfern sessions meet around Redfern Park — usually near the Park Café at the Sports Oval end, or undercover behind the café if the weather is being dramatic.\n\n"
-                "There’s parking on Chalmers St and underground at Woolworths, and Redfern Station is about 700m away.\n\n"
+                "Redfern sessions are at Redfern Park, Redfern St, Redfern NSW 2016.\n\n"
+                "The usual meeting point is near the Park Cafe at the Sports Oval end, or undercover behind the cafe if the weather is being dramatic.\n\n"
+                "It serves Redfern, Waterloo, Surry Hills and nearby spots. There’s parking on Chalmers St and underground at Woolworths, and Redfern Station is about 700m away.\n\n"
                 "Are you looking at Redfern specifically, or comparing it with Camperdown?"
             )
         if "camperdown" in text:
             return (
-                "Camperdown sessions meet at Camperdown Tennis, around The Barracks / Camperdown Oval.\n\n"
+                "Camperdown sessions are at The Barracks at Camperdown Tennis & Oval, Mallett St, Camperdown NSW 2050.\n\n"
+                "The meeting point is Camperdown Tennis. It serves Camperdown, Newtown, Stanmore and nearby Inner West suburbs.\n\n"
                 "Parking is usually around Australia St and Mallet St, and buses on Parramatta Rd stop very close by. Newtown Station is about 900m away.\n\n"
                 "Are you thinking mornings, evenings, or Saturday?"
             )
         return (
             "There are two main training spots: Camperdown and Redfern.\n\n"
-            "Camperdown meets at Camperdown Tennis near the oval. Redfern meets around Redfern Park near the Park Café end. Both have nearby parking and public transport options.\n\n"
-                "Which one is closer for you?"
+            "Camperdown: The Barracks at Camperdown Tennis & Oval, Mallett St, Camperdown NSW 2050. Good for Camperdown, Newtown, Stanmore and nearby Inner West suburbs.\n\n"
+            "Redfern: Redfern Park, Redfern St, Redfern NSW 2016. Good for Redfern, Waterloo, Surry Hills and nearby spots.\n\n"
+            "Which one is closer for you?"
         )
 
     if any(word in text for word in ["spt", "semi-private", "semi private", "personal training", "pt", "program", "programming", "partner", "mate", "friend and i", "kickstarter"]):
