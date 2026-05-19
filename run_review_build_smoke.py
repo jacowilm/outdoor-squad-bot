@@ -198,6 +198,26 @@ def main() -> int:
         if sum(1 for term in repeated_options if term.lower() in second.lower()) >= 2:
             failures.append("goal-choice: repeated the previous broad options")
 
+        repeat_location_session = f"review-smoke-location-repeat-{uuid.uuid4().hex[:8]}"
+        app.conversations[repeat_location_session] = [
+            {
+                "role": "assistant",
+                "content": (
+                    "Redfern sessions are at Redfern Park, Redfern St, Redfern NSW 2016.\n\n"
+                    "The usual meeting point is near the Park Cafe at the Sports Oval end, or undercover behind the cafe if the weather is being dramatic.\n\n"
+                    "It serves Redfern, Waterloo, Surry Hills and nearby spots. There’s parking on Chalmers St and underground at Woolworths, and Redfern Station is about 700m away."
+                ),
+            }
+        ]
+        repeated = client.post(
+            "/api/chat",
+            json={"session_id": repeat_location_session, "message": "redfern"},
+        ).json().get("reply", "")
+        preview = " ".join(repeated.split())[:180]
+        print(f"location-repeat: reply={preview}")
+        if repeated.lower().count("redfern park") > 0 or "redfern st" in repeated.lower() or "700m" in repeated.lower():
+            failures.append("location-repeat: repeated full Redfern logistics block")
+
     if failures:
         print("\nFAIL")
         for failure in failures:

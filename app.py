@@ -27,7 +27,7 @@ from openai import OpenAI
 
 app = FastAPI(title="Outdoor Squad AI Assistant")
 security = HTTPBasic()
-APP_REVIEW_BUILD = "source-grounding-2026-05-19-style-location"
+APP_REVIEW_BUILD = "source-grounding-2026-05-19-anti-repeat"
 
 
 def load_local_env_files() -> None:
@@ -593,7 +593,9 @@ Relevant Outdoor Squad source context for this reply:
 Recent assistant phrasing to avoid repeating too closely:
 {chr(10).join('- ' + item[:220].replace(chr(10), ' ') for item in recent_assistant) if recent_assistant else '- none'}
 
-Now answer the user's latest message naturally as Robo-Nick. Use the source context, the conversation history, and the user's tone. If the source context does not contain an exact answer, say so briefly and route to a free trial or human follow-up instead of inventing. Do not repeat the same wording or logistics line from the recent assistant phrasing unless the user directly asks again for that exact detail."""
+Now answer the user's latest message naturally as Robo-Nick. Use the source context, the conversation history, and the user's tone. If the source context does not contain an exact answer, say so briefly and route to a free trial or human follow-up instead of inventing.
+
+Anti-repeat rule: if the recent assistant phrasing already gave the same locations, prices, options, or logistics, do not restate the whole block. Acknowledge briefly, add only one new useful detail if needed, then move the conversation forward with one focused question."""
     recent = load_conversation(session_id)[-16:]
     return [
         {"role": "system", "content": BASE_AGENT_PROMPT},
@@ -866,6 +868,25 @@ def recent_assistant_message(session_id: str) -> str:
 def contextual_short_reply(message: str, session_id: str) -> str | None:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
+    if is_location_question(clean):
+        if "redfern" in clean and any(phrase in previous for phrase in ["redfern park", "redfern st", "redfern station"]):
+            return (
+                "Yep, that’s the Redfern option.\n\n"
+                "If you’re choosing between the two, pick Redfern if Waterloo, Surry Hills, or Redfern itself is easier for you. Otherwise Camperdown is usually the Inner West default.\n\n"
+                "Are you trying to choose the closest spot, or work out which class time fits?"
+            )
+        if "camperdown" in clean and any(phrase in previous for phrase in ["camperdown tennis", "mallett st", "newtown station"]):
+            return (
+                "Yep, Camperdown is the Camperdown Tennis / oval option.\n\n"
+                "That’s usually the better fit if you’re near Camperdown, Newtown, Stanmore, or that side of the Inner West.\n\n"
+                "Are you checking travel time, parking, or which class to try first?"
+            )
+        if any(phrase in previous for phrase in ["two main training spots", "camperdown and redfern", "redfern park", "camperdown tennis"]):
+            return (
+                "Same two spots: Camperdown and Redfern.\n\n"
+                "The useful next step is choosing by convenience rather than overthinking it: Camperdown for the Newtown/Stanmore side, Redfern for the Waterloo/Surry Hills side.\n\n"
+                "Which suburb are you coming from?"
+            )
     if clean in {"no", "nope", "nah", "none"}:
         if any(
             phrase in previous
