@@ -247,6 +247,39 @@ def main() -> int:
         if guarded == repeated_block or "Mallett St" in guarded or "Redfern St" in guarded:
             failures.append("generic-repeat: repeat guard did not replace duplicated block")
 
+        contact_session = f"review-smoke-contact-progress-{uuid.uuid4().hex[:8]}"
+        first_contact = client.post(
+            "/api/chat",
+            json={
+                "session_id": contact_session,
+                "message": "I'm Sam, mobile 0412 345 678, keen to try evenings in Redfern.",
+            },
+        ).json().get("reply", "")
+        preview = " ".join(first_contact.split())[:180]
+        print(f"contact-progress-first: reply={preview}")
+        if "main thing you want help with" in first_contact.lower():
+            failures.append("contact-progress-first: kept qualifying after contact capture")
+        if first_contact.count("?") > 1:
+            failures.append("contact-progress-first: asked too many questions after contact capture")
+
+        app.conversations[contact_session].append(
+            {
+                "role": "assistant",
+                "content": "The team can follow up by SMS or call and point you to the right session.",
+            }
+        )
+        repeated_handoff = app.prevent_repetitive_reply(
+            "The team can follow up by SMS or call. Can you send your phone number again?",
+            "sounds good",
+            contact_session,
+        )
+        preview = " ".join(repeated_handoff.split())[:180]
+        print(f"contact-progress-repeat: reply={preview}")
+        if "phone number again" in repeated_handoff.lower() or "sms or call" in repeated_handoff.lower():
+            failures.append("contact-progress-repeat: repeated contact/handoff request")
+        if repeated_handoff.count("?") > 0:
+            failures.append("contact-progress-repeat: kept asking questions after handoff was already clear")
+
     if failures:
         print("\nFAIL")
         for failure in failures:

@@ -489,6 +489,11 @@ Conversation rules:
 - Avoid repetitive validation at the start of every message. Often the best opening is the direct answer.
 - Do not always end with a CTA, sometimes a simple helpful answer is better
 - Ask at most one question at a time unless the user clearly wants to move fast
+- Once the visitor has shared a phone number or email in this conversation, do not ask for contact details again.
+- After contact details are captured, do not keep qualifying them. Acknowledge the handoff once, optionally ask whether they prefer SMS or a call, then stop.
+- Mention that Nick/Lyn/the team can follow up at most once per conversation. Later replies should move forward without repeating the same SMS/call promise.
+- If the conversation already has location, goal, timing, or contact details, use them. Do not ask the same slot again.
+- Do not stack questions like a form. If more information would help, choose the single most useful missing detail, otherwise close the loop.
 - If the user says "idk", "not sure", or gives a vague/low-effort answer, do not say generic assistant phrases like "I'm here to help with whatever you need". Narrow the path for them in a casual way: ask whether this is for them, their kid, prices, or trying a first class.
 - If they sound hesitant, reassure them naturally without over-selling
 - If they sound motivated, match that energy
@@ -595,7 +600,9 @@ Recent assistant phrasing to avoid repeating too closely:
 
 Now answer the user's latest message naturally as Robo-Nick. Use the source context, the conversation history, and the user's tone. If the source context does not contain an exact answer, say so briefly and route to a free trial or human follow-up instead of inventing.
 
-Anti-repeat rule: if the recent assistant phrasing already gave the same locations, prices, options, or logistics, do not restate the whole block. Acknowledge briefly, add only one new useful detail if needed, then move the conversation forward with one focused question."""
+Anti-repeat rule: if the recent assistant phrasing already gave the same locations, prices, options, follow-up promise, or logistics, do not restate the whole block. Acknowledge briefly, add only one new useful detail if needed, then move the conversation forward with one focused question.
+
+Contact rule: if the conversation history already includes a phone number or email, never ask for contact details again. Do not repeatedly say the team will SMS/call; say it once, or ask the user's preference once, then close cleanly."""
     recent = load_conversation(session_id)[-16:]
     return [
         {"role": "system", "content": BASE_AGENT_PROMPT},
@@ -925,6 +932,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
 
 
 def prevent_repetitive_reply(reply: str, message: str, session_id: str) -> str:
+    reply = enforce_contact_and_handoff_progression(reply, session_id)
     recent_assistant = [
         item.get("content", "")
         for item in load_conversation(session_id)[-8:]
@@ -938,6 +946,116 @@ def prevent_repetitive_reply(reply: str, message: str, session_id: str) -> str:
         if reply_similarity(reply, previous) >= 0.68 or repeats_key_block(reply, previous):
             return non_repeating_followup(message, session_id)
     return reply
+
+
+def contact_already_captured(session_id: str) -> bool:
+    return any(
+        has_contact_details(item.get("content", ""))
+        for item in load_conversation(session_id)
+        if item.get("role") == "user"
+    )
+
+
+def handoff_already_suggested(session_id: str) -> bool:
+    handoff_phrases = [
+        "team can follow up",
+        "team can use that to follow up",
+        "team will follow up",
+        "nick or lyn",
+        "when they follow up",
+        "send you an sms",
+        "send an sms",
+        "give you a call",
+        "call you",
+        "message or call",
+        "sms or call",
+    ]
+    return any(
+        any(phrase in item.get("content", "").lower() for phrase in handoff_phrases)
+        for item in load_conversation(session_id)
+        if item.get("role") == "assistant"
+    )
+
+
+def remove_extra_questions(text: str, max_questions: int = 1) -> str:
+    """Keep the chat from turning into a form after a useful answer."""
+    question_count = 0
+    kept_blocks: list[str] = []
+    for block in re.split(r"\n{2,}", text.strip()):
+        block_question_count = block.count("?")
+        if question_count >= max_questions and block_question_count:
+            continue
+        if question_count + block_question_count > max_questions:
+            sentences = re.split(r"(?<=[.!?])\s+", block)
+            kept_sentences: list[str] = []
+            for sentence in sentences:
+                if "?" in sentence:
+                    if question_count >= max_questions:
+                        continue
+                    question_count += sentence.count("?")
+                kept_sentences.append(sentence)
+            block = " ".join(sentence.strip() for sentence in kept_sentences if sentence.strip())
+        else:
+            question_count += block_question_count
+        if block.strip():
+            kept_blocks.append(block.strip())
+    return "\n\n".join(kept_blocks).strip()
+
+
+def enforce_contact_and_handoff_progression(reply: str, session_id: str) -> str:
+    """Avoid repeated lead-capture and handoff loops once details are known."""
+    if not contact_already_captured(session_id):
+        return remove_extra_questions(reply)
+
+    lower = reply.lower()
+    asks_for_contact = any(
+        phrase in lower
+        for phrase in [
+            "send your name",
+            "send me your name",
+            "send through your name",
+            "drop your name",
+            "share your name",
+            "name and mobile",
+            "mobile number",
+            "phone number",
+            "email address",
+            "best contact",
+            "how can the team reach",
+        ]
+    )
+    repeats_handoff = handoff_already_suggested(session_id) and any(
+        phrase in lower
+        for phrase in [
+            "team can follow up",
+            "team can use that to follow up",
+            "team will follow up",
+            "nick or lyn",
+            "when they follow up",
+            "send you an sms",
+            "send an sms",
+            "give you a call",
+            "call you",
+            "message or call",
+            "sms or call",
+        ]
+    )
+
+    if asks_for_contact or repeats_handoff:
+        goal = known_goal_from_history(session_id)
+        location = known_location_from_history(session_id)
+        parts = ["I’ve got your contact details, so I won’t ask for those again."]
+        if goal or location:
+            noted = []
+            if goal:
+                noted.append(goal)
+            if location:
+                noted.append(location)
+            parts.append(f"I’ve also got {' / '.join(noted)} noted.")
+        parts.append("Next step is simple from here: Nick or Lyn can take it from the chat notes and point you to the right session.")
+        return "\n\n".join(parts)
+
+    return remove_extra_questions(reply)
 
 
 def recent_assistant_message(session_id: str) -> str:
@@ -1683,7 +1801,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
         if name:
             follow_up = "The team can use that to follow up about the best free intro, SPT, or coach-call option for you."
         else:
-            follow_up = "If you haven’t already, send your first name too so Nick or Lyn know who they’re replying to."
+            follow_up = "If you haven’t already, add your first name too so Nick or Lyn know who they’re replying to."
         if goal:
             return (
                 f"{intro}\n\n"
@@ -1693,7 +1811,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
         return (
             f"{intro}\n\n"
             f"{follow_up}\n\n"
-            "Before they reach out, what’s the main thing you want help with: fitness, weight loss, routine, or confidence getting started?"
+            "Last useful choice: would you prefer a quick SMS or a call?"
         )
 
     if is_location_question(normalise_chat_text(message)) or any(word in text for word in ["where", "camperdown", "redfern", "parking", "bus", "public transport", "meet"]):
