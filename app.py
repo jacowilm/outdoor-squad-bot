@@ -1285,7 +1285,7 @@ async def chat(request: Request):
         lead_info = extract_lead_info(message, session_id)
         if lead_info:
             save_lead(lead_info)
-            log_event("lead_captured", **lead_info)
+            log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
 
         log_event("local_tone_handler_used", session_id=session_id)
         log_bot_reply(session_id, reply, fallback=False)
@@ -1307,7 +1307,7 @@ async def chat(request: Request):
         lead_info = extract_lead_info(message, session_id)
         if lead_info:
             save_lead(lead_info)
-            log_event("lead_captured", **lead_info)
+            log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
 
         reply_delay_ms = random.randint(MIN_REPLY_DELAY_MS, MAX_REPLY_DELAY_MS)
         log_bot_reply(session_id, reply, fallback=False)
@@ -1337,7 +1337,7 @@ async def chat(request: Request):
         lead_info = extract_lead_info(message, session_id)
         if lead_info:
             save_lead(lead_info)
-            log_event("lead_captured", **lead_info)
+            log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
 
         using_demo_fallback = (
             os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1"
@@ -1943,20 +1943,37 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     )
 
 
-def extract_lead_info(message: str, session_id: str) -> dict | None:
-    """Capture a follow-up lead only after usable contact details are shared."""
-    import re
+EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+PHONE_RE = re.compile(
+    r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})'
+)
+
+
+def extract_contact_details(text: str) -> dict:
     info = {}
-
-    # Email
-    email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', message)
+    email_match = EMAIL_RE.search(text)
     if email_match:
-        info['email'] = email_match.group()
-
-    # Phone (Australian)
-    phone_match = re.search(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', message)
+        info["email"] = email_match.group()
+    phone_match = PHONE_RE.search(text)
     if phone_match:
-        info['phone'] = phone_match.group()
+        info["phone"] = phone_match.group()
+    return info
+
+
+def contact_details_from_history(session_id: str) -> dict:
+    info = {}
+    for item in load_conversation(session_id):
+        if item.get("role") != "user":
+            continue
+        # Keep the latest contact values in case someone corrects a typo later.
+        info.update(extract_contact_details(item.get("content", "")))
+    return info
+
+
+def extract_lead_info(message: str, session_id: str) -> dict | None:
+    """Create or update a lead once usable contact details exist in-session."""
+    info = contact_details_from_history(session_id)
+    info.update(extract_contact_details(message))
 
     if not info:
         return None
@@ -2097,8 +2114,8 @@ def safe_rate(numerator: int, denominator: int) -> float:
 
 
 def redact_contact(text: str) -> str:
-    text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '[email]', text)
-    text = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', '[phone]', text)
+    text = EMAIL_RE.sub('[email]', text)
+    text = PHONE_RE.sub('[phone]', text)
     return text
 
 
@@ -2124,23 +2141,91 @@ def log_chat_message(session_id: str, role: str, content: str):
     append_jsonl_file(CONVERSATION_LOG_FILE, event)
 
 
+def merge_lead(existing: dict, incoming: dict) -> dict:
+    """Preserve first contact details while refreshing the operational summary."""
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if value in (None, "", []):
+            continue
+        if key in {"handoff_summary", "route", "location_preference", "time_preference", "concerns", "raw_message"}:
+            merged[key] = value
+        elif not merged.get(key):
+            merged[key] = value
+    merged["timestamp"] = incoming.get("timestamp") or now_iso()
+    return merged
+
+
+def lead_match_params(lead_info: dict) -> list[dict]:
+    params = []
+    if lead_info.get("session_id"):
+        params.append({"session_id": f"eq.{lead_info['session_id']}", "limit": "1"})
+    if lead_info.get("email"):
+        params.append({"email": f"eq.{lead_info['email']}", "limit": "1"})
+    if lead_info.get("phone"):
+        params.append({"phone": f"eq.{lead_info['phone']}", "limit": "1"})
+    return params
+
+
+def find_existing_supabase_lead(lead_info: dict) -> dict | None:
+    for params in lead_match_params(lead_info):
+        try:
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["leads"],
+                params={"select": "*", **params},
+            ) or []
+        except Exception:
+            continue
+        if rows:
+            return rows[0]
+    return None
+
+
 def save_lead(lead_info: dict):
-    """Save lead to Supabase when configured, otherwise local JSON."""
+    """Upsert a lead to Supabase when configured, otherwise local JSON."""
     normalized = dict(lead_info)
     normalized.setdefault("concerns", [])
     if supabase_enabled():
         try:
-            supabase_request(
-                "POST",
-                SUPABASE_TABLES["leads"],
-                json_body=normalized,
-                prefer="return=minimal",
-            )
+            existing = find_existing_supabase_lead(normalized)
+            if existing and existing.get("id") is not None:
+                merged = merge_lead(existing, normalized)
+                merged.pop("id", None)
+                supabase_request(
+                    "PATCH",
+                    SUPABASE_TABLES["leads"],
+                    params={"id": f"eq.{existing['id']}"},
+                    json_body=merged,
+                    prefer="return=minimal",
+                )
+            else:
+                supabase_request(
+                    "POST",
+                    SUPABASE_TABLES["leads"],
+                    json_body=normalized,
+                    prefer="return=minimal",
+                )
             return
-        except Exception:
+        except Exception as exc:
+            log_event("lead_storage_error", session_id=normalized.get("session_id", "unknown"), error=str(exc)[:180])
             pass
     leads = read_json_array_file(LEADS_FILE)
-    leads.append(normalized)
+    match_index = next(
+        (
+            index
+            for index, lead in enumerate(leads)
+            if (
+                normalized.get("session_id") and lead.get("session_id") == normalized.get("session_id")
+            )
+            or (normalized.get("email") and lead.get("email") == normalized.get("email"))
+            or (normalized.get("phone") and lead.get("phone") == normalized.get("phone"))
+        ),
+        None,
+    )
+    if match_index is None:
+        leads.append(normalized)
+    else:
+        leads[match_index] = merge_lead(leads[match_index], normalized)
     LEADS_FILE.write_text(json.dumps(leads, indent=2))
 
 
