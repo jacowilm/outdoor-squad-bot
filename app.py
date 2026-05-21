@@ -2147,7 +2147,17 @@ def merge_lead(existing: dict, incoming: dict) -> dict:
     for key, value in incoming.items():
         if value in (None, "", []):
             continue
-        if key in {"handoff_summary", "route", "location_preference", "time_preference", "concerns", "raw_message"}:
+        if key in {
+            "session_id",
+            "handoff_summary",
+            "route",
+            "location_preference",
+            "time_preference",
+            "concerns",
+            "raw_message",
+        }:
+            merged[key] = value
+        elif key == "name" and existing.get("session_id") != incoming.get("session_id"):
             merged[key] = value
         elif not merged.get(key):
             merged[key] = value
