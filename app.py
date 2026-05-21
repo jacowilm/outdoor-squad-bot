@@ -172,6 +172,8 @@ SUPABASE_TIMEOUT_SECONDS = 12.0
 CONVERSATION_CACHE_MAX_SESSIONS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_MAX", "200"))
 CONVERSATION_CACHE_TTL_SECONDS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_TTL_SECONDS", "3600"))
 CONVERSATION_STATE_MAX_MESSAGES = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_STATE_MAX_MESSAGES", "60"))
+EVENTS_READ_LIMIT = int(os.environ.get("OUTDOOR_SQUAD_EVENTS_READ_LIMIT", "5000"))
+CONVERSATION_LOGS_READ_LIMIT = int(os.environ.get("OUTDOOR_SQUAD_LOGS_READ_LIMIT", "1000"))
 SUPABASE_TABLES = {
     "conversations": "outdoor_squad_conversations",
     "events": "outdoor_squad_events",
@@ -277,16 +279,17 @@ def read_leads() -> list[dict]:
     return read_json_array_file(LEADS_FILE)
 
 
-def read_events() -> list[dict]:
+def read_events(limit: int | None = None) -> list[dict]:
+    limit = max(1, min(limit or EVENTS_READ_LIMIT, 10000))
     if supabase_enabled():
         try:
             rows = supabase_request(
                 "GET",
                 SUPABASE_TABLES["events"],
-                params={"select": "*", "order": "timestamp.asc"},
+                params={"select": "*", "order": "timestamp.desc", "limit": str(limit)},
             ) or []
             events = []
-            for row in rows:
+            for row in sort_rows_by_timestamp(rows):
                 metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
                 events.append({
                     "timestamp": row.get("timestamp"),
@@ -300,7 +303,7 @@ def read_events() -> list[dict]:
     events: list[dict] = []
     if not EVENTS_FILE.exists():
         return events
-    for line in EVENTS_FILE.read_text().splitlines():
+    for line in EVENTS_FILE.read_text().splitlines()[-limit:]:
         if not line.strip():
             continue
         try:
@@ -310,21 +313,26 @@ def read_events() -> list[dict]:
     return events
 
 
-def read_conversation_logs() -> list[dict]:
+def read_conversation_logs(limit: int | None = None) -> list[dict]:
+    limit = max(1, min(limit or CONVERSATION_LOGS_READ_LIMIT, 5000))
     if supabase_enabled():
         try:
             rows = supabase_request(
                 "GET",
                 SUPABASE_TABLES["conversation_logs"],
-                params={"select": "timestamp,session_id,role,content", "order": "timestamp.asc"},
+                params={
+                    "select": "timestamp,session_id,role,content",
+                    "order": "timestamp.desc",
+                    "limit": str(limit),
+                },
             ) or []
-            return rows
+            return sort_rows_by_timestamp(rows)
         except Exception:
             pass
     logs: list[dict] = []
     if not CONVERSATION_LOG_FILE.exists():
         return logs
-    for line in CONVERSATION_LOG_FILE.read_text().splitlines():
+    for line in CONVERSATION_LOG_FILE.read_text().splitlines()[-limit:]:
         if not line.strip():
             continue
         try:
@@ -1500,8 +1508,8 @@ async def get_metrics(_: str = Depends(require_admin)):
 @app.get("/api/conversation-logs")
 async def get_conversation_logs(limit: int = 200, _: str = Depends(require_admin)):
     """Owner-only redacted transcript review for 30/60/90 day quality checks."""
-    logs = read_conversation_logs()
-    return JSONResponse(logs[-max(1, min(limit, 1000)):])
+    safe_limit = max(1, min(limit, 1000))
+    return JSONResponse(read_conversation_logs(safe_limit))
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -1510,7 +1518,7 @@ async def admin_dashboard(_: str = Depends(require_admin)):
     admin_data = {
         "metrics": build_metrics_payload(),
         "leads": read_leads(),
-        "logs": read_conversation_logs()[-120:],
+        "logs": read_conversation_logs(120),
     }
     return HTMLResponse(ADMIN_HTML.replace("__ADMIN_DATA__", json.dumps(admin_data)))
 
