@@ -1077,6 +1077,24 @@ def recent_assistant_message(session_id: str) -> str:
 def contextual_short_reply(message: str, session_id: str) -> str | None:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
+    if any(
+        phrase in clean
+        for phrase in [
+            "are you a real person",
+            "are you real",
+            "real person",
+            "are you human",
+            "am i talking to a person",
+            "am i talking to a human",
+            "is this a bot",
+            "are you a bot",
+        ]
+    ):
+        return (
+            "Short answer: I'm Robo-Nick, the automated helper.\n\n"
+            "Real Nick and Lyn are the actual humans behind The Outdoor Squad. I can answer the common stuff and point you to the right next step while they're coaching, asleep, or somewhere near coffee.\n\n"
+            "If it needs a human, the team can pick it up from here."
+        )
     if is_location_choice_reply(clean, session_id):
         location = "Redfern" if "redfern" in clean else "Camperdown"
         return location_choice_followup(location, session_id)
