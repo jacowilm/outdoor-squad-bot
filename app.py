@@ -159,7 +159,8 @@ OPERATING_FACTS_REFERENCE = """Required operating facts:
 - If asked what locations there are, answer directly with Camperdown and Redfern before asking which is closer. Never say exact locations or suburb names are unavailable.
 """
 
-TRIAL_LINK = os.environ.get("OUTDOOR_SQUAD_TRIAL_LINK", "https://www.outdoorsquad.com.au")
+DEFAULT_TRIAL_LINK = "https://momence.com/The-Outdoor-Squad-/membership/Squad-Intro-Class/263360"
+TRIAL_LINK = os.environ.get("OUTDOOR_SQUAD_TRIAL_LINK", DEFAULT_TRIAL_LINK)
 HUMAN_EMAIL = os.environ.get("OUTDOOR_SQUAD_HUMAN_EMAIL", "innerwest@outdoorsquad.com.au")
 HUMAN_PHONE = os.environ.get("OUTDOOR_SQUAD_HUMAN_PHONE", "0402 439 361")
 DEPLOYMENT_MODE = os.environ.get("OUTDOOR_SQUAD_DEPLOYMENT_MODE", "review").strip().lower()

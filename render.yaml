@@ -20,7 +20,7 @@ services:
       - key: OUTDOOR_SQUAD_ADMIN_PASSWORD
         sync: false
       - key: OUTDOOR_SQUAD_TRIAL_LINK
-        sync: false
+        value: https://momence.com/The-Outdoor-Squad-/membership/Squad-Intro-Class/263360
       - key: OUTDOOR_SQUAD_HUMAN_EMAIL
         value: innerwest@outdoorsquad.com.au
       - key: OUTDOOR_SQUAD_HUMAN_PHONE
