@@ -1796,6 +1796,38 @@ async def export_leads_csv(_: str = Depends(require_admin)):
     )
 
 
+def _is_trial_link(url: str) -> bool:
+    """Loose match: the configured trial URL host, plus momence.com (the booking
+    provider) so future trial URLs on the same provider still count."""
+    if not url:
+        return False
+    lower = url.lower()
+    if TRIAL_LINK and TRIAL_LINK.lower() in lower:
+        return True
+    return "momence.com" in lower
+
+
+def _capture_trial_click(session_id: str, url: str) -> None:
+    """Persist a click on the trial link as a synthetic lead so the conversation
+    counts toward "Leads captured" + "Completed" even when the visitor never
+    shared a name/email/phone. Dedup is handled by save_lead via session_id."""
+    lead_info = {
+        "session_id": session_id,
+        "name": "Trial-link click",
+        "route": "trial-link-clicked",
+        "handoff_summary": f"Clicked the trial link without sharing contact details ({url[:120]}).",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "concerns": [],
+    }
+    try:
+        save_lead(lead_info)
+    except Exception as exc:
+        log_event("trial_click_lead_error", session_id=session_id, error=str(exc)[:180])
+        return
+    # lead_captured is what the completion-rate metric watches for.
+    log_event("lead_captured", session_id=session_id, route="trial-link-clicked", url=url[:200])
+
+
 @app.post("/api/event")
 async def track_event(request: Request):
     """Lightweight widget analytics for Nicholas/Lyn's weekly review."""
@@ -1804,6 +1836,17 @@ async def track_event(request: Request):
     session_id = str(body.get("session_id", "unknown"))[:120]
     metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
     log_event(event_type, session_id=session_id, **metadata)
+    # Trial-link clicks count as a captured lead even without contact details
+    # (per Nicholas, 2026-06-03): a click is intent, and intent is what Robo-Nick
+    # is here to surface. We act on either an explicit trial_link_clicked event
+    # or a generic link_clicked whose URL matches the trial provider.
+    if event_type == "trial_link_clicked" or (
+        event_type == "link_clicked" and _is_trial_link(str(metadata.get("url", "")))
+    ):
+        url = str(metadata.get("url", ""))[:240]
+        if event_type == "link_clicked" and _is_trial_link(url):
+            log_event("trial_link_clicked", session_id=session_id, url=url)
+        _capture_trial_click(session_id, url)
     return JSONResponse({"ok": True})
 
 
@@ -1818,6 +1861,7 @@ def build_metrics_payload() -> dict:
             "lead_captured",
             "booking_link_shown",
             "human_handoff_suggested",
+            "trial_link_clicked",
         }
     }
     leads = read_leads()
@@ -1826,6 +1870,7 @@ def build_metrics_payload() -> dict:
         "lead_captured": 0,
         "booking_link_shown": 0,
         "human_handoff_suggested": 0,
+        "trial_link_clicked": 0,
         "local_tone_handler_used": 0,
         "fallback_reply_used": 0,
     }
@@ -3527,9 +3572,9 @@ ADMIN_HTML = """
         metricCard('Conversations started', num(metrics.conversations_started), 'total sessions', true),
         metricCard('Completion rate', pct(metrics.completion_rate), 'of conversations completed'),
         metricCard('Drop-off rate', pct(metrics.dropoff_rate), 'left mid-chat'),
-        metricCard('Leads captured', num(metrics.leads_captured), 'contact details collected'),
-        metricCard('Handoffs suggested', num(metrics.outcomes.human_handoff_suggested), 'routed to Nick / Lyn'),
-        metricCard('Booking links shown', num(metrics.outcomes.booking_link_shown), 'trial CTA delivered')
+        metricCard('Leads captured', num(metrics.leads_captured), 'contacts + trial-link clicks'),
+        metricCard('Trial-link clicks', num(metrics.outcomes.trial_link_clicked), 'pressed the booking link'),
+        metricCard('Handoffs suggested', num(metrics.outcomes.human_handoff_suggested), 'routed to Nick / Lyn')
       ].join('');
 
       renderLeads(leads);

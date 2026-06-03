@@ -354,6 +354,18 @@
     };
     if (closeBtn) closeBtn.onclick = closePanel;
 
+    // Delegated click tracking on links inside bot messages. Fires a
+    // link_clicked event with the URL; backend treats trial-provider URLs as
+    // a captured lead (no contact required) per Nicholas's 2026-06-03 ask.
+    msgs.addEventListener('click', function(ev) {
+        const anchor = ev.target.closest('a');
+        if (!anchor) return;
+        if (!anchor.closest('.os-msg.bot')) return;
+        let host = '';
+        try { host = new URL(anchor.href).host; } catch (e) {}
+        track('link_clicked', { url: anchor.href, host: host });
+    });
+
     function formatBotText(text) {
         return String(text || '')
             .replace(/(Short version:)\s*/gi, '\n\n$1 ')
