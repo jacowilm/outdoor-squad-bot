@@ -827,11 +827,13 @@ def clean_agent_reply(reply: str | None) -> str:
     # fragments the inline list at "Group classes:", "SPT:", etc. and the
     # expander cannot see the original shape.
     text = expand_inline_lists(text)
+    # Case-sensitive: these are header tokens, not random words. The previous
+    # IGNORECASE flag mis-split lowercase prose like "We have these options:" at
+    # the inline word "options".
     text = re.sub(
         r"\s+(Training styles:|Pricing highlights:|Options:|Quick summary:|SPT:|Group classes:|Free trial:|Free meal plan:)",
         r"\n\n\1",
         text,
-        flags=re.IGNORECASE,
     )
     text = re.sub(r"Quick\s*\n+\s*options:", "Quick options:", text, flags=re.IGNORECASE)
     text = re.sub(
@@ -928,7 +930,34 @@ def split_long_paragraph(paragraph: str) -> list[str]:
     return chunks
 
 
+_BULLET_LABEL_RE = re.compile(
+    r"^(?P<lead>-\s+)"
+    r"(?P<label>(?!\*\*)[A-Za-z0-9][^—–:.\n]{1,48}?)"
+    r"(?P<sep>\s+[—–]\s+)"
+    r"(?P<rest>\S.*)$"
+)
+
+
+def bold_bullet_labels(text: str) -> str:
+    """For bullet lines shaped "- Label — description", wrap Label in **bold**
+    when it isn't already. Keeps option names visually scannable per Nicholas's
+    2026-06-03 readability ask, even when the LLM ignores the prompt rule."""
+    out_lines: list[str] = []
+    for line in text.split("\n"):
+        m = _BULLET_LABEL_RE.match(line)
+        if not m:
+            out_lines.append(line)
+            continue
+        label = m.group("label").strip()
+        if "**" in label or "." in label:
+            out_lines.append(line)
+            continue
+        out_lines.append(f"{m.group('lead')}**{label}**{m.group('sep')}{m.group('rest')}")
+    return "\n".join(out_lines)
+
+
 def format_reply_for_chat(text: str) -> str:
+    text = bold_bullet_labels(text)
     text = re.sub(r"(?m)^-\s*\n+\s*(?=[A-Za-z][^:\n]{0,35}:)", "- ", text)
     option_labels = [
         "SPT:",
