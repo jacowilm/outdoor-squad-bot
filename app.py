@@ -502,8 +502,12 @@ Conversation rules:
 - Make replies easy to scan on a phone
 - Prefer this structure when it fits: quick reaction, direct answer, then one simple next step or question
 - Use line breaks naturally so each idea has room
-- If you list options, each option should be one short line with a simple dash, no bold labels, and usually no more than 10 words before the explanation ends. Prefer 3 options; 4 is the absolute max.
-- Exception: if you write "Quick options:", keep the options in the same sentence, not as a broken bullet list.
+- ALWAYS format option lists as a vertical bullet list. Each option = its own line, starting with "- ", then a bold label, then an em-dash, then the description. Example:
+  - **Free trial pass** — easiest way to try one class
+  - **Group classes** — regular, low-pressure sessions for beginners
+  - **SPT** — small-group personal training with programming
+  Use 3 options, max 4. Never run options together with semicolons. Never put options in standalone paragraphs without a leading dash.
+- When you write a header like "Quick options:", "Training styles:", or "Pricing:", bold it ("**Quick options:**") on its own line followed by a blank line, then the bullet list. Never inline the options after the colon.
 - Vary sentence structure, avoid repeating the same openings or closings
 - Do not use "Nice" as a default opener. If a previous assistant reply recently started with "Nice", "Perfect", "Love that", or "Good call", choose a different opening or answer directly.
 - Avoid repetitive validation at the start of every message. Often the best opening is the direct answer.
@@ -736,7 +740,9 @@ def clean_agent_reply(reply: str | None) -> str:
     text = (reply or "").strip()
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
-    text = text.replace("**", "")
+    # Strip stray single `*` artefacts but keep paired `**bold**` so the widget
+    # can render it as <strong>.
+    text = re.sub(r"(?<!\*)\*(?!\*)", "", text)
     text = re.sub(r"^[\s\-\u2013\u2014]+(?=\w)", "", text)
     text = re.sub(
         r"^(?:nice(?: one)?|good call|love that|perfect|sweet)[\s,\-!\u2013\u2014]*",
@@ -748,7 +754,14 @@ def clean_agent_reply(reply: str | None) -> str:
         text = text[0].upper() + text[1:]
     text = re.sub(r"^(great|good) question[!.,]?\s*", "", text, flags=re.IGNORECASE)
     text = text.replace("•", "\n- ")
-    text = re.sub(r"^[*-]\s*", "- ", text, flags=re.MULTILINE)
+    # Normalise standalone "*" or "-" bullet markers to "- ", but DO NOT touch
+    # paired "**bold**" markers at the start of a line — they're meaningful.
+    text = re.sub(r"^(?:-|\*(?!\*))\s+", "- ", text, flags=re.MULTILINE)
+    # Convert inline "Header: Label: x; Label: y; ..." prose into a bullet list
+    # BEFORE the label-aware paragraph splitter — otherwise the splitter
+    # fragments the inline list at "Group classes:", "SPT:", etc. and the
+    # expander cannot see the original shape.
+    text = expand_inline_lists(text)
     text = re.sub(
         r"\s+(Training styles:|Pricing highlights:|Options:|Quick summary:|SPT:|Group classes:|Free trial:|Free meal plan:)",
         r"\n\n\1",
@@ -765,29 +778,43 @@ def clean_agent_reply(reply: str | None) -> str:
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = guard_operational_claims(text)
-    text = compact_quick_options(text)
     return format_reply_for_chat(text)
 
 
-def compact_quick_options(text: str) -> str:
-    """Keep short quick-option answers inline inside the chat bubble."""
-    marker = "Quick options:"
-    lower = text.lower()
-    start = lower.find(marker.lower())
-    if start == -1:
-        return text
+_INLINE_LIST_RE = re.compile(
+    r"(?P<header>[A-Z][\w \-'/]{2,40}):\s+"
+    r"(?P<body>"
+    r"[A-Z][\w \-'/()&]{1,40}:\s+[^;\n.]+"
+    r"(?:;\s+[A-Z][\w \-'/()&]{1,40}:\s+[^;\n.]+){1,}"
+    r")\.?"
+)
 
-    prefix = text[:start]
-    rest = text[start + len(marker):].strip()
-    if not rest:
-        return text
 
-    parts = [part.strip(" \n\t-") for part in re.split(r"(?:^|\n|\s)-\s+", rest) if part.strip(" \n\t-")]
-    if len(parts) < 2:
-        return text
+def expand_inline_lists(text: str) -> str:
+    """Convert flowing "Header: Label: x; Label: y; Label: z." prose into a clean
+    bullet list with a bolded header and bolded option labels. This is the safety
+    net for when the LLM (or a hardcoded reply) crams multiple options onto one
+    line — Nicholas's 2026-06-03 feedback flagged this as the biggest readability
+    miss. The pattern is matched anywhere in the text, not only at the start of
+    a paragraph, so mid-sentence inline lists also get expanded. Bullets render
+    as `<ul>` in the widget; bold labels as `<strong>`."""
 
-    compact = "; ".join(part.rstrip(".") for part in parts)
-    return f"{prefix}{marker} {compact}."
+    def replace(match: re.Match) -> str:
+        header = match.group("header").strip()
+        body = match.group("body").strip().rstrip(".")
+        segments = [s.strip() for s in body.split(";") if s.strip()]
+        if len(segments) < 2:
+            return match.group(0)
+        bullets: list[str] = []
+        for seg in segments:
+            if ":" in seg:
+                label, desc = seg.split(":", 1)
+                bullets.append(f"- **{label.strip()}** — {desc.strip().rstrip('.')}")
+            else:
+                bullets.append(f"- {seg.strip().rstrip('.')}")
+        return f"\n\n**{header}:**\n" + "\n".join(bullets) + "\n\n"
+
+    return _INLINE_LIST_RE.sub(replace, text)
 
 
 def guard_operational_claims(text: str) -> str:
@@ -882,7 +909,34 @@ def format_reply_for_chat(text: str) -> str:
             continue
         cleaned_blocks.append(block.strip())
 
-    return "\n\n".join(block for block in cleaned_blocks if block).strip()
+    # Convert each standalone "**Label** — description" paragraph into a real
+    # bullet item. The LLM sometimes emits options as separate paragraphs with
+    # bold labels but no leading dash; that reads OK but doesn't render as a
+    # <ul>. Promoting them to bullets keeps the document semantically a list.
+    _bold_label_para = re.compile(r"^\*\*[^*\n]+\*\*\s+[\-–—:]\s")
+    promoted: list[str] = []
+    for block in cleaned_blocks:
+        if _bold_label_para.match(block):
+            promoted.append("- " + block)
+        else:
+            promoted.append(block)
+
+    # Glue consecutive bullet items into one block so they render as a single
+    # <ul>, not a stream of standalone "- foo" paragraphs.
+    grouped: list[str] = []
+    buffer: list[str] = []
+    for block in promoted:
+        if block.startswith("- "):
+            buffer.append(block)
+        else:
+            if buffer:
+                grouped.append("\n".join(buffer))
+                buffer = []
+            grouped.append(block)
+    if buffer:
+        grouped.append("\n".join(buffer))
+
+    return "\n\n".join(block for block in grouped if block).strip()
 
 
 def reply_similarity(left: str, right: str) -> float:

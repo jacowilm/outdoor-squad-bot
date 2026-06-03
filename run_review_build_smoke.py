@@ -121,10 +121,32 @@ def main() -> int:
             if term not in prompt_text:
                 failures.append(f"operating facts prompt missing location detail: {term}")
         quick_options = app.clean_agent_reply(
-            "Quick options: - Free 1-day trial — easiest way to try a session. - 28-day Kickstarter — 4-week run with assessment + nutrition."
+            "Quick options: Free 1-day trial: easiest way to try a session; 28-day Kickstarter: 4-week run with assessment + nutrition; SPT: small-group coaching with programming."
         )
-        if "\n- Free 1-day trial" in quick_options or "Quick options:\n" in quick_options:
-            failures.append("quick options should stay inline")
+        # New rule (Nicholas 2026-06-03): option lists MUST render as a bullet list
+        # with a bolded header and bolded labels, not inline semicolon-separated prose.
+        if "**Quick options:**" not in quick_options:
+            failures.append("quick options header should be bolded on its own line")
+        if "- **Free 1-day trial**" not in quick_options:
+            failures.append("quick options should expand each option to a bold-labelled bullet")
+
+        admin_auth = (
+            os.environ.get("OUTDOOR_SQUAD_ADMIN_USERNAME", "outdoorsquad"),
+            os.environ.get("OUTDOOR_SQUAD_ADMIN_PASSWORD", ""),
+        )
+        admin_response = client.get("/admin", auth=admin_auth)
+        if admin_response.status_code != 200:
+            failures.append(f"admin dashboard HTTP {admin_response.status_code}")
+        else:
+            admin_html = admin_response.text
+            for term in ["Transcripts", "Copy selected", "Download selected", "Search transcripts"]:
+                if term not in admin_html:
+                    failures.append(f"admin dashboard missing {term}")
+        grouped_response = client.get("/api/conversation-transcripts?limit=20", auth=admin_auth)
+        if grouped_response.status_code != 200:
+            failures.append(f"grouped transcripts HTTP {grouped_response.status_code}")
+        elif not isinstance(grouped_response.json(), list):
+            failures.append("grouped transcripts should return a list")
 
         if failures:
             print("\nFAIL")
@@ -163,6 +185,47 @@ def main() -> int:
                 failures.append(f"{name}: lone bullet formatting artifact")
             if len(reply) > 900:
                 failures.append(f"{name}: reply is too long for the widget")
+            if name == "ytp":
+                ytp_terms = ["WWCC", "Saturday", "Camperdown", "$25"]
+                for term in ytp_terms:
+                    if term.lower() not in reply.lower():
+                        failures.append(f"{name}: missing YTP detail {term}")
+                if "watch" not in reply.lower() and "parent" not in reply.lower():
+                    failures.append(f"{name}: missing parent-watch reassurance")
+            if name == "kickstarter":
+                for term in ["$397", "28 days", "SPT", "8 SPT sessions"]:
+                    if term.lower() not in reply.lower():
+                        failures.append(f"{name}: missing Kickstarter detail {term}")
+                if "3 spt sessions per week" in reply.lower() or "3 sessions per week" in reply.lower():
+                    failures.append(f"{name}: incorrectly says Kickstarter defaults to 3 SPT sessions/week")
+            if name == "injury":
+                if not any(term in reply.lower() for term in ["nick", "lyn", "coach", "human"]):
+                    failures.append(f"{name}: injury path should route to a human/coach")
+                if not any(term in reply.lower() for term in ["trial", "spt", "coach chat"]):
+                    failures.append(f"{name}: injury path should name a safe next step")
+
+        extra_conversion_cases = [
+            ("browsing", "Just browsing for now, thanks.", ["free trial"]),
+            ("winter", "Isn't it awkward training outdoors in winter?", ["free trial"]),
+            ("quit-gyms", "I've quit gyms before. Why would this be different?", ["free trial"]),
+            ("plus-fitness", "$51 a week is a lot. Plus Fitness is $18.", ["free trial", "Plus Fitness", "$51"]),
+            ("pt-redirect", "Do you do personal training?", ["SPT", "28-Day Kickstarter"]),
+            ("coach-program", "I want a coach who knows my goals and writes me a program.", ["SPT", "28-Day Kickstarter"]),
+        ]
+        for name, message, required_terms in extra_conversion_cases:
+            session_id = f"review-smoke-extra-{name}-{uuid.uuid4().hex[:8]}"
+            response = client.post("/api/chat", json={"session_id": session_id, "message": message})
+            data = response.json()
+            reply = (data.get("reply") or "").strip()
+            preview = " ".join(reply.split())[:180]
+            print(f"{name}: status={response.status_code} fallback={data.get('fallback')} reply={preview}")
+            if response.status_code != 200:
+                failures.append(f"{name}: HTTP {response.status_code}")
+            for term in required_terms:
+                if term.lower() not in reply.lower():
+                    failures.append(f"{name}: missing required term {term}")
+            if "book you" in reply.lower() or "would you like to book" in reply.lower():
+                failures.append(f"{name}: unsupported booking claim")
 
         location_session = f"review-smoke-location-{uuid.uuid4().hex[:8]}"
         response = client.post(
