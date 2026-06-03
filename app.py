@@ -2267,7 +2267,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "Which one is closer for you?"
         )
 
-    if any(word in text for word in ["spt", "semi-private", "semi private", "personal training", "pt", "program", "programming", "partner", "mate", "friend and i", "kickstarter"]):
+    if re.search(r"\b(?:spt|semi-private|semi private|personal training|pt|program|programming|partner|mate|friend and i|kickstarter)\b", text):
         return (
             "That sounds more like the SPT / 28-Day Kickstarter path than a basic group-class trial.\n\n"
             "SPT is small-group personal training: max 4 people, proper programming, assessment, nutrition support, and group classes included. The 28-Day Kickstarter is the trial version at $397.\n\n"
@@ -2470,7 +2470,7 @@ def build_lead_summary(session_id: str, latest_message: str = "") -> dict:
 def classify_route(text: str) -> str:
     if any(word in text for word in ["kid", "kids", "child", "son", "daughter", "teen", "ytp", "young'n'strong"]):
         return "YTP / parent enquiry"
-    if any(word in text for word in ["spt", "semi-private", "semi private", "personal training", "pt", "program", "programming", "partner", "kickstarter", "hyrox", "powerlifting", "crossfit"]):
+    if re.search(r"\b(?:spt|semi-private|semi private|personal training|pt|program|programming|partner|kickstarter|hyrox|powerlifting|crossfit)\b", text):
         return "SPT / 28-Day Kickstarter"
     if any(word in text for word in ["casual", "drop-in", "drop in", "visiting"]):
         return "casual drop-in"
