@@ -1050,42 +1050,31 @@ def enforce_contact_and_handoff_progression(reply: str, session_id: str) -> str:
             "how can the team reach",
         ]
     )
-    repeats_handoff = handoff_already_suggested(session_id) and any(
-        phrase in lower
-        for phrase in [
-            "team can follow up",
-            "team can use that to follow up",
-            "team will follow up",
-            "nick or lyn",
-            "when they follow up",
-            "send you an sms",
-            "send an sms",
-            "give you a call",
-            "call you",
-            "message or call",
-            "sms or call",
-        ]
-    )
+    # Only override the draft if it is literally re-asking for contact details that we
+    # already have. The previous behaviour also overrode replies that happened to mention
+    # "team will follow up" / "Nick or Lyn", which clobbered legitimate answers (e.g. the
+    # meal-plan flow and the "are you a real person?" reply) — see Nicholas's 2026-06-03
+    # review feedback. The dedicated short-reply routes now handle handoff phrasing
+    # themselves.
+    if not asks_for_contact:
+        return remove_extra_questions(reply)
 
-    if asks_for_contact or repeats_handoff:
-        goal = known_goal_from_history(session_id)
-        location = known_location_from_history(session_id)
-        name = extract_contact_name("", session_id=session_id)
-        if name:
-            parts = [f"I’ve got your contact details, {name.split()[0]}, so I won’t ask for those again."]
-        else:
-            parts = ["I’ve got your contact details, so I won’t ask for those again."]
-        if goal or location:
-            noted = []
-            if goal:
-                noted.append(goal)
-            if location:
-                noted.append(location)
-            parts.append(f"I’ve also got {' / '.join(noted)} noted.")
-        parts.append("Next step is simple from here: Nick or Lyn can take it from the chat notes and point you to the right session.")
-        return "\n\n".join(parts)
-
-    return remove_extra_questions(reply)
+    goal = known_goal_from_history(session_id)
+    location = known_location_from_history(session_id)
+    name = extract_contact_name("", session_id=session_id)
+    if name:
+        parts = [f"I’ve got your contact details, {name.split()[0]}, so I won’t ask for those again."]
+    else:
+        parts = ["I’ve got your contact details, so I won’t ask for those again."]
+    if goal or location:
+        noted = []
+        if goal:
+            noted.append(goal)
+        if location:
+            noted.append(location)
+        parts.append(f"I’ve also got {' / '.join(noted)} noted.")
+    parts.append("Next step is simple from here: Nick or Lyn can take it from the chat notes and point you to the right session.")
+    return "\n\n".join(parts)
 
 
 def recent_assistant_message(session_id: str) -> str:
@@ -1095,9 +1084,64 @@ def recent_assistant_message(session_id: str) -> str:
     return ""
 
 
+TRIAL_CLOSES = (
+    "Want me to hold a quiet class spot — Camperdown or Redfern?",
+    "If you pick Camperdown or Redfern, I can flag the next sensible session for you.",
+    "Which fits your week better, Camperdown or Redfern?",
+    "Camperdown or Redfern — which is closer for you to walk into?",
+    "Tell me Camperdown or Redfern and I’ll point you at the cleanest first session.",
+    "Want me to line up the next quiet class at Camperdown or Redfern for you?",
+)
+
+
+def assistant_history_lower(session_id: str) -> str:
+    return "\n".join(
+        item.get("content", "").lower()
+        for item in load_conversation(session_id)
+        if item.get("role") == "assistant"
+    )
+
+
+def trial_close(session_id: str) -> str:
+    """Pick a non-repeating location/trial close for this session."""
+    history = assistant_history_lower(session_id)
+    seed = abs(hash(session_id or "anon")) % len(TRIAL_CLOSES)
+    for offset in range(len(TRIAL_CLOSES)):
+        candidate = TRIAL_CLOSES[(seed + offset) % len(TRIAL_CLOSES)]
+        if candidate.lower() not in history:
+            return candidate
+    # All have been used — fall through to a neutral one.
+    return "Camperdown or Redfern — whichever is closer is fine."
+
+
 def contextual_short_reply(message: str, session_id: str) -> str | None:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
+
+    # Meal-plan ask — handles "send me the free 5-day meal plan", with or without an
+    # email in the same message. The previous default flow let the contact-details regex
+    # at the bottom of demo_fallback_reply swallow this entirely (Nicholas 2026-06-03).
+    if (
+        "meal plan" in clean
+        or "5-day meal" in clean
+        or "5 day meal" in clean
+        or "five day meal" in clean
+        or "free meal" in clean
+    ) and any(
+        kw in clean for kw in ["send", "email", "get", "sign me up", "sign up", "subscribe", "share", "share it"]
+    ):
+        has_email_in_msg = bool(re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", message))
+        lines = ["Yep — happy to flag the free 5-day meal plan for you."]
+        if has_email_in_msg:
+            lines.append("Got the email on file, so Nick or Lyn can send it through with the rest of the welcome notes.")
+        else:
+            lines.append("Drop the email you want it sent to and the team will send it through with the welcome notes.")
+        lines.append(
+            "Quick heads-up: the plan is the food side; the trial class is the easiest first move on the training side. "
+            + trial_close(session_id)
+        )
+        return "\n\n".join(lines)
+
     if any(word in clean for word in ["crossfit", "hyrox", "powerlifting", "strongman"]) or (
         "serious" in clean and ("programming" in clean or "program" in clean)
     ):
@@ -1116,7 +1160,10 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "Yep. That’s a very Outdoor Squad reason to train.\n\n"
             "The focus is real-world strength, mobility, balance, and still carrying your own groceries when you’re 75. Plenty of members train with that long-game mindset, not a quick before-and-after thing.\n\n"
-            "A free trial is the sensible first step. Strength'N'Tone or a regular group session would usually be the best place to start."
+            "Two formats lean particularly well into the long game:\n"
+            "- Power'N'Pilates — strength + control, easier on the joints, good for keeping moving well as you age.\n"
+            "- Yoga Squad — mobility, balance, and the bit most people skip.\n\n"
+            "A free trial is the sensible first step. " + trial_close(session_id)
         )
     if re.search(r"\b(kid|kids|child|son|daughter|teen|young|ytp)\b", clean):
         return (
@@ -1132,15 +1179,15 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but"]):
         return (
-            "Totally fair. No pressure.\n\n"
-            "The free trial is exactly for that gap between curious and committed: turn up once, meet the coach, see the vibe, then decide with actual evidence.\n\n"
-            "Want the simplest next step, Camperdown or Redfern?"
+            "All good — no pressure.\n\n"
+            "For what it’s worth: the trial is one session, no commitment, and most people who try it know within twenty minutes whether the Squad’s their kind of thing.\n\n"
+            + trial_close(session_id)
         )
-    if any(phrase in clean for phrase in ["next step", "come along", "want to come along", "how do i start", "how to start", "what should i actually do first", "what should i do first", "do first"]):
+    if any(phrase in clean for phrase in ["next step", "come along", "want to come along", "how do i start", "how to start", "what should i actually do first", "what should i do first", "do first", "when can i start"]):
         return (
             "The cleanest next step is the free trial.\n\n"
             "You come along once, meet the coach, get a feel for the session, and then the team can point you toward group classes, SPT, or YTP if that fits better.\n\n"
-            "Which location is easier for you: Camperdown or Redfern?"
+            + trial_close(session_id)
         )
     if any(phrase in clean for phrase in ["just browsing", "browsing for now", "just looking"]):
         return (
@@ -1148,11 +1195,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "If you want the lowest-pressure next step, the free trial is the cleanest way to see the vibe without committing.\n\n"
             "Are you browsing for yourself, your kid, or just comparing options?"
         )
-    if "winter" in clean or "cold" in clean or "outdoors in winter" in clean:
+    if "winter" in clean or "outdoors in winter" in clean:
         return (
             "Fair question. Winter outdoors sounds worse in your head than it usually is once you’re moving.\n\n"
             "The coaches keep sessions practical, you dress in layers, and the point is coached training in fresh air, not suffering for theatrical reasons.\n\n"
-            "Best test is a free trial on a day that suits you. Are you closer to Camperdown or Redfern?"
+            "Best test is a free trial on a day that suits you. " + trial_close(session_id)
         )
     if any(phrase in clean for phrase in ["i've quit gyms", "ive quit gyms", "joined gyms before", "quit gyms", "quit gym", "quit before", "quit after"]):
         return (

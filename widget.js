@@ -153,7 +153,28 @@
             border-bottom-right-radius: 6px;
             box-shadow: 0 2px 8px rgba(242,101,34,.32);
         }
-        .os-msg.bot a { color: #e0540f; }
+        .os-msg.bot p { margin: 0 0 8px; }
+        .os-msg.bot p:last-child { margin-bottom: 0; }
+        .os-msg.bot ul {
+            margin: 6px 0 8px;
+            padding-left: 18px;
+        }
+        .os-msg.bot ul:last-child { margin-bottom: 0; }
+        .os-msg.bot li {
+            margin: 3px 0;
+            padding-left: 2px;
+        }
+        .os-msg.bot li::marker { color: #f26522; }
+        .os-msg.bot a {
+            color: #e0540f;
+            font-weight: 600;
+            text-decoration: underline;
+            text-decoration-thickness: 1.5px;
+            text-underline-offset: 2px;
+            word-break: break-word;
+        }
+        .os-msg.bot a:hover { color: #b34109; }
+        .os-msg.bot strong { font-weight: 700; }
 
         .os-quick-replies {
             display: flex; flex-wrap: wrap; gap: 6px;
@@ -335,7 +356,6 @@
 
     function formatBotText(text) {
         return String(text || '')
-            .replace(/\*\*/g, '')
             .replace(/(Short version:)\s*/gi, '\n\n$1 ')
             .replace(/([A-Za-z][A-Za-z /']+?:)\s*-\s+/g, '$1\n- ')
             .replace(/\s-\s+(?=[A-Z])/g, '\n- ')
@@ -343,10 +363,76 @@
             .trim();
     }
 
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function(c) {
+            return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);
+        });
+    }
+
+    function renderBotHtml(raw) {
+        const cleaned = formatBotText(raw);
+        const lines = cleaned.split('\n');
+        let html = '';
+        let inList = false;
+        let buf = [];
+
+        function inlineFmt(s) {
+            // Escape HTML, then re-introduce markdown links, bare URLs, and **bold**.
+            let out = escapeHtml(s);
+            // Markdown links [label](url)
+            out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, function(_m, label, url) {
+                return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+            });
+            // Bare URLs — skip if already inside an anchor (naive: avoid trailing punctuation)
+            out = out.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, function(_m, pre, url) {
+                const trimmed = url.replace(/[.,;:!?)\]]+$/, '');
+                const trail = url.slice(trimmed.length);
+                return pre + '<a href="' + trimmed + '" target="_blank" rel="noopener noreferrer">' + trimmed + '</a>' + trail;
+            });
+            // Bold
+            out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            return out;
+        }
+        function flushParagraph() {
+            if (buf.length) {
+                html += '<p>' + buf.join(' ') + '</p>';
+                buf = [];
+            }
+        }
+        function flushList() {
+            if (inList) { html += '</ul>'; inList = false; }
+        }
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const trimmed = line.trim();
+            if (!trimmed) {
+                flushParagraph();
+                flushList();
+                continue;
+            }
+            if (/^[-•]\s+/.test(trimmed)) {
+                flushParagraph();
+                if (!inList) { html += '<ul>'; inList = true; }
+                html += '<li>' + inlineFmt(trimmed.replace(/^[-•]\s+/, '')) + '</li>';
+            } else {
+                flushList();
+                buf.push(inlineFmt(trimmed));
+            }
+        }
+        flushParagraph();
+        flushList();
+        return html;
+    }
+
     function addMsg(text, type) {
         const el = document.createElement('div');
         el.className = `os-msg ${type}`;
-        el.textContent = type === 'bot' ? formatBotText(text) : text;
+        if (type === 'bot') {
+            el.innerHTML = renderBotHtml(text);
+        } else {
+            el.textContent = text;
+        }
         msgs.appendChild(el);
         msgs.scrollTop = msgs.scrollHeight;
     }
