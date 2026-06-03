@@ -5,6 +5,10 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: OUTDOOR_SQUAD_ANTHROPIC_API_KEY
+        sync: false
+      - key: OUTDOOR_SQUAD_ANTHROPIC_MODEL
+        value: claude-haiku-4-5-20251001
       - key: OUTDOOR_SQUAD_OPENAI_API_KEY
         sync: false
       - key: OUTDOOR_SQUAD_OPENAI_MODEL

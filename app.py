@@ -427,11 +427,34 @@ def get_client():
     return _client
 
 
+_anthropic_client = None
+
+
+def get_anthropic_client():
+    """Lazy Anthropic client so deploys without the key don't blow up at import."""
+    global _anthropic_client
+    if _anthropic_client is None:
+        import anthropic  # lazy import
+        api_key = os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("Anthropic API key not configured")
+        _anthropic_client = anthropic.Anthropic(api_key=api_key)
+    return _anthropic_client
+
+
 def configured_ai_providers() -> list[str]:
-    providers = []
+    """Provider chain. Anthropic Haiku 4.5 is primary (best persona consistency
+    + jailbreak hold for Robo-Nick), OpenAI gpt-5-mini is the fallback. Gemini
+    is off by default after the 2026-05-17 QA produced off-brand voice; flip
+    OUTDOOR_SQUAD_ENABLE_GEMINI=1 to re-enable it as the last-resort tail."""
+    providers: list[str] = []
+    if os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
+        providers.append("anthropic")
     if os.environ.get("OUTDOOR_SQUAD_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"):
         providers.append("openai")
-    if os.environ.get("OUTDOOR_SQUAD_GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY"):
+    if os.environ.get("OUTDOOR_SQUAD_ENABLE_GEMINI") and (
+        os.environ.get("OUTDOOR_SQUAD_GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    ):
         providers.append("gemini")
     return providers
 
@@ -719,11 +742,53 @@ def generate_gemini_reply(message: str, session_id: str) -> str:
     return reply
 
 
+def build_anthropic_request(message: str, session_id: str) -> dict:
+    """Anthropic Messages API request. The base prompt + ~126 source chunks are
+    a large, stable prefix — marking the last system block as ephemeral caches
+    the whole prefix (~5-min TTL). Busy conversations pay ~10% of the prefix
+    cost on cache hits."""
+    messages = build_agent_messages(message, session_id)
+    system_blocks: list[dict] = []
+    history: list[dict] = []
+    for item in messages:
+        role = item.get("role")
+        content = item.get("content", "")
+        if role == "system":
+            system_blocks.append({"type": "text", "text": content})
+        else:
+            history.append({
+                "role": "assistant" if role == "assistant" else "user",
+                "content": content,
+            })
+    if system_blocks:
+        system_blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return {
+        "model": os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+        "max_tokens": 520,
+        "temperature": 0.82,
+        "system": system_blocks,
+        "messages": history,
+    }
+
+
+def generate_anthropic_reply(message: str, session_id: str) -> str:
+    response = get_anthropic_client().messages.create(
+        **build_anthropic_request(message, session_id)
+    )
+    parts = [block.text for block in response.content if getattr(block, "type", None) == "text"]
+    reply = clean_agent_reply("\n".join(parts))
+    if not reply:
+        raise RuntimeError("Anthropic returned an empty cleaned reply")
+    return reply
+
+
 def generate_ai_reply(message: str, session_id: str) -> tuple[str, str]:
     errors = []
     for provider in configured_ai_providers():
         for attempt in range(2):
             try:
+                if provider == "anthropic":
+                    return generate_anthropic_reply(message, session_id), "anthropic"
                 if provider == "openai":
                     return generate_openai_reply(message, session_id), "openai"
                 if provider == "gemini":
@@ -1854,6 +1919,10 @@ async def admin_dashboard(_: str = Depends(require_admin)):
 async def health():
     """Deployment health check without exposing secret values."""
     api_key_sources = []
+    if os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_API_KEY"):
+        api_key_sources.append("OUTDOOR_SQUAD_ANTHROPIC_API_KEY")
+    elif os.environ.get("ANTHROPIC_API_KEY"):
+        api_key_sources.append("ANTHROPIC_API_KEY")
     if os.environ.get("OUTDOOR_SQUAD_OPENAI_API_KEY"):
         api_key_sources.append("OUTDOOR_SQUAD_OPENAI_API_KEY")
     elif os.environ.get("OPENAI_API_KEY"):
@@ -1901,6 +1970,7 @@ async def health():
         "api_key_source": api_key_sources[0] if api_key_sources else None,
         "api_key_sources": api_key_sources,
         "model": os.environ.get("OUTDOOR_SQUAD_OPENAI_MODEL", "gpt-5-mini"),
+        "anthropic_model": os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
         "gemini_model": os.environ.get("OUTDOOR_SQUAD_GEMINI_MODEL", "gemini-2.5-flash"),
         "admin_configured": admin_configured,
         "trial_link_configured": trial_link_configured,
