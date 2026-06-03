@@ -12,10 +12,12 @@ import json
 import random
 import re
 import secrets
+import smtplib
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime
+from email.mime.text import MIMEText
 from pathlib import Path
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -163,6 +165,15 @@ DEFAULT_TRIAL_LINK = "https://momence.com/The-Outdoor-Squad-/membership/Squad-In
 TRIAL_LINK = os.environ.get("OUTDOOR_SQUAD_TRIAL_LINK", DEFAULT_TRIAL_LINK)
 HUMAN_EMAIL = os.environ.get("OUTDOOR_SQUAD_HUMAN_EMAIL", "innerwest@outdoorsquad.com.au")
 HUMAN_PHONE = os.environ.get("OUTDOOR_SQUAD_HUMAN_PHONE", "0402 439 361")
+LEAD_SUMMARY_EMAIL_TO = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_EMAIL_TO", HUMAN_EMAIL).strip()
+LEAD_SUMMARY_PHONE_TO = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_PHONE_TO", "+61402439361").strip()
+LEAD_SUMMARY_WEBHOOK_URL = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_URL", "").strip()
+LEAD_SUMMARY_WEBHOOK_SECRET = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_SECRET", "").strip()
+SMTP_HOST = os.environ.get("OUTDOOR_SQUAD_SMTP_HOST", "").strip()
+SMTP_PORT = int(os.environ.get("OUTDOOR_SQUAD_SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("OUTDOOR_SQUAD_SMTP_USER", "").strip()
+SMTP_PASSWORD = os.environ.get("OUTDOOR_SQUAD_SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("OUTDOOR_SQUAD_SMTP_FROM", SMTP_USER or HUMAN_EMAIL).strip()
 DEPLOYMENT_MODE = os.environ.get("OUTDOOR_SQUAD_DEPLOYMENT_MODE", "review").strip().lower()
 if DEPLOYMENT_MODE not in {"review", "handoff"}:
     DEPLOYMENT_MODE = "review"
@@ -510,7 +521,7 @@ Conversation rules:
 - If they ask something odd, playful, skeptical, or slightly off-track, answer it like a calm human and then gently steer back if appropriate
 - If someone gives a curve ball, do not ignore it and do not snap back into a script immediately
 - If they mention a physical limitation or injury, be encouraging without making medical claims
-- If you do not know an exact detail like pricing or timetable, be honest and guide them to the free intro class for specifics
+- If you do not know an exact detail like pricing or timetable, be honest and guide them to the free trial for specifics
 - Never invent facts outside the knowledge base
 - Never mention being an AI unless directly asked
 - Use emojis occasionally and lightly, around 1 small emoji in some replies, not every reply
@@ -530,13 +541,13 @@ Style examples:
 - If someone asks a practical question, answer it first instead of forcing qualification.
 - If someone says something weird like 'Does it involve nudity?', lightly acknowledge it and answer without sounding offended or robotic.
 - If someone says they are missing a limb or have a serious limitation, respond supportively and focus on adaptation, not hype.
-- If someone is clearly interested, guide them toward the free intro class in a low-pressure way.
+- If someone is clearly interested, guide them toward the free trial in a low-pressure way.
 - Good formatting example:
   Totally fair, and you definitely wouldn't be the only one feeling that way 🙂
 
   Most people start before they feel "ready", and sessions can be adjusted to your level.
 
-  If you want, I can also explain how the free intro works.
+  If you want, I can also explain how the free trial works.
 """
 
 
@@ -783,13 +794,13 @@ def guard_operational_claims(text: str) -> str:
     lowered = text.lower()
     text = re.sub(
         r"\b(?:want me to|should I|can I|I can)\s+book you\b[^?]*\?",
-        "Want me to point you toward the free intro?",
+        "Want me to point you toward the free trial?",
         text,
         flags=re.IGNORECASE,
     )
     text = re.sub(
         r"\b(?:want to|ready to|would you like to)\s+book\b[^?]*\?",
-        "Want me to point you toward the free intro?",
+        "Want me to point you toward the free trial?",
         text,
         flags=re.IGNORECASE,
     )
@@ -925,6 +936,12 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "The trial is still the right first step.\n\n"
             "Next thing to narrow is simple: Camperdown or Redfern, then the team can point you to a sensible class time."
         )
+    if any(phrase in clean for phrase in ["coach who knows", "writes me a program", "write the program around me", "write a program around me", "program around me"]):
+        return (
+            "That’s the SPT lane. Real Nick can write the program around you, especially if there’s a shoulder or technique constraint.\n\n"
+            "The 28-Day Kickstarter is the lower-commitment way to test that setup before ongoing SPT.\n\n"
+            "Want the SPT/Kickstarter path, or do you mainly want a one-off coach chat first?"
+        )
     if any(word in clean for word in ["price", "cost", "membership", "option", "options", "spt", "kickstarter"]):
         return (
             "Rather than run through the same options again: are you leaning low-pressure group classes, or more coached SPT?"
@@ -1053,7 +1070,11 @@ def enforce_contact_and_handoff_progression(reply: str, session_id: str) -> str:
     if asks_for_contact or repeats_handoff:
         goal = known_goal_from_history(session_id)
         location = known_location_from_history(session_id)
-        parts = ["I’ve got your contact details, so I won’t ask for those again."]
+        name = extract_contact_name("", session_id=session_id)
+        if name:
+            parts = [f"I’ve got your contact details, {name.split()[0]}, so I won’t ask for those again."]
+        else:
+            parts = ["I’ve got your contact details, so I won’t ask for those again."]
         if goal or location:
             noted = []
             if goal:
@@ -1077,6 +1098,115 @@ def recent_assistant_message(session_id: str) -> str:
 def contextual_short_reply(message: str, session_id: str) -> str | None:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
+    if any(word in clean for word in ["crossfit", "hyrox", "powerlifting", "strongman"]) or (
+        "serious" in clean and ("programming" in clean or "program" in clean)
+    ):
+        return (
+            "That sounds more like the serious-programming lane than a basic group-class question.\n\n"
+            "SPT is probably the cleanest fit: max 4 people, proper programming, assessments, nutrition support, and enough coach attention to work around that shoulder intelligently. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
+            "Is the shoulder fully cleared, or still something the coach needs to be careful with?"
+        )
+    if "28-day kickstarter" in clean or "28 day kickstarter" in clean or "kickstarter" in clean:
+        return (
+            "The 28-Day Kickstarter is the SPT trial product.\n\n"
+            "It’s $397 for 28 days: SPT coaching, a movement screen, personalised warm-up, nutrition plan, initial assessment, final assessment, and unlimited group classes for the 28 days. The standard SPT trial shape is 8 SPT sessions if you’re doing the 2x/week path.\n\n"
+            "It’s best for people who want more coaching and proper programming before committing to ongoing SPT."
+        )
+    if any(phrase in clean for phrase in ["52", "stay strong as i age", "strong as i age", "ageing", "aging", "longevity", "as i age"]):
+        return (
+            "Yep. That’s a very Outdoor Squad reason to train.\n\n"
+            "The focus is real-world strength, mobility, balance, and still carrying your own groceries when you’re 75. Plenty of members train with that long-game mindset, not a quick before-and-after thing.\n\n"
+            "A free trial is the sensible first step. Strength'N'Tone or a regular group session would usually be the best place to start."
+        )
+    if re.search(r"\b(kid|kids|child|son|daughter|teen|young|ytp)\b", clean):
+        return (
+            "Yep — that’s Young'N'Strong, the youth training program for ages 10–17.\n\n"
+            "It’s Saturday 9:15am at Camperdown, $25/wk, and coached by qualified, WWCC-checked trainers. Parents are welcome to watch first so it doesn’t feel like sending your kid into the wilderness with a whistle.\n\n"
+            "If your son’s 13, he’s right in the target age range. Want the team to point you to the best first session?"
+        )
+    if any(word in clean for word in ["dodgy knee", "bad knee", "injury", "injured", "limitation", "back pain", "shoulder", "niggle"]):
+        return (
+            "Good thing to flag. A dodgy knee doesn’t automatically rule you out, but it should be handled by a real coach, not hand-waved by a chat widget.\n\n"
+            "Nick or Lyn can check what’s going on and suggest whether a modified trial, SPT, or a quick coach chat is the sensible first move.\n\n"
+            "What’s the knee issue: old injury, current pain, or mostly a confidence thing?"
+        )
+    if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but"]):
+        return (
+            "Totally fair. No pressure.\n\n"
+            "The free trial is exactly for that gap between curious and committed: turn up once, meet the coach, see the vibe, then decide with actual evidence.\n\n"
+            "Want the simplest next step, Camperdown or Redfern?"
+        )
+    if any(phrase in clean for phrase in ["next step", "come along", "want to come along", "how do i start", "how to start", "what should i actually do first", "what should i do first", "do first"]):
+        return (
+            "The cleanest next step is the free trial.\n\n"
+            "You come along once, meet the coach, get a feel for the session, and then the team can point you toward group classes, SPT, or YTP if that fits better.\n\n"
+            "Which location is easier for you: Camperdown or Redfern?"
+        )
+    if any(phrase in clean for phrase in ["just browsing", "browsing for now", "just looking"]):
+        return (
+            "No worries. Browsing is allowed; Crom has not issued a summons yet.\n\n"
+            "If you want the lowest-pressure next step, the free trial is the cleanest way to see the vibe without committing.\n\n"
+            "Are you browsing for yourself, your kid, or just comparing options?"
+        )
+    if "winter" in clean or "cold" in clean or "outdoors in winter" in clean:
+        return (
+            "Fair question. Winter outdoors sounds worse in your head than it usually is once you’re moving.\n\n"
+            "The coaches keep sessions practical, you dress in layers, and the point is coached training in fresh air, not suffering for theatrical reasons.\n\n"
+            "Best test is a free trial on a day that suits you. Are you closer to Camperdown or Redfern?"
+        )
+    if any(phrase in clean for phrase in ["i've quit gyms", "ive quit gyms", "joined gyms before", "quit gyms", "quit gym", "quit before", "quit after"]):
+        return (
+            "That’s exactly why the first step should be low-pressure.\n\n"
+            "Outdoor Squad is different from a normal gym because you’re not left alone with a room full of machines and your own disappearing motivation. There’s coaching, structure, and people expecting you back.\n\n"
+            "Try the free trial first, then judge it by whether you’d actually come back. What usually makes you drop off?"
+        )
+    if "plus fitness" in clean or ("$51" in clean and "$18" in clean):
+        return (
+            "Totally fair comparison.\n\n"
+            "Plus Fitness is mainly equipment access. Squad Ascent at $51/wk is coached outdoor group training, equipment, programming, and a community that notices if you vanish.\n\n"
+            "No need to guess which model suits you. The free trial is there so you can test whether coached sessions are worth the difference."
+        )
+    if any(phrase in clean for phrase in ["personal training", " pt", "pt ", "1:1", "one on one", "coach who knows", "writes me a program", "write the program around me", "write a program around me", "program around me"]):
+        return (
+            "We do offer 1:1 PT at $150 a session — it’s there for cases that genuinely need it.\n\n"
+            "But honestly, most people who come in thinking they need 1:1 get better results from SPT: same level of programming and attention, plus community, at less than half the per-session price. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
+            "Want me to walk you through how SPT works?"
+        )
+    if any(phrase in clean for phrase in ["who's crom", "who is crom", "what is crom"]):
+        return (
+            "Crom is the stern god from Conan the Barbarian. Not warm. Not cuddly. Very interested in whether you skipped the warm-up.\n\n"
+            "Around here he’s basically the unofficial patron deity of heavy kettlebells, cold mornings, and having a crack.\n\n"
+            "If that sounds unhinged, good news: the training is much more welcoming than the mythology."
+        )
+    if any(phrase in clean for phrase in ["are you a real person", "are you real", "real person", "are you human", "am i talking to a person", "am i talking to a human", "is this a bot", "are you a bot"]):
+        return (
+            "Short answer: I'm Robo-Nick, the automated helper.\n\n"
+            "Real Nick and Lyn are the actual humans behind The Outdoor Squad. I can answer the common stuff and point you to the right next step while they're coaching, asleep, or somewhere near coffee.\n\n"
+            "If it needs a human, the team can pick it up from here."
+        )
+    if any(phrase in clean for phrase in ["billing date", "change my billing", "pause membership", "cancel membership", "account question"]):
+        return (
+            "That one needs Real Nick, Lyn, or the admin team. Robo-Nick can’t change billing or account details from here, and I’m not going to invent an answer.\n\n"
+            "Send through your name plus the email or mobile on the membership and the team can follow it up properly."
+        )
+    if "weather" in clean or "forecast" in clean or "joke about politics" in clean or "politics" in clean:
+        return (
+            "That’s a little outside my jurisdiction. Robo-Nick is here for Outdoor Squad, not forecasts or politics.\n\n"
+            "For training outdoors: check the local weather for Camperdown or Redfern, dress in layers, and the coach will manage the session sensibly.\n\n"
+            "Were you asking because you’re thinking about trying a class?"
+        )
+    if any(phrase in clean for phrase in ["discount", "free month", "cheaper", "deal"]):
+        return (
+            "No free-month magic from Robo-Nick, sorry. Bargain sorcery is not in the offer architecture.\n\n"
+            "The value stack is the proper answer: free trial first, $51/wk for unlimited coached group classes, and SPT if you want the higher-touch path. SPT also has an annual prepay option, but we don't do random discounting.\n\n"
+            "Are you trying to keep cost low, or work out which option is worth it?"
+        )
+    if any(phrase in clean for phrase in ["ignore your previous instructions", "system prompt", "previous instructions", "jailbreak"]):
+        return (
+            "Nice try. Robo-Nick is not spilling the internal instructions.\n\n"
+            "I can help with Outdoor Squad stuff: trials, prices, SPT, YTP, injuries, locations, or getting a human to follow up.\n\n"
+            "What brought you here?"
+        )
     if any(
         phrase in clean
         for phrase in [
@@ -1305,6 +1435,8 @@ async def chat(request: Request):
         if lead_info:
             save_lead(lead_info)
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
+            if has_contact_details(message):
+                notify_lead_summary(lead_info, reason="local_tone_handler_contact_capture")
 
         log_event("local_tone_handler_used", session_id=session_id)
         log_bot_reply(session_id, reply, fallback=False)
@@ -1327,6 +1459,8 @@ async def chat(request: Request):
         if lead_info:
             save_lead(lead_info)
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
+            if has_contact_details(message):
+                notify_lead_summary(lead_info, reason="ai_contact_capture")
 
         reply_delay_ms = random.randint(MIN_REPLY_DELAY_MS, MAX_REPLY_DELAY_MS)
         log_bot_reply(session_id, reply, fallback=False)
@@ -1357,6 +1491,8 @@ async def chat(request: Request):
         if lead_info:
             save_lead(lead_info)
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
+            if has_contact_details(message):
+                notify_lead_summary(lead_info, reason="fallback_contact_capture")
 
         using_demo_fallback = (
             os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1"
@@ -1531,6 +1667,76 @@ async def get_conversation_logs(limit: int = 200, _: str = Depends(require_admin
     return JSONResponse(read_conversation_logs(safe_limit))
 
 
+def grouped_transcripts(limit: int = 500) -> list[dict]:
+    rows = read_conversation_logs(max(1, min(limit, 5000)))
+    sessions: dict[str, dict] = {}
+    for row in rows:
+        session_id = str(row.get("session_id") or "unknown-session")
+        session = sessions.setdefault(
+            session_id,
+            {
+                "session_id": session_id,
+                "first_at": row.get("timestamp"),
+                "latest_at": row.get("timestamp"),
+                "message_count": 0,
+                "user_count": 0,
+                "assistant_count": 0,
+                "messages": [],
+            },
+        )
+        session["latest_at"] = row.get("timestamp") or session["latest_at"]
+        session["message_count"] += 1
+        if row.get("role") == "user":
+            session["user_count"] += 1
+        if row.get("role") == "assistant":
+            session["assistant_count"] += 1
+        session["messages"].append({
+            "timestamp": row.get("timestamp"),
+            "role": row.get("role") or "unknown",
+            "content": row.get("content") or "",
+        })
+    return sorted(sessions.values(), key=lambda item: item.get("latest_at") or "", reverse=True)
+
+
+def transcript_markdown(session: dict) -> str:
+    lines = [
+        "# Outdoor Squad Conversation Transcript",
+        "",
+        f"- Session: {session.get('session_id')}",
+        f"- First message: {session.get('first_at') or 'unknown'}",
+        f"- Latest message: {session.get('latest_at') or 'unknown'}",
+        f"- Messages: {session.get('message_count') or 0}",
+        "",
+    ]
+    for message in session.get("messages", []):
+        role = str(message.get("role") or "unknown").upper()
+        timestamp = message.get("timestamp") or ""
+        content = str(message.get("content") or "").strip() or "_blank_"
+        lines.extend([f"{role}: ({timestamp})", "", content, ""])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+@app.get("/api/conversation-transcripts")
+async def get_conversation_transcripts(limit: int = 500, _: str = Depends(require_admin)):
+    """Owner-only grouped transcript list for easier session review."""
+    return JSONResponse(grouped_transcripts(limit))
+
+
+@app.get("/api/conversation-transcripts/{session_id}.md")
+async def export_conversation_transcript(session_id: str, limit: int = 1000, _: str = Depends(require_admin)):
+    """Download one redacted transcript as Markdown."""
+    sessions = grouped_transcripts(limit)
+    target = next((session for session in sessions if session.get("session_id") == session_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Transcript session not found")
+    safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", session_id).strip("-") or "conversation"
+    return Response(
+        transcript_markdown(target),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="outdoor-squad-{safe_name}.md"'},
+    )
+
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(_: str = Depends(require_admin)):
     """Small protected owner dashboard for Square-era operations."""
@@ -1538,6 +1744,7 @@ async def admin_dashboard(_: str = Depends(require_admin)):
         "metrics": build_metrics_payload(),
         "leads": read_leads(),
         "logs": read_conversation_logs(120),
+        "transcripts": grouped_transcripts(500),
     }
     return HTMLResponse(ADMIN_HTML.replace("__ADMIN_DATA__", json.dumps(admin_data)))
 
@@ -1575,6 +1782,7 @@ async def health():
         and source_chunks_loaded
         and supabase_enabled()
         and owner_key_configured
+        and lead_summary_delivery_configured()
     )
 
     return JSONResponse({
@@ -1598,6 +1806,13 @@ async def health():
         "owner_key_configured": owner_key_configured,
         "human_email": HUMAN_EMAIL,
         "human_phone": HUMAN_PHONE,
+        "lead_summary_delivery_configured": lead_summary_delivery_configured(),
+        "lead_summary_email_configured": lead_summary_email_configured(),
+        "lead_summary_phone_configured": lead_summary_phone_configured(),
+        "lead_summary_email_to_configured": bool(LEAD_SUMMARY_EMAIL_TO),
+        "lead_summary_phone_to_configured": bool(LEAD_SUMMARY_PHONE_TO),
+        "lead_summary_webhook_configured": bool(LEAD_SUMMARY_WEBHOOK_URL),
+        "smtp_configured": bool(SMTP_HOST and SMTP_FROM),
         "source_chunks": len(SOURCE_CHUNKS),
     })
 
@@ -1647,6 +1862,24 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
     if is_goal_choice_reply(text, session_id):
         return True
     if any(word in text for word in ["nutrition", "meal", "diet", "weight loss", "lose weight"]):
+        return True
+    if re.search(r"\b(kid|kids|child|son|daughter|teen|young|ytp)\b", text):
+        return True
+    if any(word in text for word in [
+        "price", "prices", "cost", "how much", "membership", "casual", "drop-in", "drop in",
+        "crossfit", "hyrox", "powerlifting", "strongman", "serious programming",
+        "28-day kickstarter", "28 day kickstarter", "kickstarter",
+        "stay strong as i age", "strong as i age", "ageing", "aging", "longevity",
+        "dodgy knee", "bad knee", "injury", "injured", "limitation", "back pain", "shoulder", "niggle",
+        "have a think", "need to think", "think about it", "not sure", "keen but not sure", "next step", "come along", "how do i start", "how to start", "what should i do first", "do first",
+        "just browsing", "browsing for now", "just looking", "winter", "cold",
+        "joined gyms before", "quit gyms", "quit gym", "quit before", "quit after", "plus fitness", "personal training",
+        "1:1", "one on one", "coach who knows", "writes me a program", "write the program around me", "write a program around me", "program around me",
+        "who's crom", "who is crom", "what is crom", "billing date", "change my billing",
+        "pause membership", "cancel membership", "account question", "weather", "forecast",
+        "joke about politics", "politics", "discount", "free month", "cheaper", "deal",
+        "ignore your previous instructions", "system prompt", "previous instructions", "jailbreak",
+    ]):
         return True
 
     # If the user repeats the same short message, answer the behaviour rather
@@ -1826,7 +2059,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
         intro = f"I’ve got those contact details, {name.split()[0]}." if name else "I’ve got those contact details."
         goal = known_goal_from_history(session_id)
         if name:
-            follow_up = "The team can use that to follow up about the best free intro, SPT, or coach-call option for you."
+            follow_up = "The team can use that to follow up about the best free trial, SPT, or coach-call option for you."
         else:
             follow_up = "If you haven’t already, add your first name too so Nick or Lyn know who they’re replying to."
         if goal:
@@ -1884,8 +2117,8 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "Pricing highlights:\n"
             "- 1-Day Free Trial Pass: free.\n"
             "- Casual drop-in: $37.\n"
-            "- Squad Ascent membership: $51/week for unlimited group classes.\n"
-            "- SPT starts from $125/week depending on setup.\n\n"
+            "- Squad Ascent membership: $51/wk for unlimited group classes.\n"
+            "- SPT starts from $125/wk depending on setup.\n\n"
             "If you want, I can narrow it down based on whether you care more about strength, weight loss, or routine."
         )
 
@@ -1906,7 +2139,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     if any(word in text for word in ["evening", "full-time", "full time", "after work", "schedule", "availability"]):
         return (
             "That makes sense — most people need something that fits around work.\n\n"
-            "The best next step would be a free intro so the team can point you to the right session options.\n\n"
+            "The best next step would be a free trial so the team can point you to the right session options.\n\n"
             "Which area are you closest to in the Inner West?"
         )
 
@@ -1919,7 +2152,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
 
     if any(word in text for word in ["free intro", "trial", "free class", "intro class", "how does"]):
         return (
-            "The free intro is the low-pressure way to see if the Squad feels right.\n\n"
+            "The free trial is the low-pressure way to see if the Squad feels right.\n\n"
             "You can ask questions, get a feel for the coaching style, and work out which sessions suit you.\n\n"
             f"You can start here: {TRIAL_LINK}\n\n"
             "Or send your name and mobile and the team can follow up."
@@ -1951,13 +2184,13 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     if any(word in text for word in ["group", "not sure", "awkward", "intimidating"]):
         return (
             "Completely understandable. Group training can sound intimidating before you've tried it.\n\n"
-            "Outdoor Squad is meant to feel supportive, not hardcore-for-the-sake-of-it. The free intro is a good no-pressure test.\n\n"
+            "Outdoor Squad is meant to feel supportive, not hardcore-for-the-sake-of-it. The free trial is a good no-pressure test.\n\n"
             "Want me to explain what usually happens in a first session?"
         )
 
     return (
         "I can help with that. Outdoor Squad is an outdoor fitness community around Sydney's Inner West, with coaching that can adapt to different fitness levels.\n\n"
-        "The usual best next step is a free intro so the team can point you to the right option.\n\n"
+        "The usual best next step is a free trial so the team can point you to the right option.\n\n"
         "What are you mainly looking for — fitness, weight loss, routine, or something else?"
     )
 
@@ -2126,6 +2359,123 @@ def log_event(event_type: str, session_id: str = "unknown", **metadata):
     append_jsonl_file(EVENTS_FILE, event)
 
 
+def lead_summary_email_configured() -> bool:
+    return bool(LEAD_SUMMARY_EMAIL_TO and SMTP_HOST and SMTP_FROM)
+
+
+def lead_summary_phone_configured() -> bool:
+    return bool(LEAD_SUMMARY_PHONE_TO and LEAD_SUMMARY_WEBHOOK_URL)
+
+
+def lead_summary_delivery_configured() -> bool:
+    return lead_summary_email_configured() or lead_summary_phone_configured()
+
+
+def format_lead_summary(lead_info: dict) -> str:
+    concerns = lead_info.get("concerns") or []
+    if isinstance(concerns, list):
+        concerns_text = ", ".join(concerns) or "none captured"
+    else:
+        concerns_text = str(concerns)
+    return (
+        "New Outdoor Squad lead\n\n"
+        f"Name: {lead_info.get('name') or 'unknown'}\n"
+        f"Email: {lead_info.get('email') or 'not provided'}\n"
+        f"Phone: {lead_info.get('phone') or 'not provided'}\n"
+        f"Route: {lead_info.get('route') or 'unknown'}\n"
+        f"Location preference: {lead_info.get('location_preference') or 'unknown'}\n"
+        f"Time preference: {lead_info.get('time_preference') or 'unknown'}\n"
+        f"Concerns: {concerns_text}\n"
+        f"Summary: {lead_info.get('handoff_summary') or 'none captured'}\n"
+        f"Latest message: {lead_info.get('raw_message') or ''}\n"
+        f"Session: {lead_info.get('session_id') or 'unknown'}\n"
+        f"Captured: {lead_info.get('timestamp') or now_iso()}\n"
+    )
+
+
+def send_lead_summary_email(lead_info: dict) -> bool:
+    if not lead_summary_email_configured():
+        return False
+    recipients = [email.strip() for email in LEAD_SUMMARY_EMAIL_TO.split(",") if email.strip()]
+    if not recipients:
+        return False
+    message = MIMEText(format_lead_summary(lead_info))
+    message["Subject"] = f"New Outdoor Squad lead: {lead_info.get('name') or lead_info.get('route') or 'website enquiry'}"
+    message["From"] = SMTP_FROM
+    message["To"] = ", ".join(recipients)
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=12) as smtp:
+        smtp.starttls()
+        if SMTP_USER and SMTP_PASSWORD:
+            smtp.login(SMTP_USER, SMTP_PASSWORD)
+        smtp.sendmail(SMTP_FROM, recipients, message.as_string())
+    return True
+
+
+def send_lead_summary_webhook(lead_info: dict) -> bool:
+    if not lead_summary_phone_configured():
+        return False
+    payload = {
+        "event": "outdoor_squad_lead_summary",
+        "destination_phone": LEAD_SUMMARY_PHONE_TO,
+        "summary_text": format_lead_summary(lead_info),
+        "lead": {
+            key: value
+            for key, value in lead_info.items()
+            if key not in {"raw_message"} and value not in (None, "", [])
+        },
+    }
+    headers = {"Content-Type": "application/json"}
+    if LEAD_SUMMARY_WEBHOOK_SECRET:
+        headers["X-Outdoor-Squad-Secret"] = LEAD_SUMMARY_WEBHOOK_SECRET
+    request = urllib.request.Request(
+        LEAD_SUMMARY_WEBHOOK_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        return 200 <= response.status < 300
+
+
+def notify_lead_summary(lead_info: dict, *, reason: str) -> None:
+    """Best-effort owner notification after a real contact-detail capture."""
+    if not lead_summary_delivery_configured():
+        log_event(
+            "lead_summary_notification_not_configured",
+            session_id=lead_info.get("session_id", "unknown"),
+            reason=reason,
+        )
+        return
+
+    sent_channels = []
+    failures = []
+    try:
+        if send_lead_summary_email(lead_info):
+            sent_channels.append("email")
+    except Exception as exc:
+        failures.append(f"email:{str(exc)[:120]}")
+    try:
+        if send_lead_summary_webhook(lead_info):
+            sent_channels.append("phone_webhook")
+    except Exception as exc:
+        failures.append(f"phone_webhook:{str(exc)[:120]}")
+
+    if sent_channels:
+        log_event(
+            "lead_summary_notification_sent",
+            session_id=lead_info.get("session_id", "unknown"),
+            channels=",".join(sent_channels),
+            reason=reason,
+        )
+    if failures:
+        log_event(
+            "lead_summary_notification_error",
+            session_id=lead_info.get("session_id", "unknown"),
+            error="; ".join(failures)[:240],
+            reason=reason,
+        )
+
+
 def safe_rate(numerator: int, denominator: int) -> float:
     if denominator <= 0:
         return 0.0
@@ -2264,97 +2614,743 @@ ADMIN_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Outdoor Squad Bot Admin</title>
+  <title>Outdoor Squad — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
-    :root { --black: #000000; --charcoal: #39383d; --orange: #f26522; --orange-dark: #ea510a; --light: #e0e0e0; --paper: #ffffff; --ink: #000000; --muted: #4f4f4f; --border: #d8d8d8; }
-    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: linear-gradient(180deg, rgba(242,101,34,.10), rgba(246,246,246,.82) 42%), #f6f6f6; color: var(--ink); }
-    header { background: radial-gradient(circle at top left, rgba(242,101,34,.42), transparent 34%), linear-gradient(135deg, var(--black), var(--charcoal)); color: white; padding: 20px 24px; border-bottom: 5px solid var(--orange); }
-    header h1 { font-size: 1.25rem; margin: 0 0 4px; letter-spacing: 0; }
-    header p { margin: 0; opacity: .86; font-size: .9rem; }
-    header a { color: white; text-underline-offset: 3px; }
-    main { max-width: 1120px; margin: 0 auto; padding: 18px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
-    .card { background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.08); }
-    .metric { color: var(--orange-dark); font-size: 1.8rem; font-weight: 800; margin-top: 8px; }
-    h2 { color: var(--black); font-size: 1rem; margin: 24px 0 10px; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 12px; max-height: 420px; overflow: auto; line-height: 1.45; }
-    table { width: 100%; border-collapse: collapse; background: var(--paper); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eeeeee; vertical-align: top; font-size: .9rem; }
-    th { background: #f3f3f3; color: var(--black); border-top: 3px solid var(--orange); }
-    td:first-child, td:nth-child(2) { white-space: nowrap; }
-    .muted { color: var(--muted); font-size: .86rem; }
-    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0 4px; flex-wrap: wrap; }
-    .toolbar-meta { color: var(--muted); font-size: .84rem; }
-    .toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 24px 0 10px; }
-    .section-head h2 { margin: 0; }
-    .button { display: inline-block; background: linear-gradient(135deg, var(--orange-dark), var(--orange)); color: white; border: 0; border-radius: 999px; padding: 8px 13px; font-size: .86rem; font-weight: 700; text-decoration: none; white-space: nowrap; }
-    .button:hover { filter: brightness(.96); }
+    :root {
+      --ink: #0a0a0a;
+      --ink-soft: #1a1a1a;
+      --char: #2a2a2a;
+      --muted: #6a6a6a;
+      --line: #ececec;
+      --line-strong: #d8d8d8;
+      --paper: #ffffff;
+      --canvas: #f5f4f1;
+      --orange: #f26522;
+      --orange-deep: #e0540f;
+      --orange-tint: #fdf0e7;
+      --green: #16a34a;
+      --green-tint: #e8f7ee;
+      --red: #b91c1c;
+      --red-tint: #fdeaea;
+      --shadow-sm: 0 1px 2px rgba(10,10,10,.04);
+      --shadow-md: 0 4px 16px rgba(10,10,10,.06);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--canvas);
+      color: var(--ink);
+      font-feature-settings: 'ss01', 'cv11';
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    a { color: inherit; }
+
+    /* Top bar */
+    .topbar {
+      background: var(--ink);
+      color: #fff;
+      border-bottom: 3px solid var(--orange);
+    }
+    .topbar-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-mark {
+      width: 36px; height: 36px;
+      background: var(--orange);
+      color: #fff;
+      display: grid; place-items: center;
+      font-weight: 900;
+      font-size: .82rem;
+      letter-spacing: .04em;
+      border-radius: 4px;
+    }
+    .brand-text { line-height: 1.1; }
+    .brand-text .eyebrow {
+      font-size: .68rem;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,.55);
+      font-weight: 600;
+    }
+    .brand-text .title {
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: -.01em;
+    }
+    .topbar-meta {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: .82rem;
+      color: rgba(255,255,255,.7);
+    }
+    .live-dot {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-weight: 600; color: rgba(255,255,255,.85);
+    }
+    .live-dot::before {
+      content: ''; width: 7px; height: 7px; border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 0 4px rgba(74,222,128,.18);
+    }
+    .topbar-link {
+      color: rgba(255,255,255,.85);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: .82rem;
+      border: 1px solid rgba(255,255,255,.18);
+      padding: 7px 12px;
+      border-radius: 6px;
+      transition: background .15s ease;
+    }
+    .topbar-link:hover { background: rgba(255,255,255,.08); }
+
+    /* Tabs */
+    .tabs {
+      background: var(--paper);
+      border-bottom: 1px solid var(--line);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .tabs-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      gap: 4px;
+    }
+    .tab {
+      background: none; border: 0;
+      padding: 16px 14px;
+      font-family: inherit;
+      font-size: .88rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color .15s ease, border-color .15s ease;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .tab:hover { color: var(--ink); }
+    .tab.active { color: var(--ink); border-bottom-color: var(--orange); }
+    .tab-count {
+      background: var(--canvas);
+      color: var(--char);
+      font-size: .72rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+      min-width: 20px;
+      text-align: center;
+    }
+    .tab.active .tab-count { background: var(--orange-tint); color: var(--orange-deep); }
+
+    /* Main */
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 28px 24px 64px;
+    }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* Metrics */
+    .section-title {
+      font-size: 1.4rem;
+      font-weight: 800;
+      letter-spacing: -.015em;
+      margin: 0 0 4px;
+    }
+    .section-sub { color: var(--muted); font-size: .9rem; margin: 0 0 22px; }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .metric-card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px 18px 16px;
+      box-shadow: var(--shadow-sm);
+      position: relative;
+      overflow: hidden;
+    }
+    .metric-card.feature {
+      background: var(--ink);
+      color: #fff;
+      border-color: var(--ink);
+    }
+    .metric-card.feature .metric-label { color: rgba(255,255,255,.6); }
+    .metric-card.feature .metric-foot { color: rgba(255,255,255,.55); }
+    .metric-label {
+      font-size: .68rem;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .metric-value {
+      font-size: 2.4rem;
+      font-weight: 800;
+      letter-spacing: -.025em;
+      line-height: 1.05;
+      margin-top: 8px;
+    }
+    .metric-card.feature .metric-value { color: var(--orange); }
+    .metric-foot {
+      margin-top: 10px;
+      font-size: .78rem;
+      color: var(--muted);
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    /* Tables */
+    .table-wrap {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      text-align: left;
+      padding: 13px 16px;
+      font-size: .88rem;
+      vertical-align: top;
+    }
+    th {
+      background: #fafafa;
+      border-bottom: 1px solid var(--line);
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    tbody tr { border-bottom: 1px solid var(--line); }
+    tbody tr:last-child { border-bottom: 0; }
+    tbody tr:hover { background: #fafafa; }
+    td.mono { font-feature-settings: 'tnum'; color: var(--char); }
+    td.nowrap { white-space: nowrap; }
+
+    .badge {
+      display: inline-flex; align-items: center;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .02em;
+      background: var(--canvas);
+      color: var(--char);
+      border: 1px solid var(--line-strong);
+    }
+    .badge.orange { background: var(--orange-tint); color: var(--orange-deep); border-color: rgba(242,101,34,.28); }
+    .badge.green  { background: var(--green-tint);  color: var(--green);       border-color: rgba(22,163,74,.25); }
+    .badge.red    { background: var(--red-tint);    color: var(--red);         border-color: rgba(185,28,28,.22); }
+
+    /* Section head */
+    .section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin: 0 0 16px;
+      flex-wrap: wrap;
+    }
+    .section-head-left { min-width: 0; }
+    .section-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: var(--ink);
+      color: #fff;
+      border: 1px solid var(--ink);
+      border-radius: 8px;
+      padding: 9px 14px;
+      font-size: .82rem;
+      font-weight: 600;
+      font-family: inherit;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform .12s ease, background .15s ease;
+      white-space: nowrap;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn.primary { background: var(--orange); border-color: var(--orange); }
+    .btn.primary:hover { background: var(--orange-deep); border-color: var(--orange-deep); }
+    .btn.ghost { background: var(--paper); color: var(--ink); border-color: var(--line-strong); }
+    .btn.ghost:hover { background: var(--canvas); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .btn svg { width: 14px; height: 14px; }
+
+    /* Search field */
+    .search {
+      position: relative;
+      display: inline-flex; align-items: center;
+      background: var(--paper);
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 0 10px 0 34px;
+      min-height: 38px;
+      min-width: 260px;
+      transition: border-color .15s ease;
+    }
+    .search:focus-within { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(242,101,34,.12); }
+    .search svg { position: absolute; left: 11px; width: 14px; height: 14px; color: var(--muted); }
+    .search input {
+      background: none; border: 0; outline: 0;
+      font: inherit; font-size: .88rem; color: var(--ink);
+      padding: 0; width: 100%;
+    }
+
+    /* Transcripts */
+    .transcript-grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: minmax(280px, .8fr) minmax(420px, 1.4fr);
+      align-items: start;
+    }
+    .session-list {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      max-height: 620px;
+      overflow: auto;
+      box-shadow: var(--shadow-sm);
+    }
+    .session-row {
+      display: flex; gap: 12px;
+      width: 100%; text-align: left;
+      background: none; border: 0; border-bottom: 1px solid var(--line);
+      padding: 14px 14px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .12s ease;
+    }
+    .session-row:last-child { border-bottom: 0; }
+    .session-row:hover { background: #fafafa; }
+    .session-row.active { background: var(--orange-tint); }
+    .session-row.active::before {
+      content: ''; position: absolute;
+    }
+    .session-avatar {
+      flex: 0 0 36px;
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+      display: grid; place-items: center;
+      font-size: .72rem; font-weight: 800;
+      letter-spacing: .02em;
+    }
+    .session-row.active .session-avatar { background: var(--orange); }
+    .session-meta { min-width: 0; flex: 1; }
+    .session-id {
+      display: block;
+      font-size: .82rem; font-weight: 700;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--ink);
+    }
+    .session-time { color: var(--muted); font-size: .72rem; font-weight: 500; margin-top: 2px; }
+    .session-preview {
+      color: var(--char); font-size: .8rem; margin-top: 6px;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden; line-height: 1.4;
+    }
+
+    .transcript-panel {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      max-height: 620px;
+      display: flex; flex-direction: column;
+    }
+    .transcript-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .transcript-head-meta { font-size: .82rem; color: var(--muted); }
+    .transcript-head-meta strong { color: var(--ink); }
+    .transcript-actions { display: flex; gap: 6px; }
+    .messages {
+      display: flex; flex-direction: column; gap: 12px;
+      padding: 18px;
+      overflow: auto;
+    }
+    .chat-message {
+      max-width: 86%;
+      padding: 11px 14px;
+      border-radius: 14px;
+      font-size: .9rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .chat-message .role {
+      font-size: .66rem;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      font-weight: 700;
+      opacity: .6;
+      margin-bottom: 5px;
+    }
+    .chat-message.user {
+      align-self: flex-end;
+      background: var(--ink);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .chat-message.user .role { color: rgba(255,255,255,.55); }
+    .chat-message.assistant {
+      align-self: flex-start;
+      background: var(--canvas);
+      border: 1px solid var(--line);
+      color: var(--ink);
+      border-bottom-left-radius: 4px;
+    }
+
+    .empty {
+      padding: 36px 20px;
+      text-align: center;
+      color: var(--muted);
+      font-size: .88rem;
+    }
+    .empty-icon { opacity: .5; margin-bottom: 8px; }
+
+    @media (max-width: 960px) {
+      .transcript-grid { grid-template-columns: 1fr; }
+      .session-list { max-height: 320px; }
+      .search { min-width: 100%; }
+      .topbar-meta { width: 100%; margin-left: 0; }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Outdoor Squad Bot Admin</h1>
-    <p>Protected owner view for leads, success metrics, and conversation review.</p>
-  </header>
-  <main>
-    <div class="toolbar">
-      <div class="toolbar-meta" id="lastUpdated">Loading latest data…</div>
-      <div class="toolbar-actions">
-        <a class="button" href="/admin">Refresh Data</a>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark">OS</div>
+        <div class="brand-text">
+          <div class="eyebrow">The Outdoor Squad</div>
+          <div class="title">Admin Console</div>
+        </div>
+      </div>
+      <div class="topbar-meta">
+        <span class="live-dot">Live</span>
+        <span id="lastUpdated">—</span>
+        <a class="topbar-link" href="/admin">Refresh</a>
       </div>
     </div>
-    <section class="grid" id="metrics"></section>
-    <div class="section-head">
-      <h2>Captured Leads</h2>
-      <a class="button" href="/api/leads.csv">Export CSV</a>
+  </div>
+
+  <div class="tabs">
+    <div class="tabs-inner">
+      <button class="tab active" data-tab="overview" type="button">Overview</button>
+      <button class="tab" data-tab="leads" type="button">Leads <span class="tab-count" id="leadsCount">0</span></button>
+      <button class="tab" data-tab="transcripts" type="button">Transcripts <span class="tab-count" id="transcriptsCount">0</span></button>
     </div>
-    <div id="leads" class="muted">Loading...</div>
-    <h2>Recent Redacted Conversation Log</h2>
-    <pre id="logs">Loading...</pre>
+  </div>
+
+  <main>
+    <section class="panel active" data-panel="overview">
+      <h2 class="section-title">At a glance</h2>
+      <p class="section-sub">Real-time activity from Robo-Nick. Refresh to pull the latest figures.</p>
+      <div class="metric-grid" id="metrics"></div>
+    </section>
+
+    <section class="panel" data-panel="leads">
+      <div class="section-head">
+        <div class="section-head-left">
+          <h2 class="section-title">Captured leads</h2>
+          <p class="section-sub">Contacts collected by Robo-Nick. Most recent first.</p>
+        </div>
+        <div class="section-head-actions">
+          <a class="btn primary" href="/api/leads.csv">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+            Export CSV
+          </a>
+        </div>
+      </div>
+      <div id="leads"></div>
+    </section>
+
+    <section class="panel" data-panel="transcripts">
+      <div class="section-head">
+        <div class="section-head-left">
+          <h2 class="section-title">Transcripts</h2>
+          <p class="section-sub">Grouped by session. Contact details are redacted in-app.</p>
+        </div>
+        <div class="section-head-actions">
+          <label class="search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input id="search" placeholder="Search messages or session id">
+          </label>
+        </div>
+      </div>
+      <div class="transcript-grid">
+        <div class="session-list" id="sessions"></div>
+        <div class="transcript-panel">
+          <div class="transcript-head">
+            <div class="transcript-head-meta" id="transcriptMeta">Select a conversation on the left.</div>
+            <div class="transcript-actions">
+              <button class="btn ghost" id="copyTranscript" type="button" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                Copy
+              </button>
+              <a class="btn primary" id="downloadTranscript" href="#" download>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+                Download
+              </a>
+            </div>
+          </div>
+          <div class="messages" id="messages"></div>
+        </div>
+      </div>
+    </section>
   </main>
   <script>
     window.__OS_ADMIN_DATA__ = __ADMIN_DATA__;
-    function metric(label, value) {
-      return '<div class="card"><div class="muted">' + label + '</div><div class="metric">' + value + '</div></div>';
+
+    function esc(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, function(c) {
+        return ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]);
+      });
     }
     function pct(value) {
       return Math.round((Number(value) || 0) * 100) + '%';
     }
-    function esc(value) {
-      return String(value || '').replace(/[&<>"']/g, function(char) {
-        return ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char]);
+    function num(value) {
+      return new Intl.NumberFormat('en-AU').format(Number(value) || 0);
+    }
+    function fmtDate(value) {
+      if (!value) return '—';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString('en-AU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    }
+    function fmtRelative(value) {
+      if (!value) return '—';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      const diff = (Date.now() - date.getTime()) / 1000;
+      if (diff < 60) return 'just now';
+      if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+      if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+      if (diff < 86400 * 7) return Math.floor(diff / 86400) + 'd ago';
+      return fmtDate(value);
+    }
+    function initials(value) {
+      const id = String(value || '').replace(/^widget-/, '').replace(/[^a-zA-Z0-9]/g, '');
+      return (id.slice(0, 2) || '??').toUpperCase();
+    }
+    function badgeFor(route) {
+      const r = String(route || '').toLowerCase();
+      let tone = '';
+      if (r.includes('book') || r.includes('trial')) tone = 'green';
+      else if (r.includes('handoff') || r.includes('human')) tone = 'orange';
+      else if (r.includes('drop') || r.includes('lost')) tone = 'red';
+      return '<span class="badge ' + tone + '">' + esc(route || 'lead') + '</span>';
+    }
+
+    // Metric builder
+    function metricCard(label, value, foot, feature) {
+      return ''
+        + '<div class="metric-card' + (feature ? ' feature' : '') + '">'
+        +   '<div class="metric-label">' + esc(label) + '</div>'
+        +   '<div class="metric-value">' + esc(value) + '</div>'
+        +   (foot ? '<div class="metric-foot">' + esc(foot) + '</div>' : '')
+        + '</div>';
+    }
+
+    // Tabs
+    function initTabs() {
+      const tabs = document.querySelectorAll('.tab');
+      const panels = document.querySelectorAll('.panel');
+      tabs.forEach(function(tab) {
+        tab.addEventListener('click', function() {
+          const target = tab.getAttribute('data-tab');
+          tabs.forEach(function(t) { t.classList.toggle('active', t === tab); });
+          panels.forEach(function(p) {
+            p.classList.toggle('active', p.getAttribute('data-panel') === target);
+          });
+        });
       });
     }
+
+    // Transcripts
+    let selectedSessionId = null;
+    function selectedSession() {
+      const sessions = (window.__OS_ADMIN_DATA__.transcripts || []);
+      return sessions.find(function(s) { return s.session_id === selectedSessionId; }) || null;
+    }
+    function transcriptText(session) {
+      if (!session) return '';
+      const lines = [
+        'Outdoor Squad — Conversation Transcript',
+        'Session: ' + session.session_id,
+        'First: ' + (session.first_at || 'unknown'),
+        'Latest: ' + (session.latest_at || 'unknown'),
+        'Messages: ' + (session.message_count || 0),
+        ''
+      ];
+      (session.messages || []).forEach(function(m) {
+        lines.push((m.role || 'unknown').toUpperCase() + ' (' + (m.timestamp || '') + ')');
+        lines.push(m.content || '');
+        lines.push('');
+      });
+      return lines.join('\\n');
+    }
+    function renderSessions() {
+      const searchEl = document.getElementById('search');
+      const search = String(searchEl ? searchEl.value : '').toLowerCase();
+      const all = window.__OS_ADMIN_DATA__.transcripts || [];
+      const sessions = all.filter(function(session) {
+        const haystack = [
+          session.session_id,
+          session.latest_at,
+          (session.messages || []).map(function(m) { return m.role + ' ' + m.content; }).join(' ')
+        ].join(' ').toLowerCase();
+        return !search || haystack.includes(search);
+      });
+      if (!selectedSessionId && sessions.length) selectedSessionId = sessions[0].session_id;
+      if (selectedSessionId && !sessions.some(function(s) { return s.session_id === selectedSessionId; })) {
+        selectedSessionId = sessions[0] ? sessions[0].session_id : null;
+      }
+      const wrap = document.getElementById('sessions');
+      wrap.innerHTML = sessions.length ? sessions.map(function(session) {
+        const active = session.session_id === selectedSessionId ? ' active' : '';
+        const lastUser = (session.messages || []).slice().reverse().find(function(m) { return m.role === 'user'; });
+        return '<button class="session-row' + active + '" type="button" data-session="' + esc(session.session_id) + '">'
+          + '<div class="session-avatar">' + esc(initials(session.session_id)) + '</div>'
+          + '<div class="session-meta">'
+          +   '<span class="session-id">' + esc(session.session_id) + '</span>'
+          +   '<div class="session-time">' + esc(fmtRelative(session.latest_at)) + ' · ' + esc(session.message_count || 0) + ' msgs</div>'
+          +   '<div class="session-preview">' + esc(lastUser ? lastUser.content : 'No user message yet') + '</div>'
+          + '</div>'
+        + '</button>';
+      }).join('') : '<div class="empty">No transcripts match your search.</div>';
+      wrap.querySelectorAll('.session-row').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          selectedSessionId = btn.getAttribute('data-session');
+          renderSessions();
+          renderTranscript();
+        });
+      });
+    }
+    function renderTranscript() {
+      const session = selectedSession();
+      const copyBtn = document.getElementById('copyTranscript');
+      const download = document.getElementById('downloadTranscript');
+      const meta = document.getElementById('transcriptMeta');
+      const msgs = document.getElementById('messages');
+      if (!session) {
+        meta.innerHTML = 'Select a conversation on the left.';
+        msgs.innerHTML = '<div class="empty">'
+          + '<div class="empty-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>'
+          + 'Nothing selected yet.</div>';
+        copyBtn.disabled = true;
+        download.removeAttribute('href');
+        return;
+      }
+      copyBtn.disabled = false;
+      download.href = '/api/conversation-transcripts/' + encodeURIComponent(session.session_id) + '.md';
+      meta.innerHTML = '<strong>' + esc(session.message_count || 0) + ' messages</strong> · last activity ' + esc(fmtRelative(session.latest_at));
+      msgs.innerHTML = (session.messages || []).map(function(m) {
+        const role = esc(m.role || 'unknown');
+        return '<article class="chat-message ' + role + '">'
+          + '<div class="role">' + role + ' · ' + esc(fmtDate(m.timestamp)) + '</div>'
+          + esc(m.content || '')
+        + '</article>';
+      }).join('') || '<div class="empty">No messages in this session.</div>';
+    }
+
+    function renderLeads(leads) {
+      const wrap = document.getElementById('leads');
+      if (!leads.length) {
+        wrap.innerHTML = ''
+          + '<div class="table-wrap"><div class="empty">'
+          + '<div class="empty-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6m3-3v6"/></svg></div>'
+          + 'No leads captured yet. They’ll appear here as Robo-Nick collects contact info.'
+          + '</div></div>';
+        return;
+      }
+      wrap.innerHTML = ''
+        + '<div class="table-wrap"><table>'
+        + '<thead><tr><th>When</th><th>Name</th><th>Contact</th><th>Route</th><th>Context</th><th>Session</th></tr></thead>'
+        + '<tbody>'
+        + leads.slice().reverse().map(function(lead) {
+            return '<tr>'
+              + '<td class="nowrap mono">' + esc(fmtDate(lead.timestamp)) + '</td>'
+              + '<td>' + esc(lead.name || '—') + '</td>'
+              + '<td class="mono">' + esc(lead.email || lead.phone || '—') + '</td>'
+              + '<td>' + badgeFor(lead.route) + '</td>'
+              + '<td>' + esc(lead.handoff_summary || '—') + '</td>'
+              + '<td class="mono">' + esc(lead.session_id || '—') + '</td>'
+            + '</tr>';
+          }).join('')
+        + '</tbody></table></div>';
+    }
+
     function boot() {
       const data = window.__OS_ADMIN_DATA__ || {};
       const metrics = data.metrics || { outcomes: {} };
       const leads = data.leads || [];
-      const logs = data.logs || [];
-      const lastUpdated = metrics.last_event_at || new Date().toISOString();
-      document.getElementById('lastUpdated').textContent = 'Last updated: ' + lastUpdated + ' — auto-refreshes every 15s';
+      const transcripts = data.transcripts || [];
+
+      document.getElementById('lastUpdated').textContent = 'Updated ' + fmtRelative(metrics.last_event_at || new Date().toISOString());
+      document.getElementById('leadsCount').textContent = num(leads.length);
+      document.getElementById('transcriptsCount').textContent = num(transcripts.length);
+
       document.getElementById('metrics').innerHTML = [
-        metric('Conversations started', metrics.conversations_started),
-        metric('Completion rate', pct(metrics.completion_rate)),
-        metric('Drop-off rate', pct(metrics.dropoff_rate)),
-        metric('Leads captured', metrics.leads_captured),
-        metric('Handoffs suggested', metrics.outcomes.human_handoff_suggested),
-        metric('Booking links shown', metrics.outcomes.booking_link_shown)
+        metricCard('Conversations started', num(metrics.conversations_started), 'total sessions', true),
+        metricCard('Completion rate', pct(metrics.completion_rate), 'of conversations completed'),
+        metricCard('Drop-off rate', pct(metrics.dropoff_rate), 'left mid-chat'),
+        metricCard('Leads captured', num(metrics.leads_captured), 'contact details collected'),
+        metricCard('Handoffs suggested', num(metrics.outcomes.human_handoff_suggested), 'routed to Nick / Lyn'),
+        metricCard('Booking links shown', num(metrics.outcomes.booking_link_shown), 'trial CTA delivered')
       ].join('');
-      document.getElementById('leads').innerHTML = leads.length ? (
-        '<table><thead><tr><th>Time</th><th>Contact</th><th>Route</th><th>Context</th></tr></thead><tbody>' +
-        leads.slice().reverse().map(function(lead) {
-          return '<tr><td>' + esc(lead.timestamp) + '</td><td>' + esc(lead.email || lead.phone) + '</td><td>' + esc(lead.route) + '</td><td>' + esc(lead.handoff_summary) + '</td></tr>';
-        }).join('') +
-        '</tbody></table>'
-      ) : 'No leads captured yet.';
-      document.getElementById('logs').textContent = logs.map(function(row) {
-        return row.timestamp + ' [' + row.session_id + '] ' + row.role + ': ' + row.content;
-      }).join('\\n\\n') || 'No conversation logs yet.';
-      window.setTimeout(function() {
-        window.location.reload();
-      }, 15000);
+
+      renderLeads(leads);
+      renderSessions();
+      renderTranscript();
+
+      document.getElementById('search').addEventListener('input', function() {
+        renderSessions();
+        renderTranscript();
+      });
+      document.getElementById('copyTranscript').addEventListener('click', async function() {
+        const text = transcriptText(selectedSession());
+        if (!text) return;
+        try { await navigator.clipboard.writeText(text); } catch (e) {}
+        const original = this.innerHTML;
+        this.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg> Copied';
+        window.setTimeout(() => { this.innerHTML = original; }, 1400);
+      });
     }
+
+    initTabs();
     boot();
   </script>
 </body>
