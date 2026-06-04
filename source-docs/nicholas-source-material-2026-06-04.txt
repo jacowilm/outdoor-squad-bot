@@ -1,0 +1,74 @@
+# Nicholas source material — 2026-06-04
+
+Source: Nicholas Holland / Outdoor Squad email thread, plus current public Outdoor Squad pages checked 2026-06-04.
+
+## Offer rule: value stack, never discount
+
+Nicholas clarified: "If in doubt, always value stack. Never discount."
+
+Bot behaviour implication:
+- Do not offer random discounts, free months, or price cutting.
+- If a visitor asks for a deal/discount/cheaper option, value-stack instead: free trial first; Squad Ascent at $51/wk for unlimited coached group classes; SPT / 28-Day Kickstarter for higher-touch coaching and programming.
+- If there is conflicting source material about family discounts, the no-discount/value-stack rule wins unless Nicholas explicitly updates it.
+
+## Reviews / social proof
+
+Nicholas sent the current Google review link for The Outdoor Squad Camperdown:
+https://www.google.com/search?q=the+outdoor+squad+camperdown#mpd=~5987863831569933133/customers/reviews
+
+Bot behaviour implication:
+- Reviews can support credibility and social proof.
+- Do not fabricate exact review quotes. Only quote exact text if it is available in the source context.
+- Safe phrasing: mention that the Squad has strong member feedback / 5-star reviews if relevant, then route the visitor to the free trial or the right coaching path.
+
+## Public team / coach bios pulled from outdoorsquad.com.au/our-team
+
+Nicholas pointed to coach bios on the Outdoor Squad website and named Rory, Trinity, Eddie, and Fran. The current public Our Team page includes Nick, Eddie, Rory, Zack, Gregory, Paul, and Fran. Trinity did not appear on the current public page during this pass, so do not invent a Trinity bio unless Nicholas sends one.
+
+### Nick Holland
+
+Nick loves bootcamp instruction and working with people moving toward fitter, healthier, happier versions of themselves. Exercise helped him overcome a serious back injury and gives him energy and confidence as a father. He is certified in kettlebells, boxing, powerbags, suspension training, Olympic lifting and more, and prefers functional fitness routines that mimic real-life movement and strength needs.
+
+Qualifications listed:
+- Certificates III & IV in personal training
+- Diploma of Fitness
+- Certificate III in Coaching
+- Certified Boxing Trainer
+- Certified Tacfit Instructor
+- Level 1 & 2 qualified Kettlebell Instructor
+- Level 1 & 2 Olympic Lifting Coach
+- Qualified Suspension Instructor
+
+### Eddie Thraves
+
+Eddie is originally from England. His interests include snowboarding, Chelsea FC, travel and windsurfing. His training focus is helping people become the best version of themselves and live with more freedom, joy and peace. He qualified as a Master Trainer at AIF, worked at the Steiner Academy in London, worked on cruise lines, and is qualified across Yoga, Pilates, Spin and Boot camp instruction. He has also studied nutrition, detoxification, counselling, and pastoral care.
+
+Qualifications listed:
+- Certificate III in personal training
+- Certificate IV in personal training
+- CrossFit Coach Level I
+- Level 1 qualified Kettlebell Instructor
+
+### Rory Morris
+
+Rory is originally from the UK and has taught exercise classes across the UAE, Asia, the UK and Australia. He founded/led Urban Active in Hong Kong, teaching bootcamp-style classes with 50+ participants, and served as Vice President of Strength and Conditioning at the University of Liverpool. He explores training modalities from yoga to powerlifting, specialises in endurance, calisthenics and gymnastic-style training, and picked up the nickname "Duracell" for his HIIT energy.
+
+Qualifications listed:
+- Certified Strength and Conditioning Coach
+- Level 1 Kettlebell Instructor
+
+### Fran Matthews
+
+Fran Matthews is a Strength & Conditioning Coach and former professional athlete. She brings elite sport experience into coaching everyday members and athletes, with a focus on health, performance and wellbeing. Her approach is results-driven and evidence-based, with programs aimed at strength, injury prevention and overall fitness. At bootcamp she brings high energy, personalised guidance and a supportive group setting.
+
+### Zack Mesevage
+
+Zack is originally from America and is completing a master's degree in chiropractic. He has a kinesiology background from East Carolina University and works as a group trainer in Camperdown and Redfern. He focuses on personalised training in a body-positive environment, tailoring workouts to health and mobility needs, with a holistic approach to strength, function, resilience, confidence, wellness and stress relief.
+
+### Gregory Leroy
+
+Gregory is a bootcamp instructor, fitness lover and certified massage therapist with 8 years of fitness experience. He brings sports experience across soccer, parkour, basketball, Muay Thai and more. His coaching emphasises safe anatomy-aware movement, functional training, muscle health, injury prevention and making fitness fun.
+
+### Paul Bulatao
+
+Paul Bulatao is an experienced fitness professional with 20+ years in the industry, qualified exercise physiologist and educator. His background includes Head of School, Training Manager, Instructional Designer, Curriculum Developer, Fitness Consultant, Lecturer, Master Trainer and Assessor. He specialises in education and trainer development, has presented at FILEX and FITEX, and leads group fitness classes focused on technique, effective formats and engaging delivery.

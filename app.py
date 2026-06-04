@@ -1207,21 +1207,12 @@ def enforce_contact_and_handoff_progression(reply: str, session_id: str) -> str:
     if not asks_for_contact:
         return remove_extra_questions(reply)
 
-    goal = known_goal_from_history(session_id)
-    location = known_location_from_history(session_id)
     name = extract_contact_name("", session_id=session_id)
     if name:
         parts = [f"I’ve got your contact details, {name.split()[0]}, so I won’t ask for those again."]
     else:
         parts = ["I’ve got your contact details, so I won’t ask for those again."]
-    if goal or location:
-        noted = []
-        if goal:
-            noted.append(goal)
-        if location:
-            noted.append(location)
-        parts.append(f"I’ve also got {' / '.join(noted)} noted.")
-    parts.append("Next step is simple from here: Nick or Lyn can take it from the chat notes and point you to the right session.")
+    parts.append("Next step is simple from here: Nick or Lyn can use the chat notes and point you to the right session.")
     return "\n\n".join(parts)
 
 
@@ -1360,6 +1351,17 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Totally fair comparison.\n\n"
             "Plus Fitness is mainly equipment access. Squad Ascent at $51/wk is coached outdoor group training, equipment, programming, and a community that notices if you vanish.\n\n"
             "No need to guess which model suits you. The free trial is there so you can test whether coached sessions are worth the difference."
+        )
+    if any(phrase in clean for phrase in ["who are the coaches", "who coaches", "coach bios", "trainer bios", "tell me about the coaches", "who trains", "who runs the classes", "who's coaching", "who is coaching"]):
+        return (
+            "Yep — there’s proper human depth behind the whistle.\n\n"
+            "Nick brings the functional-strength / kettlebell / boxing / Olympic-lifting background, Rory is strength-and-conditioning with a big bootcamp/endurance engine, Eddie has PT, CrossFit, kettlebell and yoga/Pilates experience, and Fran is a strength-and-conditioning coach and former pro athlete.\n\n"
+            "Short version: qualified coaches, different strengths, same job — make the session safe, useful, and not weirdly gym-bro."
+        )
+    if any(phrase in clean for phrase in ["reviews", "testimonials", "proof", "what do members say", "member feedback", "5 star", "five star"]):
+        return (
+            "The Squad has strong public member feedback and 5-star review proof, but the useful test is still the boringly practical one: come to a session and see if the vibe fits.\n\n"
+            "No glossy transformation nonsense required. A free trial lets you meet the coach, feel the pace, and decide with actual evidence."
         )
     if any(phrase in clean for phrase in ["personal training", " pt", "pt ", "1:1", "one on one", "coach who knows", "writes me a program", "write the program around me", "write a program around me", "program around me"]):
         return (
@@ -2302,17 +2304,10 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     if re.search(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', message) or re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', message):
         name = extract_contact_name(message, session_id=session_id)
         intro = f"I’ve got those contact details, {name.split()[0]}." if name else "I’ve got those contact details."
-        goal = known_goal_from_history(session_id)
         if name:
             follow_up = "The team can use that to follow up about the best free trial, SPT, or coach-call option for you."
         else:
             follow_up = "If you haven’t already, add your first name too so Nick or Lyn know who they’re replying to."
-        if goal:
-            return (
-                f"{intro}\n\n"
-                f"{follow_up}\n\n"
-                f"I’ve noted that the main thing is {goal}, so they’ve got a cleaner starting point when they reach out."
-            )
         return (
             f"{intro}\n\n"
             f"{follow_up}\n\n"
@@ -2488,12 +2483,14 @@ def extract_lead_info(message: str, session_id: str) -> dict | None:
 
 def extract_contact_name(message: str, session_id: str = "default") -> str | None:
     """Best-effort name extraction when a visitor drops contact details."""
-    history = "\n".join(
-        m.get("content", "")
+    history_with_contact = "\n".join(
+        content
         for m in load_conversation(session_id)
         if m.get("role") == "user"
+        for content in [m.get("content", "")]
+        if has_contact_details(content)
     )
-    explicit_source = "\n".join(part for part in [history, message] if part).strip()
+    explicit_source = "\n".join(part for part in [message, history_with_contact] if part).strip()
     contact_stripped = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', explicit_source)
     contact_stripped = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', contact_stripped)
     explicit_name = re.search(
