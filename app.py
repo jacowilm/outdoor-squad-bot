@@ -1304,6 +1304,18 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "- Yoga Squad — mobility, balance, and the bit most people skip.\n\n"
             "A free trial is the sensible first step. " + trial_close(session_id)
         )
+    if any(phrase in clean for phrase in ["family discount", "family deal", "family rate", "family price", "family membership", "discount", "free month", "cheaper", "deal"]):
+        if "family" in clean:
+            return (
+                "We don't discount memberships or do percentage / '$X off' family deals.\n\n"
+                "For families training together, the team will often value-stack instead — things like extra sessions, movement screens, or useful add-ons after a quick chat about what fits your situation.\n\n"
+                "Best next step is a free trial or a quick note to Nick/Lyn so they can point you to the right option."
+            )
+        return (
+            "No free-month magic from Robo-Nick, sorry. Bargain sorcery is not in the offer architecture.\n\n"
+            "The value stack is the proper answer: free trial first, $51/wk for unlimited coached group classes, and SPT if you want the higher-touch path. SPT also has an annual prepay option, but we don't do random discounting.\n\n"
+            "Are you trying to keep cost low, or work out which option is worth it?"
+        )
     if re.search(r"\b(kid|kids|child|son|daughter|teen|young|ytp)\b", clean):
         return (
             "Yep — that’s Young'N'Strong, the youth training program for ages 10–17.\n\n"
