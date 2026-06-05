@@ -1079,20 +1079,13 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "Same two spots: Camperdown and Redfern.\n\n"
             "Rather than bury you in the same details again, the useful question is: which suburb are you coming from?"
         )
-    if any(phrase in clean for phrase in [
-        "pregnant", "pregnancy", "prenatal", "pre-natal", "postnatal", "post-natal", "post natal",
-        "breastfeed", "breast feed", "ivf", "miscarriage",
-    ]):
+    if mentions_pregnancy(clean) or "miscarriage" in clean:
         return (
             "Worth saying again: this one isn’t a Robo-Nick call.\n\n"
             "Pregnancy training depends on your stage, your history, and what your healthcare team’s said — Real Nick or Lyn need to scope it in person, not me.\n\n"
             "Easiest move: drop your first name + mobile here and they’ll ring you back. Or email innerwest@outdoorsquad.com.au if you’d rather start that way."
         )
-    if any(phrase in clean for phrase in [
-        "back pain", "lower back", "bad back", "dodgy back", "my back",
-        "bad shoulder", "shoulder injury", "knee injury", "bad knee", "hip replacement",
-        "rehab", "physio", "surgery", "acute pain", "sprain", "torn",
-    ]):
+    if mentions_injury(clean) or any(phrase in clean for phrase in ["physio", "surgery", "torn"]):
         return (
             "Don’t want to keep talking past the actual question.\n\n"
             "Injury history needs a coach’s eye before sessions — Robo-Nick shouldn’t be guessing at modifications. Real Nick or Lyn can scope it properly in a quick call.\n\n"
