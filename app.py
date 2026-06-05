@@ -1329,9 +1329,9 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if any(word in clean for word in ["dodgy knee", "bad knee", "injury", "injured", "limitation", "back pain", "shoulder", "niggle"]):
         return (
-            "Good thing to flag. A dodgy knee doesn’t automatically rule you out, but it should be handled by a real coach, not hand-waved by a chat widget.\n\n"
-            "Nick or Lyn can check what’s going on and suggest whether a modified trial, SPT, or a quick coach chat is the sensible first move.\n\n"
-            "What’s the knee issue: old injury, current pain, or mostly a confidence thing?"
+            "Good thing to flag. An injury doesn’t automatically rule you out, but every injury is individual — best to consult the trainers rather than let a chat widget play physio.\n\n"
+            "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. For anything serious or current, get your health practitioner’s guidance too.\n\n"
+            "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
     if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but"]):
         return (
@@ -2433,8 +2433,8 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
 
     if any(word in text for word in ["injury", "injured", "limitation", "bad knee", "back pain", "shoulder"]):
         return (
-            "Good thing to flag. An old injury doesn’t automatically make it a bad fit, but it’s worth handling properly.\n\n"
-            "The sensible move is to tell the coach what’s going on so they can suggest adjustments and avoid anything silly.\n\n"
+            "Good thing to flag. An injury doesn’t automatically make it a bad fit, but every injury is individual — best to consult the trainers so it’s handled properly.\n\n"
+            "They can often regress, swap, or avoid movements, and Nick/Lyn can suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. For anything serious or current, check with your health practitioner too.\n\n"
             "What kind of injury are you working around?"
         )
 
