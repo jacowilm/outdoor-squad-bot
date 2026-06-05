@@ -1079,6 +1079,51 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "Same two spots: Camperdown and Redfern.\n\n"
             "Rather than bury you in the same details again, the useful question is: which suburb are you coming from?"
         )
+    if any(phrase in clean for phrase in [
+        "pregnant", "pregnancy", "prenatal", "pre-natal", "postnatal", "post-natal", "post natal",
+        "breastfeed", "breast feed", "ivf", "miscarriage",
+    ]):
+        return (
+            "Worth saying again: this one isn’t a Robo-Nick call.\n\n"
+            "Pregnancy training depends on your stage, your history, and what your healthcare team’s said — Real Nick or Lyn need to scope it in person, not me.\n\n"
+            "Easiest move: drop your first name + mobile here and they’ll ring you back. Or email innerwest@outdoorsquad.com.au if you’d rather start that way."
+        )
+    if any(phrase in clean for phrase in [
+        "back pain", "lower back", "bad back", "dodgy back", "my back",
+        "bad shoulder", "shoulder injury", "knee injury", "bad knee", "hip replacement",
+        "rehab", "physio", "surgery", "acute pain", "sprain", "torn",
+    ]):
+        return (
+            "Don’t want to keep talking past the actual question.\n\n"
+            "Injury history needs a coach’s eye before sessions — Robo-Nick shouldn’t be guessing at modifications. Real Nick or Lyn can scope it properly in a quick call.\n\n"
+            "Want to drop your name + mobile so they can ring you, or would you rather grab the trial link and flag the injury when you book?"
+        )
+    if any(phrase in clean for phrase in [
+        "started and stopped", "stopped about", "stop me doing the same", "stop me from doing the same",
+        "what stops me", "won’t stick", "wont stick", "can’t stick", "cant stick",
+        "stick with this", "stick with it", "won’t last", "wont last",
+        "five gym", "5 gym", "couple of gyms", "few gyms", "several gyms",
+        "keep quitting", "always quit", "lose motivation", "lost motivation",
+        "no consistency", "wasted memberships", "wasted my membership", "drop off again", "fall off",
+    ]):
+        return (
+            "Honest answer: gyms usually don’t fail because of the equipment — they fail because nobody notices when you stop turning up.\n\n"
+            "What tends to land here is small enough sessions that a coach actually learns your name, outdoor training in your neighbourhood so it doesn’t feel like a chore, and a regular crew that ends up half-friends-half-accountability.\n\n"
+            "Want to flag your name + mobile so Real Nick or Lyn can call about what kept tripping you up at the others?"
+        )
+    if any(phrase in clean for phrase in [
+        "specific goals", "my goals", "my own goals", "tailored", "tailor it",
+        "pay attention to me", "pay attention to my", "attention to my",
+        "not generic", "not a generic class", "throw me into a generic",
+        "treat me as an individual", "treats me as an individual",
+        "individualised", "individualized", "specific to me", "specific to my",
+        "1 on 1", "1-on-1", "one-on-one", "one on one", "more attention", "actually pay attention",
+    ]):
+        return (
+            "Heard you the first time — that’s an SPT or 1:1 PT conversation, not group classes.\n\n"
+            "SPT is max 4 people with personalised programming and assessments; 1:1 PT is $150/session if you want full one-on-one. The 28-Day Kickstarter ($397) is the trial run for the SPT setup.\n\n"
+            "Want me to flag SPT or PT so Real Nick or Lyn can scope your goals on a quick call? Drop your first name + mobile and they’ll take it from here."
+        )
     if is_trial_question(clean) or "free trial" in previous or "free intro" in previous:
         return (
             "The trial is still the right first step.\n\n"
@@ -1100,8 +1145,8 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "The next useful split is coaching level: group classes for routine, or SPT/Kickstarter if you want more hands-on technique and progression."
         )
     return (
-        "Got it. Rather than repeat the same details, let’s narrow the next step.\n\n"
-        "Are you choosing by location, class time, or how much coaching you want?"
+        "I’m spinning in place a bit — that’s on me, not you.\n\n"
+        "Easiest unblock: drop your first name + mobile and Real Nick or Lyn can take it from here. Or if you’d rather just grab a class, the free trial link is the cleanest path in."
     )
 
 
@@ -2403,6 +2448,35 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "- Squad Ascent membership: $51/wk for unlimited group classes.\n"
             "- SPT starts from $125/wk depending on setup.\n\n"
             "If you want, I can narrow it down based on whether you care more about strength, weight loss, or routine."
+        )
+
+    if any(phrase in text for phrase in [
+        "started and stopped", "stopped about", "stop me doing the same", "stop me from doing the same",
+        "what stops me", "five gym", "5 gym", "couple of gyms", "few gyms", "several gyms",
+        "won't stick", "wont stick", "can't stick", "cant stick", "stick with this", "stick with it",
+        "won't last", "wont last", "keep quitting", "always quit",
+        "lose motivation", "lost motivation", "no consistency",
+        "wasted memberships", "wasted my membership", "drop off again", "fall off",
+    ]):
+        return (
+            "Fair question — and a really common one.\n\n"
+            "What tends to make the difference here isn’t willpower, it’s structure: small sessions where a coach actually learns your name, outdoor training in your neighbourhood so it doesn’t feel like a chore, and a regular group that ends up half-friends-half-accountability.\n\n"
+            "The free trial is the cleanest way to see if it lands differently in person. Or drop your first name + mobile and Real Nick or Lyn can give you a quick call about what kept tripping you up at the other gyms."
+        )
+
+    if any(phrase in text for phrase in [
+        "specific goals", "my goals", "my own goals", "tailored", "tailor it",
+        "pay attention to me", "pay attention to my", "attention to my",
+        "not generic", "not a generic class", "throw me into a generic",
+        "treat me as an individual", "treats me as an individual",
+        "individualised", "individualized", "specific to me", "specific to my",
+        "actually pay attention", "more attention",
+    ]):
+        return (
+            "That’s more SPT or 1:1 PT than group classes.\n\n"
+            "SPT (Semi-Private Personal Training) is max 4 people with personalised programming, regular assessments, and nutrition support — closest thing to one-on-one without the full PT price tag.\n\n"
+            "1:1 PT runs at $150/session if you want true one-on-one. The 28-Day Kickstarter ($397) is the lower-commitment way to test the SPT setup before going ongoing.\n\n"
+            "Want me to flag SPT or PT so Real Nick or Lyn can scope your goals on a quick call? Drop your first name + mobile and they’ll take it from here."
         )
 
     if any(word in text for word in ["price", "cost", "how much", "$", "membership", "cancel", "pause", "contract"]):
