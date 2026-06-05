@@ -1338,7 +1338,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "If it turns into a family or partner membership conversation, the line is value-stack rather than discounting: the team may add useful bonuses like extra sessions, movement screens or other add-ons after a quick chat, but Robo-Nick won’t promise reduced prices or '$X off' deals.\n\n"
             "Best first step is still simple: both come to a free trial and see how it feels. " + trial_close(session_id)
         )
-    if any(phrase in clean for phrase in ["what if it rains", "if it rains", "raining", "rainy", "wet weather", "bad weather"]):
+    if re.search(r"\brain", clean) or "wet weather" in clean or "bad weather" in clean:
         return (
             "If it rains, the session doesn’t automatically fall apart.\n\n"
             "The Squad has access to undercover areas, so the coach can shift things if the weather turns feral. For cold mornings or evenings, dress in layers and bring the normal basics: drink bottle, towel and mat.\n\n"
@@ -1396,6 +1396,15 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Yep — that’s Young'N'Strong, the youth training program for ages 10–17.\n\n"
             "It’s Saturday 9:15am at Camperdown, $25/wk, and coached by qualified, WWCC-checked trainers. Parents are welcome to watch first so it doesn’t feel like sending your kid into the wilderness with a whistle.\n\n"
             "If your son’s 13, he’s right in the target age range. Want the team to point you to the best first session?"
+        )
+    if any(phrase in clean for phrase in [
+        "pregnant", "pregnancy", "prenatal", "pre-natal", "postnatal", "post-natal", "post natal",
+        "postpartum", "post-partum", "post partum", "breastfeeding", "breastfeed", "ivf",
+    ]):
+        return (
+            "Love that you want to stay active — and smart to check first rather than guess.\n\n"
+            "This one’s genuinely not a Robo-Nick call though. What’s right depends on where you’re at, your history, and what your own healthcare team has said, so I’m not going to hand you a training plan from a chat box.\n\n"
+            "The proper move is a quick chat with Real Nick or Lyn — they’ve coached pregnant and postnatal members before and can scope it with you directly. Want to drop your first name + mobile so they can give you a call, or would you rather email innerwest@outdoorsquad.com.au?"
         )
     if any(word in clean for word in ["dodgy knee", "bad knee", "injury", "injured", "limitation", "back pain", "shoulder", "niggle", "pregnant", "postnatal", "rehab", "acute pain", "sprain"]):
         return (
