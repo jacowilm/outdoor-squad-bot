@@ -1298,6 +1298,33 @@ def trial_close(session_id: str) -> str:
     return "Camperdown or Redfern — whichever is closer is fine."
 
 
+# Sensitive-topic detectors. Word-boundary safe on purpose — bare substring
+# matching caused the "raining" inside "training" bug (commit c447660), and
+# "back"/"hip"/"neck" collide with very common words (background, ship,
+# necklace). These are reused by the AI-outage and local-tone routers so the
+# careful handoff answer stays reachable even when the LLM backend is down.
+PREGNANCY_RE = re.compile(
+    r"\b(?:pregnan\w*|pre[\s-]?natal|post[\s-]?natal|post[\s-]?partum|breastfeed\w*|ivf)\b"
+)
+INJURY_RE = re.compile(
+    r"\b(?:"
+    r"injur\w*|rehab\w*|sprain\w*|niggles?|limitations?|sciatica|slipped disc|"
+    r"knees?|shoulders?|hips?|necks?|wrists?|ankles?|elbows?|"
+    r"lower back|low back|my back|bad back|sore back|dodgy back|"
+    r"back pain|back injury|back issue|back problem|"
+    r"bad knee|dodgy knee|joint pain|acute pain|chronic pain"
+    r")\b"
+)
+
+
+def mentions_pregnancy(text: str) -> bool:
+    return bool(PREGNANCY_RE.search(text))
+
+
+def mentions_injury(text: str) -> bool:
+    return bool(INJURY_RE.search(text))
+
+
 def contextual_short_reply(message: str, session_id: str) -> str | None:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
@@ -1397,16 +1424,13 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "It’s Saturday 9:15am at Camperdown, $25/wk, and coached by qualified, WWCC-checked trainers. Parents are welcome to watch first so it doesn’t feel like sending your kid into the wilderness with a whistle.\n\n"
             "If your son’s 13, he’s right in the target age range. Want the team to point you to the best first session?"
         )
-    if any(phrase in clean for phrase in [
-        "pregnant", "pregnancy", "prenatal", "pre-natal", "postnatal", "post-natal", "post natal",
-        "postpartum", "post-partum", "post partum", "breastfeeding", "breastfeed", "ivf",
-    ]):
+    if mentions_pregnancy(clean):
         return (
             "Love that you want to stay active — and smart to check first rather than guess.\n\n"
             "This one’s genuinely not a Robo-Nick call though. What’s right depends on where you’re at, your history, and what your own healthcare team has said, so I’m not going to hand you a training plan from a chat box.\n\n"
             "The proper move is a quick chat with Real Nick or Lyn — they’ve coached pregnant and postnatal members before and can scope it with you directly. Want to drop your first name + mobile so they can give you a call, or would you rather email innerwest@outdoorsquad.com.au?"
         )
-    if any(word in clean for word in ["dodgy knee", "bad knee", "injury", "injured", "limitation", "back pain", "shoulder", "niggle", "pregnant", "postnatal", "rehab", "acute pain", "sprain"]):
+    if mentions_injury(clean):
         return (
             "Good thing to flag. An injury doesn’t automatically rule you out, but every injury is individual — best to consult the trainers rather than let a chat widget play physio.\n\n"
             "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. Trainers can often regress, swap, or avoid movements, but the bot should not decide the modification itself. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, get your health practitioner’s guidance too.\n\n"
@@ -1624,13 +1648,16 @@ def known_goal_from_history(session_id: str) -> str | None:
 
 def should_use_outage_fallback(message: str) -> bool:
     text = message.lower()
+    # Sensitive health topics must stay reachable even if the AI backend is
+    # down, so the careful handoff answer is served instead of a generic error.
+    if mentions_injury(text) or mentions_pregnancy(text):
+        return True
     keyword_groups = [
         ["free intro", "trial", "free class", "intro class"],
         ["price", "cost", "how much", "membership", "casual", "drop-in", "drop in"],
         ["spt", "semi-private", "semi private", "personal training", "kickstarter", "pt"],
         ["kid", "kids", "child", "son", "daughter", "teen", "young", "ytp"],
         ["unfit", "beginner", "nervous", "embarrassed"],
-        ["injury", "injured", "limitation", "bad knee", "back pain", "shoulder"],
         ["food", "nutrition", "meal", "diet", "weight loss"],
         ["where", "camperdown", "redfern", "parking", "public transport"],
     ]
@@ -2209,12 +2236,13 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         return True
     if re.search(r"\b(kid|kids|child|son|daughter|teen|young|ytp)\b", text):
         return True
+    if mentions_injury(text) or mentions_pregnancy(text):
+        return True
     if any(word in text for word in [
         "price", "prices", "cost", "how much", "membership", "casual", "drop-in", "drop in",
         "crossfit", "hyrox", "powerlifting", "strongman", "serious programming",
         "28-day kickstarter", "28 day kickstarter", "kickstarter",
         "stay strong as i age", "strong as i age", "ageing", "aging", "longevity",
-        "dodgy knee", "bad knee", "injury", "injured", "limitation", "back pain", "shoulder", "niggle",
         "have a think", "need to think", "think about it", "not sure", "keen but not sure", "next step", "come along", "how do i start", "how to start", "what should i do first", "do first",
         "just browsing", "browsing for now", "just looking", "winter", "cold",
         "joined gyms before", "quit gyms", "quit gym", "quit before", "quit after", "plus fitness", "personal training",
