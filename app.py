@@ -1304,7 +1304,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "- Yoga Squad — mobility, balance, and the bit most people skip.\n\n"
             "A free trial is the sensible first step. " + trial_close(session_id)
         )
-    if any(phrase in clean for phrase in ["family discount", "family deal", "family rate", "family price", "family membership", "discount", "free month", "cheaper", "deal"]):
+    family_pricing_request = "family" in clean and (
+        any(phrase in clean for phrase in ["discount", "deal", "rate", "price", "membership", "cheaper", "free month"])
+        or "%" in clean
+        or re.search(r"\$\s*\d+\s*off|\b\d+\s*%\s*off|\boff\b", clean)
+    )
+    if family_pricing_request or any(phrase in clean for phrase in ["family discount", "family deal", "family rate", "family price", "family membership", "discount", "free month", "cheaper", "deal"]):
         if "family" in clean:
             return (
                 "We don't discount memberships or do percentage / '$X off' family deals.\n\n"
