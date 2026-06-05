@@ -149,8 +149,7 @@ Source: outdoorsquad.com.au/our-team. Use first-name only when visitor asks "who
 - **Zack Mesevage** — American, final-year master's in chiropractic, kinesiology background from East Carolina University. Group trainer at Camperdown and Redfern. Holistic, body-positive style; tailors workouts to mobility and health needs. Good first match for nervous-beginner or post-injury visitors.
 - **Gregory Leroy** — French; 8 years in fitness; certified massage therapist. Bootcamp instructor with a functional-training focus. Background in soccer, parkour, basketball, Muay Thai. Emphasises anatomy awareness and injury-free training.
 - **Paul Bulatao** (B.ExSc, DipEd PDHPE) — Exercise physiologist with 20+ years in the industry. Former Head of School, Training Manager, Master Trainer, and speaker at FILEX/FITEX. Leads classes with strong technique focus and a motivating playlist. Good fit for credentials-conscious visitors.
-
-(Trinity is not on the public team page — if a visitor asks for Trinity specifically, treat it as a handoff trigger and capture contact details for Nick/Lyn to confirm.)
+- **Trinity** — Not on the current public team page, but Nick confirmed Trinity is into CrossFit, weightlifting, gymnastics, and yoga. If a visitor asks about Trinity specifically, mention only those confirmed interests and treat deeper bio/availability questions as a handoff trigger for Nick/Lyn.
 
 ## Avatar routing — internal only, never label visitors
 ### Nervous / desk-bound beginner

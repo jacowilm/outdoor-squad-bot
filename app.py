@@ -547,7 +547,7 @@ Conversation rules:
 - If they mention goals, injuries, schedule, confidence, weight loss, strength, routine, nerves, embarrassment, or inconsistency, respond directly to that before pitching anything
 - If they ask something odd, playful, skeptical, or slightly off-track, answer it like a calm human and then gently steer back if appropriate
 - If someone gives a curve ball, do not ignore it and do not snap back into a script immediately
-- If they mention a physical limitation or injury, be encouraging without making medical claims
+- If they mention a physical limitation, niggle, pain, pregnancy/postnatal concern, rehab, or injury: be encouraging, say every injury is individual, do not diagnose/prescribe rehab/promise outcomes, and route them to Nick/Lyn/the trainers for the sensible first step. For serious, acute, complex, pregnancy/postnatal, rehab, or uncertain cases, also suggest checking with a health practitioner.
 - If you do not know an exact detail like pricing or timetable, be honest and guide them to the free trial for specifics
 - Never invent facts outside the knowledge base
 - Never mention being an AI unless directly asked
@@ -1281,6 +1281,31 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
         return "\n\n".join(lines)
 
+    if any(phrase in clean for phrase in ["pretty unfit", "very unfit", "super unfit", "really unfit", "nervous", "intimidated", "scared", "first class", "first session", "beginner", "never trained", "out of shape", "not fit"]):
+        return (
+            "Totally fair — plenty of people start before they feel ready.\n\n"
+            "The beginner path is simple: come to one free trial, meet the coach, and let them scale the session to where you actually are. You do not need to be fit first; that would be a fairly ridiculous entry requirement for training.\n\n"
+            "Best first move is a quiet trial rather than overthinking it. " + trial_close(session_id)
+        )
+    if any(phrase in clean for phrase in ["bring a friend", "bring my friend", "bring a mate", "come with a friend", "train with a friend", "train with my partner", "bring my partner"]):
+        return (
+            "Yep — friends, partners and family are welcome to come along. Training with someone you know can make the first session feel a lot less weird.\n\n"
+            "If it turns into a family or partner membership conversation, the line is value-stack rather than discounting: the team may add useful bonuses like extra sessions, movement screens or other add-ons after a quick chat, but Robo-Nick won’t promise reduced prices or '$X off' deals.\n\n"
+            "Best first step is still simple: both come to a free trial and see how it feels. " + trial_close(session_id)
+        )
+    if any(phrase in clean for phrase in ["what if it rains", "if it rains", "raining", "rainy", "wet weather", "bad weather"]):
+        return (
+            "If it rains, the session doesn’t automatically fall apart.\n\n"
+            "The Squad has access to undercover areas, so the coach can shift things if the weather turns feral. For cold mornings or evenings, dress in layers and bring the normal basics: drink bottle, towel and mat.\n\n"
+            "If you’re testing it for the first time, a free trial is still the cleanest way to feel it out. " + trial_close(session_id)
+        )
+    if any(phrase in clean for phrase in ["over 50", "over fifty", "in my 50s", "in my fifties", "in my 60s", "in my sixties", "too old", "am i too old"]):
+        return (
+            "Definitely not too old. Outdoor Squad has adults training across different ages, including people in their 50s, 60s and beyond.\n\n"
+            "The focus is functional strength, mobility, balance and long-term health — not trying to cosplay as a 22-year-old doing punishment circuits for Instagram. Movements can be adjusted to your current level.\n\n"
+            "A free trial is the sensible first test. " + trial_close(session_id)
+        )
+
     if any(word in clean for word in ["crossfit", "hyrox", "powerlifting", "strongman"]) or (
         "serious" in clean and ("programming" in clean or "program" in clean)
     ):
@@ -1327,10 +1352,10 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "It’s Saturday 9:15am at Camperdown, $25/wk, and coached by qualified, WWCC-checked trainers. Parents are welcome to watch first so it doesn’t feel like sending your kid into the wilderness with a whistle.\n\n"
             "If your son’s 13, he’s right in the target age range. Want the team to point you to the best first session?"
         )
-    if any(word in clean for word in ["dodgy knee", "bad knee", "injury", "injured", "limitation", "back pain", "shoulder", "niggle"]):
+    if any(word in clean for word in ["dodgy knee", "bad knee", "injury", "injured", "limitation", "back pain", "shoulder", "niggle", "pregnant", "postnatal", "rehab", "acute pain", "sprain"]):
         return (
             "Good thing to flag. An injury doesn’t automatically rule you out, but every injury is individual — best to consult the trainers rather than let a chat widget play physio.\n\n"
-            "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. For anything serious or current, get your health practitioner’s guidance too.\n\n"
+            "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. Trainers can often regress, swap, or avoid movements, but the bot should not decide the modification itself. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, get your health practitioner’s guidance too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
     if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but"]):
@@ -1377,8 +1402,9 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if any(phrase in clean for phrase in ["reviews", "testimonials", "proof", "what do members say", "member feedback", "5 star", "five star"]):
         return (
-            "The Squad has strong public member feedback and 5-star review proof, but the useful test is still the boringly practical one: come to a session and see if the vibe fits.\n\n"
-            "No glossy transformation nonsense required. A free trial lets you meet the coach, feel the pace, and decide with actual evidence."
+            "Yep — there’s proper member proof, and it sounds like real training rather than glossy transformation nonsense.\n\n"
+            "A few examples from member reviews: Pip called it \"always different\" with a friendly, welcoming group; Helen said Nick pushes people while keeping technique front and centre; Carla said the Squad helped rebuild strength and confidence; and Julia called it a welcoming community flexible enough for bringing a baby in the pram.\n\n"
+            "Best test is still simple: come to a free trial, meet the coach, feel the pace, and decide from the actual session."
         )
     if any(phrase in clean for phrase in ["personal training", " pt", "pt ", "1:1", "one on one", "coach who knows", "writes me a program", "write the program around me", "write a program around me", "program around me"]):
         return (
@@ -2431,10 +2457,10 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "Which bit feels like the bigger blocker right now: training consistency or food?"
         )
 
-    if any(word in text for word in ["injury", "injured", "limitation", "bad knee", "back pain", "shoulder"]):
+    if any(word in text for word in ["injury", "injured", "limitation", "bad knee", "back pain", "shoulder", "niggle", "pregnant", "postnatal", "rehab", "acute pain", "sprain"]):
         return (
             "Good thing to flag. An injury doesn’t automatically make it a bad fit, but every injury is individual — best to consult the trainers so it’s handled properly.\n\n"
-            "They can often regress, swap, or avoid movements, and Nick/Lyn can suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. For anything serious or current, check with your health practitioner too.\n\n"
+            "They can often regress, swap, or avoid movements, but the bot shouldn’t decide the modification itself. Nick/Lyn can suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, check with your health practitioner too.\n\n"
             "What kind of injury are you working around?"
         )
 

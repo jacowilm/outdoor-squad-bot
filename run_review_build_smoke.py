@@ -199,12 +199,20 @@ def main() -> int:
                 if "3 spt sessions per week" in reply.lower() or "3 sessions per week" in reply.lower():
                     failures.append(f"{name}: incorrectly says Kickstarter defaults to 3 SPT sessions/week")
             if name == "injury":
-                if not any(term in reply.lower() for term in ["nick", "lyn", "coach", "human"]):
-                    failures.append(f"{name}: injury path should route to a human/coach")
+                if "every injury is individual" not in reply.lower():
+                    failures.append(f"{name}: missing Nicholas injury caveat")
+                if not any(term in reply.lower() for term in ["nick", "lyn", "coach", "trainer", "human"]):
+                    failures.append(f"{name}: injury path should route to a human/coach/trainer")
                 if not any(term in reply.lower() for term in ["trial", "spt", "coach chat"]):
                     failures.append(f"{name}: injury path should name a safe next step")
+                if "health practitioner" not in reply.lower():
+                    failures.append(f"{name}: missing serious-case health-practitioner guardrail")
 
         extra_conversion_cases = [
+            ("nervous-beginner", "I'm pretty unfit and nervous. Is the first class okay for beginners?", ["free trial", "coach", "beginner"]),
+            ("bring-friend", "Can I bring my partner or a friend to try it with me?", ["free trial", "friend", "value-stack"]),
+            ("rain", "What if it rains during the session?", ["undercover", "layers", "free trial"]),
+            ("over-50", "I'm over 50, am I too old for this?", ["50s", "functional strength", "free trial"]),
             ("browsing", "Just browsing for now, thanks.", ["free trial"]),
             ("winter", "Isn't it awkward training outdoors in winter?", ["free trial"]),
             ("quit-gyms", "I've quit gyms before. Why would this be different?", ["free trial"]),
