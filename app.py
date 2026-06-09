@@ -8,6 +8,7 @@ routes prospects toward the right front door, and captures clean lead context.
 import os
 import csv
 import io
+import ipaddress
 import json
 import random
 import re
@@ -222,10 +223,25 @@ _rate_buckets: dict[str, list[float]] = {}
 
 
 def client_ip(request: Request) -> str:
-    """Real client IP behind Render's proxy (X-Forwarded-For), capped."""
+    """Real client IP behind Render's proxy, resistant to X-Forwarded-For spoofing.
+
+    Render APPENDS the true connecting IP to any client-supplied X-Forwarded-For,
+    so the header is `<attacker-spoofable...>, <real-client>[, <render-internal>]`.
+    Taking the FIRST entry (the old behaviour) let an attacker rotate a fake IP and
+    bypass the rate limiter entirely. We instead take the RIGHTMOST PUBLIC IP — the
+    address Render's proxy actually observed — skipping private/internal hops.
+    """
     xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.split(",")[0].strip()[:64] or "unknown"
+    parts = [p.strip() for p in xff.split(",") if p.strip()]
+    for candidate in reversed(parts):
+        try:
+            addr = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if not (addr.is_private or addr.is_loopback or addr.is_link_local):
+            return candidate[:64]
+    if parts:
+        return parts[-1][:64]            # all private/invalid — still a stable key
     return (request.client.host if request.client else "unknown")[:64]
 
 
