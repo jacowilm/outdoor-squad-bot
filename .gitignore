@@ -9,3 +9,6 @@ venv/
 
 # Local demo runtime logs
 local-demo.log
+
+# Generated clean client repo (build via handoff/build-clean-repo.sh)
+handoff/client-repo/

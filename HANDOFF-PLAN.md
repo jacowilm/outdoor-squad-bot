@@ -40,8 +40,9 @@ Goal: deliver a polished website-embeddable chatbot that Nicholas/Lyn can manage
 
 ## Production preflight
 - For review, set `OUTDOOR_SQUAD_DEPLOYMENT_MODE=review`; `GET /api/health` must show `ai_configured: true`, `admin_configured: true`, and `review_hosted_by_ai_sprints: true`.
-- For final handoff, set `OUTDOOR_SQUAD_DEPLOYMENT_MODE=handoff`; `GET /api/health` must show `handoff_ready: true`, a Nicholas-owned provider in `api_key_sources`, `admin_configured: true`, and `trial_link_configured: true`.
-- OpenAI remains the preferred provider; Gemini can be configured as a real secondary provider for failover/review. If `api_key_sources` only contains `OPENAI_API_KEY` or `GEMINI_API_KEY`, treat it as a development/test setup unless Jacobo has explicitly sold ongoing hosting/support.
+- For final handoff, set `OUTDOOR_SQUAD_DEPLOYMENT_MODE=handoff`; `GET /api/health` must show `handoff_ready: true`, `owner_key_configured: true` (a Nicholas/Outdoor Squad-owned `OUTDOOR_SQUAD_*` provider key is set), `admin_configured: true`, and `trial_link_configured: true`.
+  - Note (2026-06-09 security pass): `/api/health` was trimmed to non-secret booleans, so `api_key_source(s)`, model IDs, and the owner email/phone are no longer exposed publicly. `owner_key_configured` + `handoff_ready` now carry the "client-owned key is in place and everything is ready" signal.
+- Anthropic (Claude Haiku) is the current primary provider with OpenAI as failover; both should be Nicholas/Outdoor Squad-owned `OUTDOOR_SQUAD_*` keys with a monthly spend cap set on each account. If only the generic `OPENAI_API_KEY`/`GEMINI_API_KEY` dev fallbacks are set, `owner_key_configured` stays false — treat that as a development/test setup unless Jacobo has explicitly sold ongoing hosting/support.
 - Run `python3.11 run_review_build_smoke.py` from this folder after setting production-like env vars. Do not send Nicholas/Lyn a ready-for-review note until it passes.
 - Keep the Square public install to the widget script only. Leads, metrics, and redacted conversation logs stay on the protected backend admin surface.
 
