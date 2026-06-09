@@ -84,6 +84,20 @@ SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
+## Security & abuse controls
+
+Hardened in the 2026-06-09 pre-launch audit:
+- **Admin dashboard** (`/admin`, `/api/leads`, `/api/metrics`, `/api/conversation-*`) is gated by HTTP Basic auth (`OUTDOOR_SQUAD_ADMIN_USERNAME` / `OUTDOOR_SQUAD_ADMIN_PASSWORD`), constant-time and fail-closed (503 if no password set). Use a long random password and serve only over HTTPS.
+- **Stored-XSS safe:** visitor messages are HTML-escaped before embedding in the dashboard, so a `</script>` payload can't run in the owner's browser.
+- **Rate limiting + input caps** on the public POST endpoints (`/api/chat`, `/api/booking`, `/api/event`) — per-IP, in-memory, X-Forwarded-For aware. Tune with:
+  - `OUTDOOR_SQUAD_RATE_MAX` (default 30 requests) / `OUTDOOR_SQUAD_RATE_WINDOW` (default 60s) — per IP, per endpoint.
+  - `OUTDOOR_SQUAD_MAX_MESSAGE_LEN` (default 2000) — longer chat messages are rejected with 413.
+- **`/api/health`** is intentionally minimal (booleans only) so it can't be used for recon.
+- **`OUTDOOR_SQUAD_DEBUG_ERRORS`** must stay unset (or not `1`) in production; it is also auto-suppressed in `handoff` mode.
+- **CSV export** prefixes formula-trigger cells (`= + - @`) to prevent spreadsheet formula injection.
+- Lead/transcript/booking data files (`leads.json`, `events.jsonl`, `conversation_logs.jsonl`, `bookings.json`) are gitignored. In production rely on Supabase (Render's disk is ephemeral). Confirm Supabase RLS restricts the lead tables to the service role.
+- **Note:** the free Render instance can be made unresponsive by a concurrent flood (single worker + remote Supabase). For heavy public traffic, use a paid instance and/or put Cloudflare in front.
+
 ## Lead summary delivery setup
 
 Captured leads always appear in the protected `/admin` dashboard and `/api/leads.csv`. For live handoff, configure at least one push destination before public install:

@@ -1588,6 +1588,16 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Two classes lean especially well into longevity: Power'N'Pilates (strength + control, easier on the joints) and Yoga Squad (mobility and balance, the bit most people skip). A free trial is the sensible first test. " + trial_close(session_id)
         )
 
+    # "Is this basically just CrossFit / like F45?" is a positioning question, not
+    # a serious-lifter signal — answer the comparison instead of pitching SPT.
+    if any(w in clean for w in ["crossfit", "f45", "f-45", "hyrox", "bootcamp", "orangetheory", "orange theory"]) and any(
+        p in clean for p in ["is this", "is it", "are you just", "basically", "just like", "like a", "similar to", "same as", "difference", "vs ", "versus", "compared to", "over f45", "than f45"]
+    ):
+        return (
+            "There’s some overlap, but it’s its own thing rather than a branded-format clone.\n\n"
+            "Outdoor Squad is coached outdoor group training in Inner West parks — strength, conditioning and real variety across the week, in small enough groups that the coach actually knows your name. Less treadmill-and-mirrors, more fresh air, proper coaching, and a crew that notices when you don’t show up.\n\n"
+            "Easiest way to feel the difference is a free trial. Camperdown or Redfern?"
+        )
     if any(word in clean for word in ["crossfit", "hyrox", "powerlifting", "powerlift", "barbell", "strongman"]) or (
         "serious" in clean and ("programming" in clean or "program" in clean)
     ):
