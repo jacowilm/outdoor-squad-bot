@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .env
 leads.json
+bookings.json
 events.jsonl
 conversation_logs.jsonl
 venv/

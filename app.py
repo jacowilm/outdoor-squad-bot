@@ -209,6 +209,98 @@ if not CONVERSATION_LOG_FILE.exists():
 ADMIN_USERNAME = os.environ.get("OUTDOOR_SQUAD_ADMIN_USERNAME", "outdoorsquad")
 ADMIN_PASSWORD = os.environ.get("OUTDOOR_SQUAD_ADMIN_PASSWORD")
 
+# ── Abuse / input hardening ──────────────────────────────────────────────
+# Public endpoints (/api/chat etc.) call a paid LLM with no auth, so cap input
+# size and rate-limit per-IP to prevent cost-exhaustion / spam. In-memory and
+# single-instance (Render free tier) — resets on restart, which is fine here.
+MAX_MESSAGE_LEN = int(os.environ.get("OUTDOOR_SQUAD_MAX_MESSAGE_LEN", "2000"))
+MAX_SESSION_ID_LEN = 100
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("OUTDOOR_SQUAD_RATE_WINDOW", "60"))
+RATE_LIMIT_MAX_PER_WINDOW = int(os.environ.get("OUTDOOR_SQUAD_RATE_MAX", "30"))
+RATE_LIMIT_MAX_BUCKETS = 5000
+_rate_buckets: dict[str, list[float]] = {}
+
+
+def client_ip(request: Request) -> str:
+    """Real client IP behind Render's proxy (X-Forwarded-For), capped."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()[:64] or "unknown"
+    return (request.client.host if request.client else "unknown")[:64]
+
+
+def is_rate_limited(ip: str, *, scope: str = "chat", max_per_window: int = RATE_LIMIT_MAX_PER_WINDOW,
+                    window: int = RATE_LIMIT_WINDOW_SECONDS) -> bool:
+    now = time.time()
+    cutoff = now - window
+    key = f"{scope}:{ip}"
+    bucket = _rate_buckets.get(key)
+    if bucket is None:
+        if len(_rate_buckets) >= RATE_LIMIT_MAX_BUCKETS:
+            for stale_key, stamps in list(_rate_buckets.items()):
+                if not stamps or stamps[-1] < cutoff:
+                    _rate_buckets.pop(stale_key, None)
+        bucket = _rate_buckets[key] = []
+    drop = 0
+    for ts in bucket:
+        if ts >= cutoff:
+            break
+        drop += 1
+    if drop:
+        del bucket[:drop]
+    if len(bucket) >= max_per_window:
+        return True
+    bucket.append(now)
+    return False
+
+
+def sanitize_session_id(raw) -> str:
+    sid = re.sub(r"[^A-Za-z0-9._:-]", "-", str(raw or "default").strip()[:MAX_SESSION_ID_LEN])
+    return sid or "default"
+
+
+def sanitize_event_metadata(meta) -> dict:
+    """Bound/clean user-supplied /api/event metadata: drop reserved keys (which
+    would collide with log_event's positional args and crash it), cap counts/sizes."""
+    if not isinstance(meta, dict):
+        return {}
+    reserved = {"event_type", "session_id", "type", "timestamp"}
+    out: dict = {}
+    for key, value in list(meta.items())[:20]:
+        ks = str(key)[:64]
+        if not ks or ks in reserved:
+            continue
+        if isinstance(value, str):
+            out[ks] = value[:240]
+        elif isinstance(value, (int, float, bool)) or value is None:
+            out[ks] = value
+        else:
+            out[ks] = str(value)[:240]
+    return out
+
+
+def html_safe_json(obj) -> str:
+    """json.dumps safe to embed inside an inline <script>: a stored '</script>'
+    (or U+2028/2029) in visitor content can no longer break out of the tag."""
+    return (
+        json.dumps(obj)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace(" ", "\\u2028")
+        .replace(" ", "\\u2029")
+    )
+
+
+def csv_safe_cell(value) -> str:
+    """Neutralise spreadsheet formula injection: a cell starting with = + - @ tab
+    or CR is evaluated by Excel/Sheets, so prefix it with an apostrophe."""
+    s = "" if value is None else str(value)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
 # AI clients (lazy init to avoid crash if a key is not set at import time)
 _client = None
 
@@ -1936,12 +2028,19 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
 
 @app.post("/api/chat")
 async def chat(request: Request):
-    body = await request.json()
-    message = body.get("message", "").strip()
-    session_id = body.get("session_id", "default")
+    if is_rate_limited(client_ip(request)):
+        return JSONResponse({"error": "Too many requests — please slow down and try again shortly."}, status_code=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+    message = str(body.get("message", "")).strip()
+    session_id = sanitize_session_id(body.get("session_id", "default"))
 
     if not message:
         return JSONResponse({"error": "No message provided"}, status_code=400)
+    if len(message) > MAX_MESSAGE_LEN:
+        return JSONResponse({"error": "That message is a bit long — try trimming it down."}, status_code=413)
 
     # Get or create conversation history
     history = load_conversation(session_id)
@@ -2041,7 +2140,7 @@ async def chat(request: Request):
             "reply_delay_ms": random.randint(MIN_REPLY_DELAY_MS, MAX_REPLY_DELAY_MS),
             "fallback": using_demo_fallback,
         }
-        if os.environ.get("OUTDOOR_SQUAD_DEBUG_ERRORS") == "1":
+        if os.environ.get("OUTDOOR_SQUAD_DEBUG_ERRORS") == "1" and DEPLOYMENT_MODE != "handoff":
             payload["backend_error"] = str(exc)[:160]
         return JSONResponse(payload)
 
@@ -2049,51 +2148,38 @@ async def chat(request: Request):
 @app.post("/api/booking")
 async def booking(request: Request):
     """Handle sample flow requests from the public AI Sprints form."""
-    body = await request.json()
-    name = body.get("name", "Unknown")
-    email = body.get("email", "")
-    business = body.get("business", "")
-    phone = body.get("phone", "")
-    role = body.get("role", "")
-    notes = body.get("notes", "")
+    if is_rate_limited(client_ip(request), scope="booking", max_per_window=5):
+        return JSONResponse({"error": "Too many requests."}, status_code=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
 
-    bookings_file = Path(__file__).parent / "bookings.json"
-    if not bookings_file.exists():
-        bookings_file.write_text("[]")
-    bookings = json.loads(bookings_file.read_text())
+    def field(key: str, default: str = "", limit: int = 500) -> str:
+        return str(body.get(key, default))[:limit]
+
     booking_data = {
         "type": "sample_flow_request",
-        "name": name,
-        "email": email,
-        "business": business,
-        "phone": phone,
-        "role": role,
-        "notes": notes,
+        "name": field("name", "Unknown", 120),
+        "email": field("email", "", 200),
+        "business": field("business", "", 200),
+        "phone": field("phone", "", 60),
+        "role": field("role", "", 120),
+        "notes": field("notes", "", 2000),
         "created_at": datetime.now().isoformat(),
     }
-    bookings.append(booking_data)
-    bookings_file.write_text(json.dumps(bookings, indent=2))
-    log_event("sample_flow_request", session_id=body.get("session_id", "public-form"), **booking_data)
 
+    bookings_file = Path(__file__).parent / "bookings.json"
     try:
-        import smtplib
-        from email.mime.text import MIMEText
-        msg = MIMEText(
-            f"New sample flow request!\n\n"
-            f"Name: {name}\n"
-            f"Email: {email}\n"
-            f"Business: {business}\n"
-            f"Phone: {phone}\n"
-            f"Role: {role}\n"
-            f"Notes: {notes}\n\n"
-            f"— AI Sprints sample-first form"
-        )
-        msg["Subject"] = f"New sample request: {name} ({business or 'No business'})"
-        msg["From"] = "bookings@aisprints.com.au"
-        msg["To"] = "jacowilmjr@agentmail.to"
-        # Best effort — don't fail the request if email setup is unavailable
+        existing = json.loads(bookings_file.read_text()) if bookings_file.exists() else []
+        if not isinstance(existing, list):
+            existing = []
     except Exception:
-        pass
+        existing = []
+    existing.append(booking_data)
+    # Keep the file bounded so a public POST loop can't grow it without limit.
+    bookings_file.write_text(json.dumps(existing[-1000:], indent=2))
+    log_event("sample_flow_request", session_id=sanitize_session_id(body.get("session_id", "public-form")), **booking_data)
 
     return JSONResponse({"ok": True, "message": "Sample request received"})
 
@@ -2128,6 +2214,9 @@ async def export_leads_csv(_: str = Depends(require_admin)):
         row = dict(lead)
         if isinstance(row.get("concerns"), list):
             row["concerns"] = "; ".join(row["concerns"])
+        # Prevent spreadsheet formula injection from attacker-controlled fields
+        # (e.g. raw_message starting with "=", "+", "-", "@").
+        row = {key: csv_safe_cell(value) for key, value in row.items()}
         writer.writerow(row)
     return Response(
         output.getvalue(),
@@ -2171,10 +2260,15 @@ def _capture_trial_click(session_id: str, url: str) -> None:
 @app.post("/api/event")
 async def track_event(request: Request):
     """Lightweight widget analytics for Nicholas/Lyn's weekly review."""
-    body = await request.json()
+    if is_rate_limited(client_ip(request), scope="event", max_per_window=60):
+        return JSONResponse({"error": "Too many requests."}, status_code=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
     event_type = str(body.get("event_type", "widget_event"))[:80]
-    session_id = str(body.get("session_id", "unknown"))[:120]
-    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    session_id = sanitize_session_id(body.get("session_id", "unknown"))
+    metadata = sanitize_event_metadata(body.get("metadata"))
     log_event(event_type, session_id=session_id, **metadata)
     # Trial-link clicks count as a captured lead even without contact details
     # (per Nicholas, 2026-06-03): a click is intent, and intent is what Robo-Nick
@@ -2326,7 +2420,10 @@ async def admin_dashboard(_: str = Depends(require_admin)):
         "logs": read_conversation_logs(120),
         "transcripts": grouped_transcripts(500),
     }
-    return HTMLResponse(ADMIN_HTML.replace("__ADMIN_DATA__", json.dumps(admin_data)))
+    # html_safe_json (not plain json.dumps): a visitor's chat message containing
+    # "</script>" would otherwise break out of this inline <script> and run in the
+    # authenticated owner's browser (stored XSS). See html_safe_json().
+    return HTMLResponse(ADMIN_HTML.replace("__ADMIN_DATA__", html_safe_json(admin_data)))
 
 
 @app.get("/api/health")
@@ -2379,18 +2476,9 @@ async def health():
         "storage_backend": "supabase" if supabase_enabled() else "local_files",
         "supabase_configured": supabase_enabled(),
         "ai_configured": bool(providers),
-        "ai_provider": providers[0] if providers else None,
-        "ai_providers": providers,
-        "api_key_source": api_key_sources[0] if api_key_sources else None,
-        "api_key_sources": api_key_sources,
-        "model": os.environ.get("OUTDOOR_SQUAD_OPENAI_MODEL", "gpt-5-mini"),
-        "anthropic_model": os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
-        "gemini_model": os.environ.get("OUTDOOR_SQUAD_GEMINI_MODEL", "gemini-2.5-flash"),
         "admin_configured": admin_configured,
         "trial_link_configured": trial_link_configured,
         "owner_key_configured": owner_key_configured,
-        "human_email": HUMAN_EMAIL,
-        "human_phone": HUMAN_PHONE,
         "lead_summary_delivery_configured": lead_summary_delivery_configured(),
         "lead_summary_email_configured": lead_summary_email_configured(),
         "lead_summary_phone_configured": lead_summary_phone_configured(),
@@ -3108,9 +3196,17 @@ def safe_rate(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 3)
 
 
+# Redaction-only landline matcher (AU 02/03/07/08). Separate from the strict
+# PHONE_RE used for lead extraction so broadening redaction can't change which
+# messages count as "contact shared". Mobile-only PHONE_RE missed landlines in
+# the stored transcripts.
+REDACT_LANDLINE_RE = re.compile(r"\b(?:\+?61[\s-]?|0)[2378][\s-]?\d{4}[\s-]?\d{4}\b")
+
+
 def redact_contact(text: str) -> str:
     text = EMAIL_RE.sub('[email]', text)
     text = PHONE_RE.sub('[phone]', text)
+    text = REDACT_LANDLINE_RE.sub('[phone]', text)
     return text
 
 
