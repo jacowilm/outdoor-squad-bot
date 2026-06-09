@@ -1319,9 +1319,12 @@ PREGNANCY_RE = re.compile(
 )
 INJURY_RE = re.compile(
     r"\b(?:"
-    r"injur\w*|rehab\w*|sprain\w*|niggles?|limitations?|sciatica|slipped disc|"
+    r"injur\w*|rehab\w*|sprain\w*|strained?|torn|tendon\w*|niggles?|limitations?|sciatica|slipped disc|"
     r"knees?|shoulders?|hips?|necks?|wrists?|ankles?|elbows?|"
+    r"knee replacement|hip replacement|"
     r"lower back|low back|my back|bad back|sore back|dodgy back|back's dodgy|backs dodgy|"
+    r"back['s]?\s+(?:is\s+)?(?:a bit\s+|a little\s+|pretty\s+|really\s+|bit\s+)?(?:dodgy|sore|stuffed|buggered|crook|tight|stiff|wrecked|a mess|playing up)|"
+    r"(?:dodgy|sore|stuffed|buggered|crook|tight|stiff|wrecked)\s+(?:lower\s+)?back|"
     r"back pain|back injury|back issue|back problem|"
     r"bad knee|dodgy knee|joint pain|acute pain|chronic pain"
     r")\b"
@@ -1418,6 +1421,49 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
         return "\n\n".join(lines)
 
+    # Dietary-specific meal-plan questions ("is the meal plan vegan?") — answer
+    # honestly (it's a general high-protein template) rather than dropping into
+    # the generic weight-loss reply.
+    if any(diet in clean for diet in ["vegan", "vegetarian", "plant based", "plant-based", "gluten", "dairy free", "dairy-free", "halal", "kosher", "keto", "pescatarian", "food allergy", "allergies", "intolerance"]) and any(w in clean for w in ["meal", "plan", "food", "diet", "nutrition", "eat"]):
+        return (
+            "The free lead magnet is a 5-Day High-Protein Australian Meal Plan, so it’s a general template rather than a vegan/gluten-free/specific-diet one.\n\n"
+            "If you eat a particular way, Nick or Lyn can point you at what actually fits rather than me guessing — and on the SPT side there’s proper nutrition support that can be tailored.\n\n"
+            "Want me to flag the meal plan to send through (just drop an email), or line up a quick chat with the team about the food side?"
+        )
+
+    # Sensitive topics take priority over generic routing so a co-mentioned
+    # injury/pregnancy is never silently dropped — e.g. "I'm 45, dodgy knee,
+    # want to get strong but nervous, how much?" must acknowledge the knee, not
+    # just hand back the nervous-beginner reassurance.
+    if mentions_pregnancy(clean):
+        return (
+            "Love that you want to stay active — and smart to check first rather than guess.\n\n"
+            "This one’s genuinely not a Robo-Nick call though. What’s right depends on where you’re at, your history, and what your own healthcare team has said, so I’m not going to hand you a training plan from a chat box.\n\n"
+            "The proper move is a quick chat with Real Nick or Lyn — they’ve coached pregnant and postnatal members before and can scope it with you directly. Want to drop your first name + mobile so they can give you a call, or would you rather email innerwest@outdoorsquad.com.au?"
+        )
+    if mentions_injury(clean):
+        if any(word in clean for word in ["crossfit", "hyrox", "powerlifting", "powerlift", "barbell", "strongman"]) or ("serious" in clean and ("programming" in clean or "program" in clean)):
+            return (
+                "That’s more SPT / 28-Day Kickstarter than a basic group-class trial. You clearly know your way around training, so the useful bit is not random sweat — it’s programming, coaching eyes, and sensible adjustments around that injury.\n\n"
+                "Every injury is individual, so Real Nick/Lyn should scope it rather than Robo-Nick pretending to be a physio. But the setup can include form cues, technique correction, regressions, and a programme that actually progresses.\n\n"
+                "Want the team to treat this as an SPT/Kickstarter enquiry?"
+            )
+        return (
+            "Good thing to flag. An injury doesn’t automatically rule you out, but every injury is individual — best to consult the trainers rather than let a chat widget play physio.\n\n"
+            "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. Trainers can often regress, swap, or avoid movements, but the bot should not decide the modification itself. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, get your health practitioner’s guidance too.\n\n"
+            "What’s the issue: old injury, current pain, or mostly a confidence thing?"
+        )
+
+    # "What's a session like / what do beginners start with" are info questions,
+    # not expressions of nerves — answer with what actually happens rather than
+    # re-firing the nervous-beginner reassurance (which read as a repeat).
+    if any(phrase in clean for phrase in ["what should i expect", "what to expect", "what happens in a", "what happens at a", "what's a session like", "whats a session like", "what is a session like", "what do beginners", "where do beginners", "what should a beginner", "what's the first session", "what is the first session", "how does a session", "what's involved", "whats involved", "what does a session"]):
+        return (
+            "Honestly pretty low-key. You rock up, the coach says hi and works out where you’re at, there’s a warm-up, then the main session — scaled to you (lighter load, simpler version, more rest if you need it).\n\n"
+            "Most people just start with the free trial in a normal group class. Nothing special required, you’re not expected to keep up with anyone, and you bring a drink bottle, towel and a mat.\n\n"
+            + trial_close(session_id)
+        )
+
     if any(phrase in clean for phrase in ["pretty unfit", "very unfit", "super unfit", "really unfit", "nervous", "intimidated", "scared", "cringe", "fit people", "first class", "first session", "beginner", "never trained", "no exercise", "haven't done any exercise", "havent done any exercise", "out of shape", "not fit", "desk 10 hours", "desk job", "body's falling apart", "bodys falling apart"]):
         return (
             "Yes — someone like you can do this. Plenty of people start before they feel ready, and nobody sensible expects you to keep up with the fittest person in the class on day one.\n\n"
@@ -1472,6 +1518,23 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "- 28-Day Kickstarter — $397 for the SPT trial path with more coaching, assessment, programming and nutrition support.\n"
             "- Casual drop-in — $37 if you just need a one-off.\n\n"
             "If you’re not sure which bucket you’re in, the free trial is usually the least silly first step."
+        )
+    if any(phrase in clean for phrase in ["pay for the year", "pay for the whole year", "pay yearly", "pay annually", "annual payment", "annual membership", "yearly membership", "upfront for the year", "pay up front", "pay upfront", "year up front", "prepay", "pay in advance", "pay it all up front"]):
+        return (
+            "Group memberships (Squad Ascent at $51/wk, Squad Student at $25/wk) are weekly-rolling, so there’s no lock-in to prepay — you just stay on while it’s working for you.\n\n"
+            "The one spot annual prepay applies is SPT: pay the year upfront and there’s a 5% saving. That’s the only standing discount — everything else is value-stacked, not discounted.\n\n"
+            "The team can set up whichever suits when you start. Easiest first move is still the free trial. " + trial_close(session_id)
+        )
+    if not mentions_youth(clean) and (
+        any(phrase in clean for phrase in ["timetable", "schedule", "class times", "session times", "what times", "what time are", "what time do", "what time is", "what days", "which days", "when are the classes", "when do classes", "when are classes", "when do the classes", "what's the timetable", "whats the timetable"])
+        or ("saturday" in clean and any(word in clean for word in ["time", "when", "session", "class", "what"]))
+    ):
+        return (
+            "Quick version of the week:\n\n"
+            "- Mornings: 6am most days, plus 9:30am Mon/Wed/Fri at Camperdown.\n"
+            "- Evenings: 6:30pm at Camperdown (Mon/Tue/Wed).\n"
+            "- Saturday: 8am at both Camperdown and Redfern, plus 9:15am Young'N'Strong (youth) at Camperdown.\n\n"
+            "Class types rotate across the week (Strength'N'Tone, HiiT'N'Run, Power'N'Pilates, Yoga Squad, Buff'N'Puff, Core'N'Sore). Easiest way to lock an exact time is the free trial — Camperdown or Redfern?"
         )
     if ("student" in clean or "concession" in clean) and not any(word in clean for word in ["trainer", "coach", "instructor"]):
         return (
@@ -2464,7 +2527,7 @@ def location_choice_followup(location: str, session_id: str) -> str:
     if goal:
         return (
             f"{location} it is.\n\n"
-            f"I’ll keep that location in mind for the {goal} path. The next useful filter is timing: early morning, evening, or Saturday?"
+            "Good pick. The next useful filter is timing: early morning, evening, or Saturday?"
         )
     return (
         f"{location} it is.\n\n"
