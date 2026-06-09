@@ -66,6 +66,31 @@
       color: var(--muted);
       font-size: 0.9rem;
     }
+    .decision {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }
+    .decision a {
+      align-items: center;
+      border-radius: 999px;
+      display: inline-flex;
+      font-size: 0.88rem;
+      font-weight: 700;
+      min-height: 40px;
+      padding: 10px 14px;
+      text-decoration: none;
+    }
+    .decision .approve {
+      background: var(--accent);
+      color: #fff;
+    }
+    .decision .tighten {
+      background: #fff;
+      border: 1px solid rgba(0,0,0,0.14);
+      color: var(--ink);
+    }
     @media (max-width: 640px) {
       .frame { padding: 24px; min-height: 78vh; }
       .hint { left: 24px; right: 24px; bottom: 92px; }
@@ -74,10 +99,14 @@
 </head>
 <body>
   <main class="frame">
-    <div class="tag">Embedded Widget Preview</div>
+    <div class="tag">Embedded Widget Review</div>
     <h1>Outdoor Squad</h1>
-    <p>This page is only here to preview the embeddable chat box. The actual widget sits at the bottom-right, the same way it would on Nicholas’s website.</p>
-    <div class="hint">Open the chat bubble in the bottom-right corner.</div>
+    <p>Open the chat bubble and test it like a real beginner, parent, or returning member. The next useful decision is not more broad feedback: choose A for one low-risk placement surface, or B to name the single path that must be fixed first. Lead-summary inbox and booking-link cleanup come only after A.</p>
+    <div class="decision" aria-label="Outdoor Squad first placement decision">
+      <a class="approve" href="mailto:jacowilmjr@agentmail.to?subject=Outdoor%20Squad%20first%20placement%20-%20A&body=A%20-%20place%20it%20here%20first%3A%0A%0APlacement%20surface%20%28hidden%20test%20link%20/%20website%20page%20/%20Instagram%20bio%20/%20Linktree%20/%20QR%20post%29%3A%0AAny%20one%20rule%20to%20double-check%20before%20linking%3A%0A%0AIf%20this%20is%20the%20right%20surface%2C%20Jacobo%20can%20ask%20for%20lead-summary%20email%20and%20booking%20URL%20correction%20after%20this.%0A">A - choose first placement</a>
+      <a class="tighten" href="mailto:jacowilmjr@agentmail.to?subject=Outdoor%20Squad%20first%20placement%20-%20B&body=B%20-%20not%20yet.%20Tighten%20this%20one%20path%20first%3A%0A%0AVisitor%20type%20or%20exact%20question%3A%0AWhat%20felt%20off%3A%0AWhat%20the%20answer%20should%20protect%20or%20say%20instead%3A%0A">B - fix one path first</a>
+    </div>
+    <div class="hint">A asks only for the first placement surface. Lead-summary email and booking/free-trial URL are step two.</div>
   </main>
   <script src="/widget.js"></script>
 </body>

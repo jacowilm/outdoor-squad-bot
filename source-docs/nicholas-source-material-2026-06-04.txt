@@ -23,7 +23,7 @@ Bot behaviour implication:
 
 ## Public team / coach bios pulled from outdoorsquad.com.au/our-team
 
-Nicholas pointed to coach bios on the Outdoor Squad website and named Rory, Trinity, Eddie, and Fran. The current public Our Team page includes Nick, Eddie, Rory, Zack, Gregory, Paul, and Fran. Trinity did not appear on the current public page during this pass, so do not invent a Trinity bio unless Nicholas sends one.
+Nicholas pointed to coach bios on the Outdoor Squad website and named Rory, Trinity, Eddie, and Fran. The current public Our Team page includes Nick, Eddie, Rory, Zack, Gregory, Paul, and Fran. Trinity did not appear on the current public page during this pass. On 2026-06-05, Nicholas added that Trinity is into CrossFit, weightlifting, gymnastics, and yoga; use only those confirmed interests, and do not invent a fuller Trinity bio unless Nicholas/Lyn send one.
 
 ### Nick Holland
 
@@ -72,3 +72,13 @@ Gregory is a bootcamp instructor, fitness lover and certified massage therapist 
 ### Paul Bulatao
 
 Paul Bulatao is an experienced fitness professional with 20+ years in the industry, qualified exercise physiologist and educator. His background includes Head of School, Training Manager, Instructional Designer, Curriculum Developer, Fitness Consultant, Lecturer, Master Trainer and Assessor. He specialises in education and trainer development, has presented at FILEX and FITEX, and leads group fitness classes focused on technique, effective formats and engaging delivery.
+
+## Lyn updated FAQ + member review docs — 2026-06-04 18:54 UTC
+
+Lyn sent two public Google Docs on 2026-06-04:
+- Updated bot FAQ: source-docs/lyn-updated-faq-2026-06-04.txt
+- Member reviews / brand voice guide: source-docs/member-reviews-brand-voice-2026-06-04.txt
+
+Family-discount rule from Lyn is authoritative: do not suggest reduced membership prices, percentage discounts, or "$X off" family offers. Value-stack instead: for families training together, mention possible bonuses such as extra sessions, movement screens, or helpful add-ons after a chat.
+
+Review proof can use exact snippets from the member review source when relevant, without inventing claims. Safe examples now available: always different/friendly welcoming group; technique-focused coaching from Nick; strength and confidence rebuilt; welcoming/flexible community; busy parent/toddler variety; outdoor alternative to busy gyms.

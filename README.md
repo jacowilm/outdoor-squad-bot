@@ -71,9 +71,31 @@ OUTDOOR_SQUAD_ADMIN_PASSWORD=strong_unique_password
 OUTDOOR_SQUAD_TRIAL_LINK=https://momence.com/The-Outdoor-Squad-/membership/Squad-Intro-Class/263360
 OUTDOOR_SQUAD_HUMAN_EMAIL=innerwest@outdoorsquad.com.au
 OUTDOOR_SQUAD_HUMAN_PHONE=0402 439 361
+OUTDOOR_SQUAD_LEAD_SUMMARY_EMAIL_TO=innerwest@outdoorsquad.com.au
+OUTDOOR_SQUAD_SMTP_HOST=smtp.your-provider.com
+OUTDOOR_SQUAD_SMTP_PORT=587
+OUTDOOR_SQUAD_SMTP_USER=notifications@outdoorsquad.com.au
+OUTDOOR_SQUAD_SMTP_PASSWORD=provider_app_password
+OUTDOOR_SQUAD_SMTP_FROM=notifications@outdoorsquad.com.au
+OUTDOOR_SQUAD_LEAD_SUMMARY_PHONE_TO=+61402439361
+OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/...
+OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_SECRET=shared_random_secret
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
+
+## Lead summary delivery setup
+
+Captured leads always appear in the protected `/admin` dashboard and `/api/leads.csv`. For live handoff, configure at least one push destination before public install:
+
+- Email summaries: set `OUTDOOR_SQUAD_LEAD_SUMMARY_EMAIL_TO` plus SMTP settings. The value can be one inbox or a comma-separated list.
+- Phone summaries: set `OUTDOOR_SQUAD_LEAD_SUMMARY_PHONE_TO` plus `OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_URL`. The webhook receives JSON with `destination_phone`, `summary_text`, and structured lead fields, so it can be wired through Make/Zapier/Twilio/WhatsApp/SMS without changing the bot.
+
+Use Nicholas's existing Outdoor Squad inbox and mobile for the first install: `innerwest@outdoorsquad.com.au` and `+61402439361`. Email summaries still need SMTP credentials. Phone summaries still need a webhook wired through Make/Zapier/Twilio/WhatsApp/SMS. Do not put webhook secrets or SMTP passwords in email/Discord; set them directly in the host environment.
+
+## Meal plan delivery setup
+
+The source docs define the Free 5-Day High-Protein Australian Meal Plan as an email lead magnet, but the actual downloadable file/link and email automation endpoint are not in this repo. Until those are provided, the bot must not claim it sent the meal plan. It should capture the visitor's email and let Nicholas/Lyn/the configured lead-summary flow handle fulfilment.
 
 ## Preflight before client demo or handoff
 - `/api/health` must report `ai_configured: true`.
@@ -82,6 +104,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 - The host should use `OUTDOOR_SQUAD_OPENAI_API_KEY` for the preferred production key, with `OUTDOOR_SQUAD_GEMINI_API_KEY` available as a real secondary AI provider if Nicholas wants provider fallback. `OPENAI_API_KEY` and `GEMINI_API_KEY` are local/dev fallbacks only. For final handoff these must be Nicholas/The Outdoor Squad-owned billing, not Jacobo-owned billing.
 - `/api/health` should also show `api_key_sources` containing a Nicholas-owned provider key, `admin_configured: true`, and `trial_link_configured: true` before a client-ready install.
 - `/api/health` should report `storage_backend: "supabase"` before a client-ready install. Local files are fallback only.
+- `/api/health` must report `lead_summary_delivery_configured: true` before final handoff. `handoff_ready` stays false until at least one real lead-summary delivery path is configured.
 - Run `python3.11 run_review_build_smoke.py` before sending a progress update. It checks beginner/nervous, 28-Day Kickstarter/SPT, YTP/teen, pricing, injury/limitation, oddball/skeptical, and contact-detail capture, then restores QA data files so the owner dashboard stays clean.
 - Any AI-path response that says the backend cannot be reached means the demo is not ready to show, even if the local contact-detail handler still works.
 - 2026-05-17 evening update: the backend now tries configured AI providers in order: OpenAI first, then Gemini. This is still the same file-grounded Robo-Nick agent path; it is not the deterministic demo fallback.

@@ -63,6 +63,61 @@
             margin-top: 12px;
         }
 
+        .review-focus {
+            background: #ffffff;
+            border: 1px solid var(--squad-border);
+            border-left: 5px solid var(--squad-orange);
+            border-radius: 8px;
+            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.08);
+            color: var(--squad-ink);
+            margin: 26px auto 0;
+            max-width: 620px;
+            padding: 14px 16px;
+            text-align: left;
+        }
+
+        .review-focus strong {
+            display: block;
+            font-size: 0.92rem;
+            margin-bottom: 4px;
+        }
+
+        .review-focus p {
+            color: var(--squad-muted);
+            font-size: 0.9rem;
+            line-height: 1.45;
+            margin: 0;
+        }
+
+        .decision-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .decision-actions a {
+            border-radius: 999px;
+            display: inline-flex;
+            font-size: 0.86rem;
+            font-weight: 700;
+            justify-content: center;
+            min-height: 38px;
+            padding: 10px 14px;
+            text-decoration: none;
+        }
+
+        .decision-actions .approve {
+            background: var(--squad-orange);
+            color: #ffffff;
+        }
+
+        .decision-actions .tighten {
+            background: #ffffff;
+            border: 1px solid var(--squad-border);
+            color: var(--squad-black);
+        }
+
         .demo-container {
             max-width: 480px;
             width: 100%;
@@ -242,8 +297,16 @@
 <body>
     <div class="demo-header">
         <h1>The Outdoor Squad</h1>
-        <p>Robo-Nick review chat</p>
+        <p>Robo-Nick review build</p>
         <div class="demo-badge">Outdoor Squad enquiry assistant</div>
+        <div class="review-focus">
+            <strong>First-placement decision for Nicholas and Lyn</strong>
+            <p>The coach/review/value-stack/injury updates are in. Please do not re-review endlessly: A chooses one low-risk placement surface; B names the single path that must be fixed before linking. Lead-summary inbox and booking-link cleanup come only after A.</p>
+            <div class="decision-actions" aria-label="Outdoor Squad first placement decision">
+                <a class="approve" href="mailto:jacowilmjr@agentmail.to?subject=Outdoor%20Squad%20first%20placement%20-%20A&body=A%20-%20place%20it%20here%20first%3A%0A%0APlacement%20surface%20%28hidden%20test%20link%20/%20website%20page%20/%20Instagram%20bio%20/%20Linktree%20/%20QR%20post%29%3A%0AAny%20one%20rule%20to%20double-check%20before%20linking%3A%0A%0AIf%20this%20is%20the%20right%20surface%2C%20Jacobo%20can%20ask%20for%20lead-summary%20email%20and%20booking%20URL%20correction%20after%20this.%0A">A - choose first placement</a>
+                <a class="tighten" href="mailto:jacowilmjr@agentmail.to?subject=Outdoor%20Squad%20first%20placement%20-%20B&body=B%20-%20not%20yet.%20Tighten%20this%20one%20path%20first%3A%0A%0AVisitor%20type%20or%20exact%20question%3A%0AWhat%20felt%20off%3A%0AWhat%20the%20answer%20should%20protect%20or%20say%20instead%3A%0A">B - fix one path first</a>
+            </div>
+        </div>
     </div>
 
     <div class="demo-container">
@@ -259,7 +322,7 @@
             <div class="chat-messages" id="messages">
                 <div class="message bot">Hey, welcome in.
 
-Ask me about classes, prices, injuries, or whether this would suit you.</div>
+Try this like a real beginner enquiry: classes, prices, injuries, whether it suits you, or how the free intro works.</div>
             </div>
 
             <div class="quick-replies" id="quickReplies">
