@@ -223,25 +223,28 @@ _rate_buckets: dict[str, list[float]] = {}
 
 
 def client_ip(request: Request) -> str:
-    """Real client IP behind Render's proxy, resistant to X-Forwarded-For spoofing.
+    """True client IP for rate limiting.
 
-    Render APPENDS the true connecting IP to any client-supplied X-Forwarded-For,
-    so the header is `<attacker-spoofable...>, <real-client>[, <render-internal>]`.
-    Taking the FIRST entry (the old behaviour) let an attacker rotate a fake IP and
-    bypass the rate limiter entirely. We instead take the RIGHTMOST PUBLIC IP — the
-    address Render's proxy actually observed — skipping private/internal hops.
+    The service runs behind Cloudflare (Render fronts services with it), which sets
+    `cf-connecting-ip` to the real client and REJECTS (HTTP 403, error 1000) any
+    request that tries to supply its own — so it is unspoofable and authoritative
+    (verified live 2026-06-09). Everything else in the chain is either
+    attacker-controllable (the leftmost X-Forwarded-For entry, which Cloudflare
+    appends to, not strips) or a ROTATING Cloudflare/Render hop, so keying on XFF
+    position is wrong — it either lets an attacker rotate a fake IP to bypass the
+    limiter, or follows a per-request edge IP that never rate-limits anyone.
     """
-    xff = request.headers.get("x-forwarded-for", "")
-    parts = [p.strip() for p in xff.split(",") if p.strip()]
-    for candidate in reversed(parts):
+    cf = request.headers.get("cf-connecting-ip", "").strip()
+    if cf:
         try:
-            addr = ipaddress.ip_address(candidate)
+            ipaddress.ip_address(cf)
+            return cf[:64]
         except ValueError:
-            continue
-        if not (addr.is_private or addr.is_loopback or addr.is_link_local):
-            return candidate[:64]
-    if parts:
-        return parts[-1][:64]            # all private/invalid — still a stable key
+            pass
+    # Best-effort fallback for any non-Cloudflare deployment.
+    first = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if first:
+        return first[:64]
     return (request.client.host if request.client else "unknown")[:64]
 
 
@@ -2513,21 +2516,6 @@ async def health():
         "lead_summary_webhook_configured": bool(LEAD_SUMMARY_WEBHOOK_URL),
         "smtp_configured": bool(SMTP_HOST and SMTP_FROM),
         "source_chunks": len(SOURCE_CHUNKS),
-    })
-
-
-@app.get("/api/_whoami")
-async def _whoami(request: Request, _: str = Depends(require_admin)):
-    """TEMPORARY admin-gated diagnostic to see Render's real forwarding chain so
-    the rate-limiter keys on the true client IP. Remove after diagnosis."""
-    fwd = {k: v for k, v in request.headers.items()
-           if "forward" in k.lower() or k.lower() in
-           ("x-real-ip", "cf-connecting-ip", "true-client-ip", "fly-client-ip", "x-client-ip")}
-    return JSONResponse({
-        "x_forwarded_for": request.headers.get("x-forwarded-for", ""),
-        "forwarding_headers": fwd,
-        "computed_client_ip": client_ip(request),
-        "peer": request.client.host if request.client else None,
     })
 
 
