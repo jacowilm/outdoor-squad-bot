@@ -822,7 +822,11 @@ def clean_agent_reply(reply: str | None) -> str:
     # the "random full stop before response" Nicholas flagged (2026-06-09 Q6).
     text = re.sub(r"^[\s.,;:!?\u2013\u2014]+", "", text)
     if text and text[0].islower():
-        text = text[0].upper() + text[1:]
+        # Don't capitalise a leading email/URL ("innerwest@..." must not become
+        # "Innerwest@...") \u2014 only sentence-leading prose.
+        first_token = text.split(None, 1)[0]
+        if "@" not in first_token and "://" not in first_token and not first_token.lower().startswith("www."):
+            text = text[0].upper() + text[1:]
     text = re.sub(r"^(great|good) question[!.,]?\s*", "", text, flags=re.IGNORECASE)
     text = text.replace("•", "\n- ")
     # Normalise standalone "*" or "-" bullet markers to "- ", but DO NOT touch
