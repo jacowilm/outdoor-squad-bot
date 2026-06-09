@@ -2516,6 +2516,21 @@ async def health():
     })
 
 
+@app.get("/api/_whoami")
+async def _whoami(request: Request, _: str = Depends(require_admin)):
+    """TEMPORARY admin-gated diagnostic to see Render's real forwarding chain so
+    the rate-limiter keys on the true client IP. Remove after diagnosis."""
+    fwd = {k: v for k, v in request.headers.items()
+           if "forward" in k.lower() or k.lower() in
+           ("x-real-ip", "cf-connecting-ip", "true-client-ip", "fly-client-ip", "x-client-ip")}
+    return JSONResponse({
+        "x_forwarded_for": request.headers.get("x-forwarded-for", ""),
+        "forwarding_headers": fwd,
+        "computed_client_ip": client_ip(request),
+        "peer": request.client.host if request.client else None,
+    })
+
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_demo():
     """Serve the demo chat widget page"""
