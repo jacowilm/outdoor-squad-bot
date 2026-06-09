@@ -1457,7 +1457,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # "What's a session like / what do beginners start with" are info questions,
     # not expressions of nerves — answer with what actually happens rather than
     # re-firing the nervous-beginner reassurance (which read as a repeat).
-    if any(phrase in clean for phrase in ["what should i expect", "what to expect", "what happens in a", "what happens at a", "what's a session like", "whats a session like", "what is a session like", "what do beginners", "where do beginners", "what should a beginner", "what's the first session", "what is the first session", "how does a session", "what's involved", "whats involved", "what does a session"]):
+    if any(phrase in clean for phrase in ["what should i expect", "what to expect", "what happens in a", "what happens at a", "what's a session like", "whats a session like", "what is a session like", "what do beginners", "where do beginners", "what should a beginner", "what's the first session", "what is the first session", "how does a session", "what does a session"]) and not any(w in clean for w in ["spt", "kickstarter", "1:1", "personal training", "pilates", "yoga", "hyrox"]):
         return (
             "Honestly pretty low-key. You rock up, the coach says hi and works out where you’re at, there’s a warm-up, then the main session — scaled to you (lighter load, simpler version, more rest if you need it).\n\n"
             "Most people just start with the free trial in a normal group class. Nothing special required, you’re not expected to keep up with anyone, and you bring a drink bottle, towel and a mat.\n\n"
@@ -1525,6 +1525,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "The one spot annual prepay applies is SPT: pay the year upfront and there’s a 5% saving. That’s the only standing discount — everything else is value-stacked, not discounted.\n\n"
             "The team can set up whichever suits when you start. Easiest first move is still the free trial. " + trial_close(session_id)
         )
+    if any(word in clean for word in ["pause", "freeze", "suspend", "on hold", "put it on hold"]) and any(w in clean for w in ["member", "membership", "holiday", "holidays", "break", "away", "travel", "travelling", "overseas", "for a while", "couple of weeks", "few weeks", "a month"]):
+        return (
+            "Yep — weekly memberships (Squad Ascent, Squad Student, YTP) can be paused: up to 8 weeks per calendar year, in minimum 1-week blocks, just requested in advance.\n\n"
+            "So a holiday or a busy stretch doesn’t mean cancelling — you hold it and pick back up. SPT and the exact dates are best set up directly with Real Nick or Lyn.\n\n"
+            "Want me to flag a pause to the team, or were you still weighing up joining?"
+        )
     if not mentions_youth(clean) and (
         any(phrase in clean for phrase in ["timetable", "schedule", "class times", "session times", "what times", "what time are", "what time do", "what time is", "what days", "which days", "when are the classes", "when do classes", "when are classes", "when do the classes", "what's the timetable", "whats the timetable"])
         or ("saturday" in clean and any(word in clean for word in ["time", "when", "session", "class", "what"]))
@@ -1548,6 +1554,22 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "It’s $397 for 28 days: SPT coaching, a movement screen, personalised warm-up, nutrition plan, initial assessment, final assessment, and unlimited group classes for the 28 days. The standard SPT trial shape is 8 SPT sessions if you’re doing the 2x/week path.\n\n"
             "It’s best for people who want more coaching and proper programming before committing to ongoing SPT."
         )
+    # Specific class questions — answer from the real class list so the bot never
+    # denies a class that exists (the LLM said Yoga Squad "isn't in the schedule"
+    # because RAG didn't surface it). Outdoor Hyrox is intentionally left to the
+    # serious-programming branch above.
+    class_blurbs = (
+        (("yoga squad", "yoga"), "Yoga Squad is the mobility, balance and breathwork class — mindful movement and flexibility with a bit of strength. The recovery bit most people skip, and easy on the joints."),
+        (("power'n'pilates", "power n pilates", "pilates"), "Power'N'Pilates is dynamic movement, breathing, posture, core and control — strength with a Pilates flavour, gentle on the joints. Good if you want to move well, not just get smashed."),
+        (("buff'n'puff", "buff n puff", "buffnpuff"), "Buff'N'Puff is the hybrid, Hyrox-style class — resistance plus cardio in one hit, so you get strength and conditioning together."),
+        (("core'n'sore", "core n sore"), "Core'N'Sore is core stability and endurance — weighted and bodyweight work, a high-heart-rate finisher and some animal flow. Exactly as friendly as the name suggests."),
+        (("hiit'n'run", "hiit n run", "hiit"), "HiiT'N'Run is high-intensity intervals for heart and lung capacity — circuits, sprints, speed and agility, plus hill and stair work."),
+        (("strength'n'tone", "strength n tone"), "Strength'N'Tone is progressive resistance training for functional strength and power, using power bags, kettlebells, dumbbells, TRX, medicine balls and bodyweight."),
+    )
+    class_question = any(p in clean for p in ["class", "session", "tell me about", "what's", "whats", "what is", "explain", "sounds", "do you do", "do you have", "interested in"])
+    for aliases, blurb in class_blurbs:
+        if aliases[0] in clean or (class_question and any(a in clean for a in aliases)):
+            return blurb + "\n\nThey rotate through the week, so the easiest way to try one is the free trial. " + trial_close(session_id)
     if any(phrase in clean for phrase in ["52", "stay strong as i age", "strong as i age", "ageing", "aging", "longevity", "as i age"]):
         return (
             "Yep. That’s a very Outdoor Squad reason to train.\n\n"
@@ -1556,6 +1578,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "- Power'N'Pilates — strength + control, easier on the joints, good for keeping moving well as you age.\n"
             "- Yoga Squad — mobility, balance, and the bit most people skip.\n\n"
             "A free trial is the sensible first step. " + trial_close(session_id)
+        )
+    if any(phrase in clean for phrase in ["referral", "refer a friend", "refer a mate", "refer my", "referring", "bring friends", "bring mates", "bring people", "for bringing", "if i bring someone", "if i refer", "refer someone"]):
+        return (
+            "Mates are very welcome — bring them along to a free trial and train together, that part’s easy.\n\n"
+            "We don’t run a cash-back or discount referral scheme, though. Where it lands is value-stacking: when people train together the team can add useful bonuses (extra sessions, movement screens, that sort of thing) after a quick chat — not money off.\n\n"
+            "Want me to flag that you’d like to bring someone along to a trial?"
         )
     family_pricing_request = "family" in clean and (
         any(phrase in clean for phrase in ["discount", "deal", "rate", "price", "membership", "cheaper", "free month"])
@@ -2703,7 +2731,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "Want me to flag SPT or PT so Real Nick or Lyn can scope your goals on a quick call? Drop your first name + mobile and they’ll take it from here."
         )
 
-    if any(word in text for word in ["price", "cost", "how much", "$", "membership", "cancel", "pause", "contract"]):
+    if any(word in text for word in ["price", "cost", "how much", "$", "membership", "contract"]):
         return (
             "Quick version: the main group membership is Squad Ascent at $51/wk for unlimited group classes.\n\n"
             "There’s also a free 1-Day Trial Pass, $37 casual drop-ins, and SPT from $125/wk if you want more personalised coaching.\n\n"
