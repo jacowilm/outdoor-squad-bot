@@ -1021,6 +1021,15 @@ def guard_operational_claims(text: str) -> str:
     text = re.sub(r"\[\s*(?:your[\s_-]*)?e[\s-]?mail(?:\s*address)?\s*\]|\{\s*(?:human_)?email\s*\}", HUMAN_EMAIL, text, flags=re.IGNORECASE)
     text = re.sub(r"\[\s*(?:your[\s_-]*)?(?:phone|mobile)(?:\s*number)?\s*\]|\{\s*(?:human_)?phone\s*\}", HUMAN_PHONE, text, flags=re.IGNORECASE)
     text = re.sub(r"\[\s*(?:your[\s_-]*|first[\s_-]*)?name\s*\]|\{\s*name\s*\}", "there", text, flags=re.IGNORECASE)
+    # Never imply price negotiability or discounts — the offer architecture forbids
+    # it (Nicholas flagged "pricing is flexible depending on your budget" 2026-06-10).
+    text = re.sub(r"[^.!?\n]*\b(?:pricing|prices?)\b[^.!?\n]*\bflexib\w+[^.!?\n]*[.!?]",
+                  " There are different membership levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^.!?\n]*\b(?:flexibilit\w*|negotiat\w*|wiggle room|work something out|cut you a deal|do you a deal)\b[^.!?\n]*[.!?]",
+                  " We don’t haggle on price, but there are different levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^.!?\n]*depending on (?:your|the) budget[^.!?\n]*[.!?]",
+                  " There are different levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
+    text = re.sub(r"[ \t]{2,}", " ", text).replace(" .", ".")
     lowered = text.lower()
     text = re.sub(
         r"\b(?:want me to|should I|can I|I can)\s+book you\b[^?]*\?",
@@ -1624,7 +1633,9 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Outdoor Squad is coached outdoor group training in Inner West parks — strength, conditioning and real variety across the week, in small enough groups that the coach actually knows your name. Less treadmill-and-mirrors, more fresh air, proper coaching, and a crew that notices when you don’t show up.\n\n"
             "Easiest way to feel the difference is a free trial. Camperdown or Redfern?"
         )
-    if any(phrase in clean for phrase in ["what makes you different", "why are you different", "different from other gyms", "different to other gyms", "why outdoor squad", "why should i choose"]):
+    if any(phrase in clean for phrase in ["what makes you different", "why are you different", "what sets you apart", "what's different about", "whats different about", "why choose you", "why outdoor squad", "why should i choose"]) or (
+        "different" in clean and any(w in clean for w in ["what makes", "actually makes", "really makes", "makes you", "sets you apart", "from other", "to other", "from the other", "than the other", "stand out", "why you"])
+    ):
         return (
             "Main difference: it’s coached training, not just access to equipment and your own disappearing motivation.\n\n"
             "The group sessions still get cues, modifications and attention, and the Squad structure makes consistency easier because people actually know when you vanish. SPT adds bespoke programming and assessments if you want the higher-touch lane.\n\n"
@@ -1644,11 +1655,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "SPT is probably the cleanest fit: max 4 people, bespoke programming, regular assessments, nutrition support, form cues, technique correction, and enough coach attention to progress you properly. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
             "Are you chasing strength progression, conditioning, or a bit of both?"
         )
-    if any(phrase in clean for phrase in ["partner and i", "my partner and i", "partner is", "on a budget", "tight budget", "pricing flexible", "price flexible", "flexible pricing"]):
+    if any(phrase in clean for phrase in ["partner and i", "my partner and i", "partner is", "run it past my", "run it past the", "run it by my", "ask my husband", "ask my wife", "chat to my husband", "chat to my wife", "talk to my husband", "talk to my wife", "check with my husband", "check with my wife", "my husband", "my wife", "on a budget", "tight budget", "money's tight", "money is tight", "bit tight", "can't really afford", "cant afford", "can't afford", "afford it", "pricing flexible", "price flexible", "flexible pricing"]):
         return (
-            "There are different membership levels depending on how much coaching you want — but Robo-Nick shouldn’t imply haggling or make up discounts.\n\n"
-            "Group training starts with Squad Ascent from $51/wk for unlimited coached sessions. SPT is the higher-touch option if you want more personal attention, bespoke programming, regular assessments, and a four-person max.\n\n"
-            "Best low-risk move for you both is the free trial so you can test the coaching before choosing a level."
+            "Totally fair — worth talking through with them, and the trial’s free either way so you can both feel it out before any money chat.\n\n"
+            "We don’t haggle or run random discounts, but there are different levels depending on how much coaching you want: Squad Ascent at $51/wk for unlimited coached group sessions, a $25/wk Squad Student rate if either of you is a verified student, and SPT if you want the higher-touch lane (bespoke programming, regular assessments, four-person max).\n\n"
+            "Lowest-risk move for you both is the free trial — test the coaching before anyone commits to a level."
         )
     if any(phrase in clean for phrase in ["just generic", "generic class", "generic classes", "pay attention", "coach actually", "coach pay", "modifications", "cues"]):
         return (
@@ -1733,6 +1744,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "We don’t run a cash-back or discount referral scheme, though. Where it lands is value-stacking: when people train together the team can add useful bonuses (extra sessions, movement screens, that sort of thing) after a quick chat — not money off.\n\n"
             "Want me to flag that you’d like to bring someone along to a trial?"
         )
+    if any(phrase in clean for phrase in ["new member offer", "new member offers", "member offer", "joining offer", "sign-up offer", "signup offer", "any offers", "any offer", "current offers", "specials", "any specials", "promotion", "promotions", "promo ", "promos", "running this month", "anything running", "anything on this month", "deals on", "current deals", "offers running"]):
+        return (
+            "The standing offer is the 1-Day Free Trial Pass — one coached session, no cost, no catch. That’s the one that matters.\n\n"
+            "After that the doors are simple: Squad Ascent at $51/wk unlimited (or $25/wk Squad Student if you’re verified), the 28-Day Kickstarter at $397 total for the SPT trial, and $37 casual drop-ins. We don’t run random promos or discounts — the value’s in the coaching, not a sticker price.\n\n"
+            "Best move is to use the free trial and decide from the actual session."
+        )
     family_pricing_request = "family" in clean and (
         any(phrase in clean for phrase in ["discount", "deal", "rate", "price", "membership", "cheaper", "free month"])
         or "%" in clean
@@ -1768,7 +1785,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. Trainers can often regress, swap, or avoid movements, but the bot should not decide the modification itself. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, get your health practitioner’s guidance too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
-    if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but", "not ready to commit", "researching", "just researching", "looking at options", "looking at my options", "checking options"]):
+    if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but", "not ready to commit", "researching", "just researching", "looking at options", "looking at my options", "checking options", "window-shopping", "window shopping", "comparing options", "comparing a few", "comparing my options", "weighing up", "weighing it up", "shopping around"]):
         return (
             "All good — no pressure.\n\n"
             "Worth mentioning though: the trial is one session, free, no commitment. The trial is the research — it gives you better information than another website ever will. Crom weeps when a free trial goes to waste.\n\n"
@@ -3276,9 +3293,15 @@ REDACT_LANDLINE_RE = re.compile(r"\b(?:\+?61[\s-]?|0)[2378][\s-]?\d{4}[\s-]?\d{4
 
 
 def redact_contact(text: str) -> str:
-    text = EMAIL_RE.sub('[email]', text)
-    text = PHONE_RE.sub('[phone]', text)
-    text = REDACT_LANDLINE_RE.sub('[phone]', text)
+    # Redact VISITOR-shared contact details from stored logs, but keep the
+    # business's own public email/phone visible — otherwise the bot's normal
+    # "email innerwest@outdoorsquad.com.au" handoff shows as "[email]" in the
+    # transcript and reads like a placeholder leak (Nicholas's reviewer flagged
+    # exactly that in the pregnancy reply, 2026-06-10).
+    biz_phone = re.sub(r"\D", "", HUMAN_PHONE or "")
+    text = EMAIL_RE.sub(lambda m: m.group(0) if m.group(0).lower() == (HUMAN_EMAIL or "").lower() else "[email]", text)
+    text = PHONE_RE.sub(lambda m: m.group(0) if biz_phone and re.sub(r"\D", "", m.group(0)) == biz_phone else "[phone]", text)
+    text = REDACT_LANDLINE_RE.sub("[phone]", text)
     return text
 
 
