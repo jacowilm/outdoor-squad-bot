@@ -637,6 +637,7 @@ Conversation rules:
 - Do not paste links/phone/email unless the user is ready to book, asks for contact details, or shares contact details.
 - Never claim an email, SMS, reminder, booking confirmation, meal plan delivery, or notification was sent unless this app actually did it.
 - If a visitor writes in another language, reply in English (a one-word greeting in their language is fine). Never claim Nick, Lyn, or the team speak that language — you don't know. Offer email (innerwest@outdoorsquad.com.au) so they can sort language directly.
+- There are NO referral bonuses, guest promos, or discounts to "keep an eye out for" — never hint that any exist. Guests and friends use the free 1-Day Trial Pass. Families or groups training together may get value-stacked bonuses (extra sessions, movement screens) after a chat with the team — never money off.
 - This app does not send meal plans, SMS reminders, booking confirmations, or notifications by itself. When relevant, say the team can follow up or that you can point the user in the right direction.
 - Make replies easy to scan on a phone
 - Prefer this structure when it fits: quick reaction, direct answer, then one simple next step or question
@@ -1735,6 +1736,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Do you want general routine, or that more personal SPT level of detail?"
         )
     if any(phrase in clean for phrase in ["roughly what", "set me back", "what will it set me back", "how much", "cost", "price", "pricing"]):
+        # A cost question about the kids should get YTP pricing, not the adult
+        # ladder (Nicholas-style miss: "two kids, 11 and 13 — cost for both?").
+        if mentions_youth(clean):
+            return (
+                "For the kids it's the Youth Training Program: $25/wk per kid, ages 10–17, Saturday 9:15am at Camperdown with qualified WWCC-checked coaches.\n\n"
+                "No sibling discounts (so two kids is $50/wk all up), but for families training together the team can sometimes value-stack extras after a quick chat.\n\n"
+                "Want me to flag a first session for them?"
+            )
         return (
             "Roughly, the main doors are:\n\n"
             "- Free trial — $0, one class to see if the Squad fits.\n"
@@ -1760,9 +1769,18 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # letting the LLM invent a "minimum commitment period" or say "I don't have it".
     if any(phrase in clean for phrase in ["lock-in", "lock in", "locked in", "lockin", "contract", "minimum commitment", "minimum term", "minimum contract", "tied in", "tied into", "how do i cancel", "how to cancel", "cancel my membership", "cancellation", "cancel anytime", "notice period", "cancel my", "quit my membership", "end my membership", "get out of it"]):
         return (
-            "No lock-in contract. Squad Ascent, Squad Student and YTP are weekly rolling — you just give one week's notice to cancel, and you can pause instead if it's only a holiday or busy stretch.\n\n"
-            "For class bookings it's 24 hours' notice to cancel a spot, and SPT terms are best confirmed with Real Nick or Lyn directly.\n\n"
-            "Anything else you want to know before trying a session?"
+            "Group memberships (Squad Ascent, Squad Student, YTP) have no lock-in — weekly rolling, one week's notice to cancel, and you can pause instead if it's just a holiday (up to 8 weeks a year).\n\n"
+            "SPT is the one exception: 12-week minimum term, then fortnight-to-fortnight rolling.\n\n"
+            "Anything else you want to check before trying a session?"
+        )
+    # Missed / no-show class policy — KB-grounded (the SPT 24h/makeup rule is
+    # SPT-specific; group memberships are unlimited).
+    if any(phrase in clean for phrase in ["miss my class", "miss a class", "missed my class", "missed a class", "miss my booked", "missed my booked", "no-show", "no show", "can't make my class", "cant make my class", "can't make it to my class", "cant make it to my class", "makeup session", "make-up session", "make up a class", "make up the class", "reschedule my class", "reschedule a class", "miss a session", "missed a session", "miss my session", "missed my session"]):
+        return (
+            "Depends which lane you're in:\n\n"
+            "- Group classes (Squad Ascent / Student): they're unlimited, so a missed class just means you catch the next one.\n"
+            "- SPT sessions: 24 hours' notice to cancel, one makeup session a month (use it or lose it), and no makeups for no-shows.\n\n"
+            "If it's about a specific booking, the team can sort it directly — want me to flag it?"
         )
     # Group class size — KB has no fixed number, so don't let the LLM invent one
     # (it was quoting "15-20 people"). Answer qualitatively + SPT's real cap of 4.
@@ -1826,11 +1844,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "- Flow'N'Flex — mobility, balance, and the bit most people skip.\n\n"
             "A free trial is the sensible first step. " + trial_close(session_id)
         )
-    if any(phrase in clean for phrase in ["referral", "refer a friend", "refer a mate", "refer my", "referring", "bring friends", "bring mates", "bring people", "for bringing", "if i bring someone", "if i refer", "refer someone"]):
+    if any(phrase in clean for phrase in ["referral", "refer a friend", "refer a mate", "refer my", "referring", "bring friends", "bring mates", "bring people", "for bringing", "if i bring someone", "if i refer", "refer someone", "bring a guest", "bring my guest", "bring a friend", "bring my friend", "bring a mate", "bring my mate", "bring someone", "guest pass", "plus one", "plus-one"]):
         return (
-            "Mates are very welcome — bring them along to a free trial and train together, that part’s easy.\n\n"
+            "Mates are very welcome — your guest can grab the free 1-Day Trial Pass and train alongside you, that part’s easy.\n\n"
             "We don’t run a cash-back or discount referral scheme, though. Where it lands is value-stacking: when people train together the team can add useful bonuses (extra sessions, movement screens, that sort of thing) after a quick chat — not money off.\n\n"
-            "Want me to flag that you’d like to bring someone along to a trial?"
+            "Want me to flag that you’d like to bring someone along?"
         )
     # Corporate / private-group one-offs (office teams, bucks/hens, birthdays) —
     # a real lead, but not a product Robo-Nick can quote. Hand off, don't improvise.
@@ -1862,6 +1880,15 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "No free-month magic from Robo-Nick, sorry — we don't do random discounts.\n\n"
             "The honest answer is value over haggling: free trial first, $51/wk for unlimited coached group classes (or $25/wk Squad Student if you're verified), and SPT if you want the higher-touch path. SPT also has a 5% annual prepay if you go that way.\n\n"
             "Are you trying to keep cost low, or work out which option is worth it?"
+        )
+    # A teen asking for THEMSELVES ("I'm 17, adult classes or the kids one?")
+    # shouldn't get the parent-framed YTP pitch ("your kid", "parents can watch").
+    teen_self = re.search(r"\bi(?:'|’)?m\s+(1[0-7])\b", clean) or re.search(r"\bi am\s+(1[0-7])\b", clean)
+    if teen_self and any(w in clean for w in ["class", "classes", "join", "sign up", "train", "training", "old enough", "too young", "adult", "kids", "member", "start"]):
+        return (
+            f"At {teen_self.group(1)} you're in the Youth Training Program age range (10–17) — that's your program rather than the adult classes.\n\n"
+            "It's Saturday 9:15am at Camperdown, $25/wk, with qualified WWCC-checked coaches — proper strength and fitness training, not a kids' playgroup. Once you turn 18 you roll into the adult classes.\n\n"
+            "Want the team to sort your first session? Easiest is to have a parent drop their contact details here."
         )
     if mentions_youth(clean):
         under_10 = bool(re.search(r"\b[5-9]\b|\b(?:five|six|seven|eight|nine)\b", clean)) and not re.search(
