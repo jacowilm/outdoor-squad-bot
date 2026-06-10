@@ -1578,6 +1578,30 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Want me to flag the meal plan to send through (just drop an email), or line up a quick chat with the team about the food side?"
         )
 
+    # General nutrition / "what should I eat" — don't prescribe a diet, but point
+    # to the real food support instead of falling to a generic non-answer. Guarded
+    # so a pregnant/injured person mentioning food still gets the sensitive handoff.
+    if not (mentions_pregnancy(clean) or mentions_injury(clean)) and (
+        any(phrase in clean for phrase in ["what should i eat", "what to eat", "what do i eat", "nutrition advice", "diet advice", "eating plan", "what's a good diet", "whats a good diet", "meal prep", "macros", "calorie", "calories"])
+        or (any(w in clean for w in ["eat", "eating", "diet", "nutrition", "food"]) and any(g in clean for g in ["lose weight", "weight loss", "fat loss", "slim down", "drop weight", "shift weight"]))
+    ):
+        return (
+            "Robo-Nick won’t write you a diet from a chat box — but the food side genuinely matters, so two real things:\n\n"
+            "There’s a free 5-Day High-Protein Australian Meal Plan you can grab (drop an email and the team sends it through), and the SPT path includes proper nutrition support and tracking if you want it dialled in. Training plus food beats training alone.\n\n"
+            "Want me to flag the meal plan to send through, or is the training side the bigger question right now?"
+        )
+
+    # Weight-loss-as-a-training-goal (not the food question above). Don't let it
+    # fall to a generic answer — consistency + classes + the food side + trial.
+    if not (mentions_pregnancy(clean) or mentions_injury(clean)) and any(
+        phrase in clean for phrase in ["lose weight", "losing weight", "weight loss", "fat loss", "drop weight", "shift some weight", "shed weight", "shed some", "slim down", "tone up", "drop a few", "lose a few"]
+    ):
+        return (
+            "Good goal — and the honest lever is consistency plus food, not punishment sessions.\n\n"
+            "The coached group classes are the easiest way to actually show up regularly, which is where weight loss really comes from, and there’s a free 5-Day High-Protein Meal Plan for the food side. SPT adds tighter programming and nutrition support if you want it dialled in.\n\n"
+            "Best first move is a free trial so you can feel how it works. " + trial_close(session_id)
+        )
+
     # Sensitive topics take priority over generic routing so a co-mentioned
     # injury/pregnancy is never silently dropped — e.g. "I'm 45, dodgy knee,
     # want to get strong but nervous, how much?" must acknowledge the knee, not
