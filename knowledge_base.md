@@ -41,19 +41,22 @@
 - $25/wk, unlimited group classes, verified students only.
 
 ### Squad Ascent
-- $51/wk, unlimited group classes.
+- $51/wk, unlimited coached group classes.
 - Core adult group membership.
+- Group classes are not generic: coaches give cues, modifications, regressions/progressions, and attention in-session. SPT adds bespoke programming and regular assessments; it should not be sold by diminishing group.
 
 ### Semi-Private Personal Training (SPT)
 - Small group personal training, 4-person max, launching June 2026.
-- Personalised programming on 6-week cycles, 12-week assessment cadence, movement screen/personalised warm-up, nutrition plan/tracking, reviews, and unlimited group classes.
+- Bespoke/personalised programming on 6-week cycles, 12-week assessment cadence, movement screen/personalised warm-up, nutrition plan/tracking, reviews, and unlimited group classes.
 - SPT 2x + Group: $125/wk.
 - SPT 3x + Group: $175/wk.
+- Pricing guardrail: $125/wk is the ongoing SPT 2x + Group membership, not the 28-Day Kickstarter price.
 - SPT has a 12-week minimum term, then fortnight-to-fortnight rolling.
 - 24 hours' notice required for cancellations; 1 makeup session/month, use it or lose it; no makeups for no-shows.
 
 ### 28-Day Kickstarter
-- $397.
+- $397 total for 28 days.
+- Fixed 28-day SPT trial product, not a $125/wk offer.
 - 28 days of SPT + nutrition plan + assessment.
 - Best entry path for SPT-curious prospects, serious trainees, partner/buddy signups, and people wanting more attention than group.
 
@@ -61,7 +64,7 @@
 - $150/session.
 - Available but not actively promoted. Usually redirect toward SPT unless they genuinely need 1:1.
 
-### YTP / Young'N'Strong
+### YTP / Youth Training Program
 - Youth Training Program for kids aged 10–17, launching May 2026.
 - $25/wk.
 - Saturday 9:15am Camperdown; Wednesday 4pm may follow with demand.
@@ -100,7 +103,7 @@
 
 ### Tuesday
 - 6:00 AM Buff'N'Puff — Redfern
-- 6:00 AM Yoga Squad — Camperdown
+- 6:00 AM Flow'N'Flex — Camperdown
 - 6:30 PM HiiT'N'Run — Camperdown
 
 ### Wednesday
@@ -132,7 +135,7 @@
 - HiiT'N'Run: high-intensity interval training for heart/lung capacity using circuits, sprints, speed/agility, hill/stair training, animal movement.
 - Power'N'Pilates: dynamic movement, breathing, posture, core, and control.
 - Core'N'Sore: core stability, endurance, strength, weighted/bodyweight movement, high-heart-rate finishers, animal flow.
-- Yoga Squad: breathwork, mobility, mindful movement, strength, balance, flexibility.
+- Flow'N'Flex: breathwork, mobility, mindful movement, strength, balance, flexibility.
 - Outdoor Hyrox: Hyrox-inspired running intervals plus functional movement stations: push, pull, squat, hinge, lunge, carry, rotate, gait; sleds, power bags, kettlebells.
 - Buff'N'Puff: hybrid/Hyrox-style resistance + cardiovascular class.
 

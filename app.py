@@ -147,6 +147,9 @@ BRAND_VOICE_REFERENCE = """Required brand voice reference:
 - Use Australian English and Outdoor Squad vocabulary: mate, reckon, having a crack, proper, the Squad, training, session, members, team, Robo-Nick, real Nick.
 - Prefer capability language over aesthetics: strong, build, consistency, carrying groceries at 75; avoid shred, summer body, transformation-photo hype, hustle-culture or LinkedIn-ish phrasing.
 - SPT always means Semi-Private Personal Training. Never expand it as Specific Program Training.
+- Pricing guardrail: the 28-Day Kickstarter is $397 total for 28 days. $125/wk is SPT 2x + Group, not the Kickstarter price. Never conflate them in pricing, discount, or budget answers.
+- Youth Training Program is the public name. Do not call it Young'N'Strong in visitor-facing replies.
+- Flow'N'Flex is the current class name for the old Yoga Squad / yoga-style mobility class.
 - References are seasoning: Crom/Conan, Tolkien, Princess Bride, RPG/dungeon jokes, sci-fi, Inner West specifics. Use only when they fit the visitor and never for nervous, medical, or sensitive first-contact moments.
 - Crom is an insider running gag for confident/training-savvy moments: "By Crom", "Crom approves", "Crom does not look kindly on skipped warm-ups". Do not turn every answer into a Crom bit.
 - Robo-Nick is self-aware automation. Real Nick handles personal, sensitive, or high-touch conversations.
@@ -628,7 +631,8 @@ Conversation rules:
   Longevity / midlife movers: serious and capable, no aesthetic language, no patronising tone.
   SPT prospects: position SPT / Kickstarter clearly and confidently.
   YTP parents: warm, parent-respectful, safety-forward.
-- For workout/class type questions, answer with training styles first, not product names: strength, conditioning/HiiT/run, bootcamp/group sessions, plus kids/YTP only if relevant. Do not describe YTP as a generic adult long-term plan; it is the youth program.
+- For workout/class type questions, answer with training styles first, not product names: strength, conditioning/HiiT/run, bootcamp/group sessions, plus kids/YTP only if relevant. Do not describe YTP as a generic adult long-term plan; it is the Youth Training Program.
+- Never describe group classes as generic or hands-off. Squad Ascent/core group sessions are coached: the trainer gives cues, modifications, regressions/progressions, and attention. SPT adds bespoke programming, regular assessments, and a four-person maximum, but do not diminish group training to sell it.
 - Do not sign messages with "Robo-Nick". The widget already shows who is speaking.
 - Do not paste links/phone/email unless the user is ready to book, asks for contact details, or shares contact details.
 - Never claim an email, SMS, reminder, booking confirmation, meal plan delivery, or notification was sent unless this app actually did it.
@@ -653,6 +657,8 @@ Conversation rules:
 - If the conversation already has location, goal, timing, or contact details, use them. Do not ask the same slot again.
 - Do not stack questions like a form. If more information would help, choose the single most useful missing detail, otherwise close the loop.
 - If the user says "idk", "not sure", or gives a vague/low-effort answer, do not say generic assistant phrases like "I'm here to help with whatever you need". Narrow the path for them in a casual way: ask whether this is for them, their kid, prices, or trying a first class.
+- If an unmatched/uncertain message is not clearly asking for a location, price, or a named offer, ask one clarifying question or offer human follow-up. Never use a stock venue-address or stock pricing block as a generic fallback.
+- Only give location addresses when the user actually asks where/location/address/venue/meeting point/parking/transport, or chooses a location after being asked. Mentioning Camperdown/Redfern in a non-location question is not enough.
 - If they sound hesitant, reassure them naturally without over-selling
 - If they sound motivated, match that energy
 - If they mention goals, injuries, schedule, confidence, weight loss, strength, routine, nerves, embarrassment, or inconsistency, respond directly to that before pitching anything
@@ -680,6 +686,7 @@ Style examples:
 - If someone says something weird like 'Does it involve nudity?', lightly acknowledge it and answer without sounding offended or robotic.
 - If someone says they are missing a limb or have a serious limitation, respond supportively and focus on adaptation, not hype.
 - If someone is clearly interested, guide them toward the free trial in a low-pressure way.
+- For browsing/thinking/researching/looking-at-options replies, push the free trial more strongly: the trial is the research. Use this on-brand line when it fits: "Crom weeps when a free trial goes to waste." Also use the consistency frame: "Consistency beats motivation."
 - Good formatting example:
   Totally fair, and you definitely wouldn't be the only one feeling that way 🙂
 
@@ -1452,7 +1459,7 @@ def mentions_injury(text: str) -> bool:
 
 # Youth / parent detector. Word-boundary safe so "boys"/"girls" don't collide
 # with "cowboys" (NRL) or other words, and the parent phrasings Nicholas tested
-# ("got two boys, 11 and 15") route to Young'N'Strong instead of a generic
+# ("got two boys, 11 and 15") route to Youth Training Program instead of a generic
 # answer (Nicholas 2026-06-09 Q4 regression).
 YOUTH_RE = re.compile(
     r"\b(?:kids?|child|children|sons?|daughters?|teens?|teenagers?|youngsters?|"
@@ -1604,7 +1611,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "Definitely your wheelhouse — and that long-game mindset is a very Outdoor Squad reason to train.\n\n"
             "The focus is functional strength, mobility, balance and long-term health — still carrying your own groceries at 75, not cosplaying as a 22-year-old doing punishment circuits for Instagram. Movements scale to where you’re at.\n\n"
-            "Two classes lean especially well into longevity: Power'N'Pilates (strength + control, easier on the joints) and Yoga Squad (mobility and balance, the bit most people skip). A free trial is the sensible first test. " + trial_close(session_id)
+            "Two classes lean especially well into longevity: Power'N'Pilates (strength + control, easier on the joints) and Flow'N'Flex (mobility and balance, the bit most people skip). A free trial is the sensible first test. " + trial_close(session_id)
         )
 
     # "Is this basically just CrossFit / like F45?" is a positioning question, not
@@ -1617,6 +1624,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Outdoor Squad is coached outdoor group training in Inner West parks — strength, conditioning and real variety across the week, in small enough groups that the coach actually knows your name. Less treadmill-and-mirrors, more fresh air, proper coaching, and a crew that notices when you don’t show up.\n\n"
             "Easiest way to feel the difference is a free trial. Camperdown or Redfern?"
         )
+    if any(phrase in clean for phrase in ["what makes you different", "why are you different", "different from other gyms", "different to other gyms", "why outdoor squad", "why should i choose"]):
+        return (
+            "Main difference: it’s coached training, not just access to equipment and your own disappearing motivation.\n\n"
+            "The group sessions still get cues, modifications and attention, and the Squad structure makes consistency easier because people actually know when you vanish. SPT adds bespoke programming and assessments if you want the higher-touch lane.\n\n"
+            "Best test is the free trial — the session tells you more than another comparison page."
+        )
     if any(word in clean for word in ["crossfit", "hyrox", "powerlifting", "powerlift", "barbell", "strongman"]) or (
         "serious" in clean and ("programming" in clean or "program" in clean)
     ):
@@ -1628,15 +1641,28 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             )
         return (
             "That sounds more like the serious-programming lane than a basic group-class question.\n\n"
-            "SPT is probably the cleanest fit: max 4 people, proper programming, assessments, nutrition support, form cues, technique correction, and enough coach attention to progress you properly. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
+            "SPT is probably the cleanest fit: max 4 people, bespoke programming, regular assessments, nutrition support, form cues, technique correction, and enough coach attention to progress you properly. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
             "Are you chasing strength progression, conditioning, or a bit of both?"
+        )
+    if any(phrase in clean for phrase in ["partner and i", "my partner and i", "partner is", "on a budget", "tight budget", "pricing flexible", "price flexible", "flexible pricing"]):
+        return (
+            "There are different membership levels depending on how much coaching you want — but Robo-Nick shouldn’t imply haggling or make up discounts.\n\n"
+            "Group training starts with Squad Ascent from $51/wk for unlimited coached sessions. SPT is the higher-touch option if you want more personal attention, bespoke programming, regular assessments, and a four-person max.\n\n"
+            "Best low-risk move for you both is the free trial so you can test the coaching before choosing a level."
+        )
+    if any(phrase in clean for phrase in ["just generic", "generic class", "generic classes", "pay attention", "coach actually", "coach pay", "modifications", "cues"]):
+        return (
+            "Group classes are still coached — not a faceless park workout where you’re left to guess.\n\n"
+            "In Squad Ascent/core group sessions the coach gives cues, modifications, options, regressions/progressions and movement fixes as you go. SPT is for people who want bespoke programming, regular assessments and a four-person max, but the group sessions still get real coach attention.\n\n"
+            "Do you want general routine, or that more personal SPT level of detail?"
         )
     if any(phrase in clean for phrase in ["roughly what", "set me back", "what will it set me back", "how much", "cost", "price", "pricing"]):
         return (
             "Roughly, the main doors are:\n\n"
             "- Free trial — $0, one class to see if the Squad fits.\n"
             "- Squad Ascent — $51/wk for unlimited coached group classes.\n"
-            "- 28-Day Kickstarter — $397 for the SPT trial path with more coaching, assessment, programming and nutrition support.\n"
+            "- 28-Day Kickstarter — $397 total for 28 days on the SPT trial path, with more coaching, assessment, programming and nutrition support.\n"
+            "- SPT 2x + Group — $125/wk after that if you want ongoing semi-private coaching plus group classes.\n"
             "- Casual drop-in — $37 if you just need a one-off.\n\n"
             "If you’re not sure which bucket you’re in, the free trial is usually the least silly first step."
         )
@@ -1660,8 +1686,8 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Quick version of the week:\n\n"
             "- Mornings: 6am most days, plus 9:30am Mon/Wed/Fri at Camperdown.\n"
             "- Evenings: 6:30pm at Camperdown (Mon/Tue/Wed).\n"
-            "- Saturday: 8am at both Camperdown and Redfern, plus 9:15am Young'N'Strong (youth) at Camperdown.\n\n"
-            "Class types rotate across the week (Strength'N'Tone, HiiT'N'Run, Power'N'Pilates, Yoga Squad, Buff'N'Puff, Core'N'Sore). Easiest way to lock an exact time is the free trial — Camperdown or Redfern?"
+            "- Saturday: 8am at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown.\n\n"
+            "Class types rotate across the week (Strength'N'Tone, HiiT'N'Run, Power'N'Pilates, Flow'N'Flex, Buff'N'Puff, Core'N'Sore). Easiest way to lock an exact time is the free trial — Camperdown or Redfern?"
         )
     if ("student" in clean or "concession" in clean) and not any(word in clean for word in ["trainer", "coach", "instructor"]):
         return (
@@ -1676,11 +1702,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "It’s best for people who want more coaching and proper programming before committing to ongoing SPT."
         )
     # Specific class questions — answer from the real class list so the bot never
-    # denies a class that exists (the LLM said Yoga Squad "isn't in the schedule"
+    # denies a class that exists (the LLM once said the old Yoga Squad / Flow'N'Flex
+    # class "isn't in the schedule"
     # because RAG didn't surface it). Outdoor Hyrox is intentionally left to the
     # serious-programming branch above.
     class_blurbs = (
-        (("yoga squad", "yoga"), "Yoga Squad is the mobility, balance and breathwork class — mindful movement and flexibility with a bit of strength. The recovery bit most people skip, and easy on the joints."),
+        (("flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga"), "Flow'N'Flex is the mobility, balance and breathwork class — mindful movement and flexibility with a bit of strength. The recovery bit most people skip, and easy on the joints."),
         (("power'n'pilates", "power n pilates", "pilates"), "Power'N'Pilates is dynamic movement, breathing, posture, core and control — strength with a Pilates flavour, gentle on the joints. Good if you want to move well, not just get smashed."),
         (("buff'n'puff", "buff n puff", "buffnpuff"), "Buff'N'Puff is the hybrid, Hyrox-style class — resistance plus cardio in one hit, so you get strength and conditioning together."),
         (("core'n'sore", "core n sore"), "Core'N'Sore is core stability and endurance — weighted and bodyweight work, a high-heart-rate finisher and some animal flow. Exactly as friendly as the name suggests."),
@@ -1697,7 +1724,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "The focus is real-world strength, mobility, balance, and still carrying your own groceries when you’re 75. Plenty of members train with that long-game mindset, not a quick before-and-after thing.\n\n"
             "Two formats lean particularly well into the long game:\n"
             "- Power'N'Pilates — strength + control, easier on the joints, good for keeping moving well as you age.\n"
-            "- Yoga Squad — mobility, balance, and the bit most people skip.\n\n"
+            "- Flow'N'Flex — mobility, balance, and the bit most people skip.\n\n"
             "A free trial is the sensible first step. " + trial_close(session_id)
         )
     if any(phrase in clean for phrase in ["referral", "refer a friend", "refer a mate", "refer my", "referring", "bring friends", "bring mates", "bring people", "for bringing", "if i bring someone", "if i refer", "refer someone"]):
@@ -1725,7 +1752,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if mentions_youth(clean):
         return (
-            "Yep — that’s Young'N'Strong, the youth training program for ages 10–17.\n\n"
+            "Yep — that’s the Youth Training Program, for ages 10–17.\n\n"
             "It’s Saturday 9:15am at Camperdown, $25/wk, and coached by qualified, WWCC-checked trainers. Parents are welcome to watch first so it doesn’t feel like sending your kid into the wilderness with a whistle.\n\n"
             "Anyone between 10 and 17 is right in the age range. Want the team to point you to the best first session?"
         )
@@ -1741,10 +1768,10 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. Trainers can often regress, swap, or avoid movements, but the bot should not decide the modification itself. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, get your health practitioner’s guidance too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
-    if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but", "not ready to commit", "researching", "just researching"]):
+    if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but", "not ready to commit", "researching", "just researching", "looking at options", "looking at my options", "checking options"]):
         return (
             "All good — no pressure.\n\n"
-            "Worth mentioning though: the trial is one session, free, no commitment. ‘Researching’ can include actually trying it — that gives you better information than another website ever will.\n\n"
+            "Worth mentioning though: the trial is one session, free, no commitment. The trial is the research — it gives you better information than another website ever will. Crom weeps when a free trial goes to waste.\n\n"
             + trial_close(session_id)
         )
     if any(phrase in clean for phrase in ["how do i actually sign up", "how do i sign up", "how do i book", "where do i sign up", "sign me up", "sign up", "book a trial", "book the trial", "how do i join", "how do i get started"]):
@@ -1762,7 +1789,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(phrase in clean for phrase in ["just browsing", "browsing for now", "just looking"]):
         return (
             "No worries. Browsing is allowed; Crom has not issued a summons yet.\n\n"
-            "If you want the lowest-pressure next step, the free trial is the cleanest way to see the vibe without committing.\n\n"
+            "But the free trial is the research: one coached session tells you more than another lap of the internet. Crom weeps when a free trial goes to waste.\n\n"
             "Are you browsing for yourself, your kid, or just comparing options?"
         )
     if "winter" in clean or "outdoors in winter" in clean:
@@ -1773,7 +1800,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if any(phrase in clean for phrase in ["i've quit gyms", "ive quit gyms", "started and stopped", "stopped about five", "stop me doing the same", "stops me doing the same", "what stops me", "stop me quitting", "stops me quitting", "quitting again", "joined gyms before", "quit gyms", "quit gym", "quit five", "five gym", "5 gym", "several gyms", "few gyms", "quit before", "quit after", "lose motivation", "lost motivation", "fall off again", "drop off again"]):
         return (
-            "That’s exactly why the first step should be low-pressure.\n\n"
+            "That’s exactly why the first step should be low-pressure. Consistency beats motivation.\n\n"
             "Most gyms fail you because no one expects you on Tuesday morning. The Squad is coached, social, and harder to ghost because people actually know your name and notice when you disappear. Less fluorescent cave, more accountability with fresh air.\n\n"
             "Try the free trial first, then judge it by whether you’d actually come back. What usually makes you drop off?"
         )
@@ -1813,11 +1840,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "A few examples from member reviews: Pip called it \"always different\" with a friendly, welcoming group; Helen said Nick pushes people while keeping technique front and centre; Carla said the Squad helped rebuild strength and confidence; and Julia called it a welcoming community flexible enough for bringing a baby in the pram.\n\n"
             "Best test is still simple: come to a free trial, meet the coach, feel the pace, and decide from the actual session."
         )
-    if re.search(r"\bpt\b", clean) or any(phrase in clean for phrase in ["personal training", "1:1", "1 on 1", "one-on-one", "one on one", "one-to-one", "coach who knows", "specific goals", "generic class", "pay attention", "writes me a program", "write the program around me", "write a program around me", "program around me"]):
+    if re.search(r"\bpt\b", clean) or any(phrase in clean for phrase in ["personal training", "private session", "private sessions", "private coach", "private coaching", "1:1", "1 on 1", "one-on-one", "one on one", "one-to-one", "coach who knows", "specific goals", "pay attention", "writes me a program", "write the program around me", "write a program around me", "program around me"]):
         return (
-            "Yep — and this is exactly where SPT usually makes more sense than a generic class.\n\n"
-            "You’re paying for coaching attention: form checks, technique cues, programming around your goals, assessments, and a small enough group that you’re not just another body in the park. 1:1 PT exists at $150/session, but SPT gives most people the useful bits with more value and community.\n\n"
-            "The 28-Day Kickstarter is the lower-commitment way to test that setup. Want me to walk you through it?"
+            "Yep — there are a couple of private-coaching lanes, depending how much one-on-one you want.\n\n"
+            "SPT is usually the best value: max 4 people, bespoke programming, regular assessments, coaching cues, and more personal attention than a normal group session. True 1:1 PT exists too at $150/session.\n\n"
+            "The 28-Day Kickstarter is the lower-commitment way to test the SPT setup. Want me to walk you through it?"
         )
     if any(phrase in clean for phrase in ["who's crom", "who is crom", "what is crom"]):
         return (
@@ -2575,10 +2602,11 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         "crossfit", "hyrox", "powerlifting", "strongman", "serious programming",
         "28-day kickstarter", "28 day kickstarter", "kickstarter",
         "stay strong as i age", "strong as i age", "ageing", "aging", "longevity",
-        "have a think", "need to think", "think about it", "not sure", "keen but not sure", "next step", "come along", "how do i start", "how to start", "what should i do first", "do first",
+        "have a think", "need to think", "think about it", "not sure", "keen but not sure", "looking at options", "checking options", "next step", "come along", "how do i start", "how to start", "what should i do first", "do first",
         "just browsing", "browsing for now", "just looking", "winter", "cold",
         "joined gyms before", "quit gyms", "quit gym", "quit before", "quit after", "plus fitness", "personal training",
-        "1:1", "one on one", "coach who knows", "writes me a program", "write the program around me", "write a program around me", "program around me",
+        "1:1", "one on one", "private session", "private sessions", "private coach", "coach who knows", "writes me a program", "write the program around me", "write a program around me", "program around me",
+        "what makes you different", "different from other gyms", "different to other gyms", "just generic", "generic class", "coach actually", "pay attention", "modifications", "cues",
         "who's crom", "who is crom", "what is crom", "billing date", "change my billing",
         "pause membership", "cancel membership", "account question", "weather", "forecast",
         "joke about politics", "politics", "discount", "free month", "cheaper", "deal",
@@ -2618,21 +2646,36 @@ def is_obvious_boundary_joke(text: str) -> bool:
 
 
 def is_location_question(text: str) -> bool:
-    return any(
-        word in text
-        for word in [
-            "where",
-            "location",
-            "locations",
-            "suburb",
-            "suburbs",
-            "camperdown",
-            "redfern",
-            "parking",
-            "public transport",
-            "meet",
-        ]
-    )
+    # A suburb mention alone is not a location question. Nicholas flagged that
+    # "private coach" and "what makes you different in Camperdown" were getting
+    # stock venue-address blocks. Only treat it as location intent when the user
+    # asks where/address/venue/meeting/parking/transport/closest logistics.
+    location_intent_phrases = [
+        "where",
+        "what location",
+        "which location",
+        "locations",
+        "address",
+        "venue",
+        "venues",
+        "meeting point",
+        "meet up",
+        "where do you meet",
+        "where are you",
+        "where do you train",
+        "parking",
+        "public transport",
+        "transport",
+        "bus",
+        "train station",
+        "closest",
+        "near me",
+    ]
+    if any(phrase in text for phrase in location_intent_phrases):
+        return True
+    if "meet" in text and any(place in text for place in ["camperdown", "redfern", "park", "oval"]):
+        return True
+    return False
 
 
 def is_location_choice_reply(text: str, session_id: str) -> bool:
@@ -2771,7 +2814,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "Last useful choice: would you prefer a quick SMS or a call?"
         )
 
-    if is_location_question(normalise_chat_text(message)) or any(word in text for word in ["where", "camperdown", "redfern", "parking", "bus", "public transport", "meet"]):
+    if is_location_question(normalise_chat_text(message)):
         if "redfern" in text:
             return (
                 "Redfern sessions are at Redfern Park, Redfern St, Redfern NSW 2016.\n\n"
@@ -2796,7 +2839,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     if re.search(r"\b(?:spt|semi-private|semi private|personal training|pt|program|programming|partner|mate|friend and i|kickstarter)\b", text):
         return (
             "That sounds more like the SPT / 28-Day Kickstarter path than a basic group-class trial.\n\n"
-            "SPT is small-group personal training: max 4 people, proper programming, assessment, nutrition support, and group classes included. The 28-Day Kickstarter is the trial version at $397.\n\n"
+            "SPT is small-group personal training: max 4 people, bespoke programming, regular assessments, nutrition support, and group classes included. The 28-Day Kickstarter is the trial version at $397 total for 28 days.\n\n"
             "Are you looking for more coaching attention, or mostly a stronger routine?"
         )
 
@@ -2815,7 +2858,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "- 1-Day Free Trial Pass: free.\n"
             "- Casual drop-in: $37.\n"
             "- Squad Ascent membership: $51/wk for unlimited group classes.\n"
-            "- SPT starts from $125/wk depending on setup.\n\n"
+            "- SPT 2x + Group is $125/wk for ongoing semi-private coaching plus group.\n\n"
             "If you want, I can narrow it down based on whether you care more about strength, weight loss, or routine."
         )
 
@@ -2842,16 +2885,16 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
         "actually pay attention", "more attention",
     ]):
         return (
-            "That’s more SPT or 1:1 PT than group classes.\n\n"
-            "SPT (Semi-Private Personal Training) is max 4 people with personalised programming, regular assessments, and nutrition support — closest thing to one-on-one without the full PT price tag.\n\n"
-            "1:1 PT runs at $150/session if you want true one-on-one. The 28-Day Kickstarter ($397) is the lower-commitment way to test the SPT setup before going ongoing.\n\n"
+            "Group classes are coached, not generic.\n\n"
+            "You still get cues, modifications and a coach paying attention in the core Squad sessions. SPT is the upgrade if you want bespoke programming, regular assessments, nutrition support and a four-person max.\n\n"
+            "1:1 PT runs at $150/session if you want true one-on-one. The 28-Day Kickstarter ($397 total) is the lower-commitment way to test the SPT setup before going ongoing.\n\n"
             "Want me to flag SPT or PT so Real Nick or Lyn can scope your goals on a quick call? Drop your first name + mobile and they’ll take it from here."
         )
 
     if any(word in text for word in ["price", "cost", "how much", "$", "membership", "contract"]):
         return (
             "Quick version: the main group membership is Squad Ascent at $51/wk for unlimited group classes.\n\n"
-            "There’s also a free 1-Day Trial Pass, $37 casual drop-ins, and SPT from $125/wk if you want more personalised coaching.\n\n"
+            "There’s also a free 1-Day Trial Pass, $37 casual drop-ins, and SPT 2x + Group at $125/wk if you want more personalised coaching.\n\n"
             "Most people start with the free trial so they can see what actually fits before choosing anything."
         )
 
@@ -2872,7 +2915,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     if any(word in text for word in ["busy", "inconsistent", "quit", "routine", "motivation", "two weeks"]):
         return (
             "Honestly, that’s a really common pattern — people don’t usually need more willpower, they need something easy to keep showing up to.\n\n"
-            "The group structure and coaching can help with consistency because you’re not figuring it all out alone.\n\n"
+            "Consistency beats motivation. The group structure and coaching help because you’re not figuring it all out alone.\n\n"
             "Would evenings, mornings, or weekends be easiest for you to stick with?"
         )
 
@@ -2886,7 +2929,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
 
     if mentions_youth(text):
         return (
-            "Yep — that’s Young'N'Strong, the youth training programme for kids and teens aged 10–17.\n\n"
+            "Yep — that’s the Youth Training Program for kids and teens aged 10–17.\n\n"
             "It’s Saturday 9:15am at Camperdown, $25/wk, coached by qualified, WWCC-checked trainers, focused on safe strength, movement skills, confidence, and a bit of fun — not tiny bootcamp sergeants yelling at children. Parents are welcome to watch first.\n\n"
             "How old are they?"
         )

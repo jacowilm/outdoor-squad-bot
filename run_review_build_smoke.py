@@ -129,6 +129,15 @@ def main() -> int:
             failures.append("quick options header should be bolded on its own line")
         if "- **Free 1-day trial**" not in quick_options:
             failures.append("quick options should expand each option to a bold-labelled bullet")
+        placeholder_clean = app.clean_agent_reply(
+            "You can email [email], call [phone], or use [link]. Also {HUMAN_EMAIL} / {HUMAN_PHONE} / {TRIAL_LINK}."
+        )
+        for placeholder in ["[email]", "[phone]", "[link]", "{HUMAN_EMAIL}", "{HUMAN_PHONE}", "{TRIAL_LINK}"]:
+            if placeholder.lower() in placeholder_clean.lower():
+                failures.append(f"placeholder guard did not resolve {placeholder}")
+        for term in [app.HUMAN_EMAIL, app.HUMAN_PHONE, app.TRIAL_LINK]:
+            if term not in placeholder_clean:
+                failures.append(f"placeholder guard missing real value {term}")
 
         admin_auth = (
             os.environ.get("OUTDOOR_SQUAD_ADMIN_USERNAME", "outdoorsquad"),
@@ -219,6 +228,10 @@ def main() -> int:
             ("plus-fitness", "$51 a week is a lot. Plus Fitness is $18.", ["free trial", "Plus Fitness", "$51"]),
             ("pt-redirect", "Do you do personal training?", ["SPT", "28-Day Kickstarter"]),
             ("coach-program", "I want a coach who knows my goals and writes me a program.", ["SPT", "28-Day Kickstarter"]),
+            ("partner-budget", "My partner and I are keen but we're on a budget. Is pricing flexible?", ["membership levels", "$51/wk", "SPT"]),
+            ("generic-group", "Are group classes just generic, or does the coach actually pay attention?", ["coached", "cues", "modifications"]),
+            ("flow-flex", "What's Yoga Squad like?", ["Flow'N'Flex", "mobility", "balance"]),
+            ("researching", "I'm still looking at options and thinking about it.", ["free trial", "Crom weeps", "research"]),
         ]
         for name, message, required_terms in extra_conversion_cases:
             session_id = f"review-smoke-extra-{name}-{uuid.uuid4().hex[:8]}"
@@ -234,6 +247,11 @@ def main() -> int:
                     failures.append(f"{name}: missing required term {term}")
             if "book you" in reply.lower() or "would you like to book" in reply.lower():
                 failures.append(f"{name}: unsupported booking claim")
+            if name in {"partner-budget", "generic-group", "flow-flex", "researching"}:
+                forbidden = ["flexible pricing", "negotiable", "yoga squad", "generic class"]
+                for term in forbidden:
+                    if term in reply.lower():
+                        failures.append(f"{name}: leaked forbidden wording {term}")
 
         location_session = f"review-smoke-location-{uuid.uuid4().hex[:8]}"
         response = client.post(
@@ -249,6 +267,25 @@ def main() -> int:
                 failures.append(f"location: missing {term}")
         if "exact" in reply.lower() and "unavailable" in reply.lower():
             failures.append("location: claimed exact location unavailable")
+
+        non_location_cases = [
+            ("private-sessions", "Do you do private sessions or can I get a private coach?"),
+            ("different-camperdown", "What makes you different from other gyms in Camperdown?"),
+        ]
+        for name, message in non_location_cases:
+            session_id = f"review-smoke-non-location-{name}-{uuid.uuid4().hex[:8]}"
+            response = client.post("/api/chat", json={"session_id": session_id, "message": message})
+            reply = (response.json().get("reply") or "").strip()
+            preview = " ".join(reply.split())[:180]
+            print(f"{name}: status={response.status_code} reply={preview}")
+            if response.status_code != 200:
+                failures.append(f"{name}: HTTP {response.status_code}")
+            if "mallett st" in reply.lower() or "redfern st" in reply.lower() or "the barracks" in reply.lower():
+                failures.append(f"{name}: non-location question received stock venue address")
+            if name == "private-sessions" and not any(term in reply.lower() for term in ["spt", "1:1", "$150"]):
+                failures.append("private-sessions: did not answer private coaching path")
+            if name == "different-camperdown" and not any(term in reply.lower() for term in ["coaching", "consistency", "free trial"]):
+                failures.append("different-camperdown: did not answer differentiation path")
 
         goal_session = f"review-smoke-goal-choice-{uuid.uuid4().hex[:8]}"
         app.conversations[goal_session] = [

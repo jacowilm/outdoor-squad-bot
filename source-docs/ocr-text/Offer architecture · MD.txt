@@ -36,14 +36,14 @@ Meal Plan magnet) meal plan
 Drop-in / Casual $37 Single class,nomembership _ Visitors, lapsed members
 Session
 Squad Student $25/wk Unlimited group classes Students (verified)
-YTP (Young'N'Strong) $25/wk Saturday class (Wed 4pm to Kids 10-17
+YTP (Youth Training Program) $25/wk Saturday class (Wed 4pm to Kids 10-17
 follow)
 Squad Ascent $51/wk Unlimited group classes Adult group members
 SPT 2x + Group $125/wk 2x SPT sessions + unlimited Serious trainees, specific
 group Classes goals
 SPT 3x + Group $175/wk 3x SPT sessions + unlimited Highly committed trainees
 group classes
-28-Day Kickstarter $397 28 days of SPT + nutrition SPT trial / Avatar 4 entry
+28-Day Kickstarter $397 total 28 days of SPT + nutrition SPT trial / Avatar 4 entry
 plan + assessment
 1:1 Personal Training $150/session One-on-one coaching Niche cases only — not
 actively promoted
@@ -117,7 +117,7 @@ Strategic notes: Students who train at TOS as students tend to graduate into Squ
 members later in life. The lifetime value of a student member is meaningfully higher than the
 weekly revenue suggests. Verify student status to prevent abuse, but otherwise let it run.
 
-YTP (Young'N'Strong) — $25/wk
+YTP (Youth Training Program) — $25/wk
 
 Role in the ladder: A new audience entirely. The parent buys; the kid uses.
 
@@ -151,7 +151,7 @@ business.
 Who it's for: Avatars 1 and 3 primarily — Desk-Bound Professionals and Holistic Movers. Avatar
 2 (Strength Seekers) may start here before upgrading to SPT.
 What's included: Unlimited group classes across all class types (Strength'N'Tone, HiiT'N'Run,
-Buff'N'Puff, Power'N'Pilates, Yoga Squad, Outdoor Hyrox, Core'N'Sore) at both locations.
+Buff'N'Puff, Power'N'Pilates, Flow'N'Flex, Outdoor Hyrox, Core'N'Sore) at both locations.
 What's NOT included: Personalised programming, nutrition coaching, formal movement screen,
 regular 1:1 assessment, SPT slots, 1:1 PT.
 Strategic notes: This is the product that the brand's reputation is built on. It carries the largest
@@ -209,7 +209,7 @@ Simple to explain: "more sessions, slightly less per session." Don't lose this �
 reason to step up.
 Capacity note: As above. Same room, same trainer attention, just one more session per week for
 the member.
-28-Day Kickstarter — $397
+28-Day Kickstarter — $397 total
 Role in the ladder: SPT trial product. The most important new launch product because it's how
 cold prospects experience SPT without committing to ongoing fees.
 Whoit's for: Avatar 4 (SPT Prospect) primarily, especially Sub-types B (PT-curious newcomer)
@@ -231,7 +231,7 @@ What's included:
 --- PAGE 7 ---
 ¢ Unlimited group classes for the 28 days
 What's NOT included: Ongoing membership (this is a trial / bridge product).
-Pricing logic: $397 = $99/wk averaged. Roughly 20% premium over SPT 2x at $125/wk standard
+Pricing logic: $397 total for 28 days (do not describe this as $125/wk; $125/wk is SPT 2x + Group). Roughly 20% premium over SPT 2x at $125/wk standard
 rate, justified by the assessment + nutrition plan + onboarding bundle. Designed to be a no-
 brainer "try before you commit" play that's profitable on its own.
 Conversion target: Kickstarter members converting to ongoing SPT 2x or 3x at the end of the 28
@@ -457,7 +457,7 @@ Squad Ignite members migrated to SPT 3x at $175/wk with a 30-day transition wind
 ¢ Standalone Nutrition Coaching ($25/wk) — retired. Folded into SPT and into the
 Kickstarter. Existing nutrition-only clients offered SPT trial or Kickstarter at standard rate.
 ¢ SPT 2xand SPT 3x — launched June 2026. New core products.
-« YTP(Young'N'Strong) — launched May 2026. New audience.
+« YTP(Youth Training Program) — launched May 2026. New audience.
 
 
 --- PAGE 13 ---

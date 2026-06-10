@@ -2,7 +2,7 @@
 
 Robo-Nick is the chat assistant embedded on the Outdoor Squad website. It answers
 common enquiries in Nick's voice, routes people toward the right first step (free
-trial, SPT, Young'N'Strong), and captures leads for the team.
+trial, SPT, Youth Training Program), and captures leads for the team.
 
 ## How it works
 
