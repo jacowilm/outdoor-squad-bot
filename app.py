@@ -1273,6 +1273,22 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "The 28-Day Kickstarter is the lower-commitment way to test that setup before ongoing SPT.\n\n"
             "Want the SPT/Kickstarter path, or do you mainly want a one-off coach chat first?"
         )
+    if mentions_youth(clean):
+        return (
+            "Same setup for them: the Youth Training Program runs Saturday 9:15am at Camperdown, $25/wk, ages 10–17, with qualified WWCC-checked coaches.\n\n"
+            "Want me to flag it to the team so they can sort a first session?"
+        )
+    if any(phrase in clean for phrase in ["unfit", "not fit", "out of shape", "carrying extra", "overweight", "extra weight", "haven't trained", "havent trained", "haven't exercised", "nervous", "anxious", "scared", "intimidated", "embarrassed", "self-conscious", "self conscious", "judged", "keep up", "out of my depth", "too unfit"]):
+        return (
+            "Genuinely — being upfront about it is the right starting point, not a problem.\n\n"
+            "Nobody’s expecting polished. The coach scales every movement to where you’re actually at, and the group is far more 'glad you came' than 'who’s this'. Consistency beats motivation — it’s about turning up, not arriving fit.\n\n"
+            "Easiest way to believe me is to feel it. Want me to line up a quiet first session — Camperdown or Redfern?"
+        )
+    if any(phrase in clean for phrase in ["deal", "deals", "offer", "offers", "promo", "promos", "special", "specials", "discount", "free month", "cheaper", "join today", "sign up today", "sign-up"]):
+        return (
+            "No secret promo to chase, honestly — the free trial is the offer: one full coached session, free, no catch.\n\n"
+            "Want me to point you to it, or pass you to Real Nick or Lyn to talk through the options?"
+        )
     if any(word in clean for word in ["price", "cost", "membership", "option", "options", "spt", "kickstarter"]):
         return (
             "Rather than run through the same options again: are you leaning low-pressure group classes, or more coached SPT?"
@@ -1283,8 +1299,8 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "The next useful split is coaching level: group classes for routine, or SPT/Kickstarter if you want more hands-on technique and progression."
         )
     return (
-        "I’m spinning in place a bit — that’s on me, not you.\n\n"
-        "Easiest unblock: drop your first name + mobile and Real Nick or Lyn can take it from here. Or if you’d rather just grab a class, the free trial link is the cleanest path in."
+        "Happiest thing I can do here is get you to the useful next step — the free trial, or a quick word with Real Nick or Lyn.\n\n"
+        "Drop your first name + mobile and they’ll take it from there, or grab the trial link whenever you’re ready."
     )
 
 
@@ -1591,7 +1607,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             + trial_close(session_id)
         )
 
-    if any(phrase in clean for phrase in ["pretty unfit", "very unfit", "super unfit", "really unfit", "nervous", "intimidated", "scared", "cringe", "fit people", "first class", "first session", "beginner", "never trained", "no exercise", "haven't done any exercise", "havent done any exercise", "out of shape", "not fit", "desk 10 hours", "desk job", "body's falling apart", "bodys falling apart"]):
+    if any(phrase in clean for phrase in ["pretty unfit", "very unfit", "super unfit", "really unfit", "nervous", "anxious", "anxiety", "intimidated", "intimidating", "scared", "self-conscious", "self conscious", "judged", "cringe", "fit people", "first class", "first session", "beginner", "never trained", "no exercise", "haven't done any exercise", "havent done any exercise", "out of shape", "not fit", "desk 10 hours", "desk job", "body's falling apart", "bodys falling apart"]):
         return (
             "Yes — someone like you can do this. Plenty of people start before they feel ready, and nobody sensible expects you to keep up with the fittest person in the class on day one.\n\n"
             "The coach scales the session to where you actually are: lighter load, simpler version, more rest if needed. The entry requirement is having a crack, not arriving pre-built like a fitness catalogue mannequin.\n\n"
@@ -1625,8 +1641,8 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
 
     # "Is this basically just CrossFit / like F45?" is a positioning question, not
     # a serious-lifter signal — answer the comparison instead of pitching SPT.
-    if any(w in clean for w in ["crossfit", "f45", "f-45", "hyrox", "bootcamp", "orangetheory", "orange theory"]) and any(
-        p in clean for p in ["is this", "is it", "are you just", "basically", "just like", "like a", "similar to", "same as", "difference", "vs ", "versus", "compared to", "over f45", "than f45"]
+    if any(w in clean for w in ["crossfit", "f45", "f-45", "hyrox", "bootcamp", "orangetheory", "orange theory", "anytime", "plus fitness", "snap fitness"]) and any(
+        p in clean for p in ["is this", "is it", "are you just", "basically", "just like", "like a", "similar to", "same as", "difference", "vs ", "versus", "compared to", "over f45", "than f45", "cheaper", "steep", "steeper", "costs less", "less than", "down the road", "why would i pay", "why pay", "a week", "why bother with you", "what's the point"]
     ):
         return (
             "There’s some overlap, but it’s its own thing rather than a branded-format clone.\n\n"
@@ -1768,6 +1784,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Are you trying to keep cost low, or work out which option is worth it?"
         )
     if mentions_youth(clean):
+        under_10 = bool(re.search(r"\b[5-9]\b|\b(?:five|six|seven|eight|nine)\b", clean)) and not re.search(
+            r"\b1[0-7]\b|\b(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b", clean)
+        if under_10:
+            return (
+                "Love the instinct — though the Youth Training Program starts at 10, so they’re just a touch young for it right now.\n\n"
+                "Worth a quick word with Nick or Lyn about whether there’s anything suitable in the meantime, or flagging them to start when they turn 10 (it’s Saturday 9:15am at Camperdown, $25/wk, WWCC-checked coaches).\n\n"
+                "Want me to pass that on?"
+            )
         return (
             "Yep — that’s the Youth Training Program, for ages 10–17.\n\n"
             "It’s Saturday 9:15am at Camperdown, $25/wk, and coached by qualified, WWCC-checked trainers. Parents are welcome to watch first so it doesn’t feel like sending your kid into the wilderness with a whistle.\n\n"
