@@ -1210,6 +1210,13 @@ def repeats_key_block(reply: str, previous: str) -> bool:
 def non_repeating_followup(message: str, session_id: str) -> str:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
+    # Keep refusing repeated prompt-injection attempts rather than falling to the
+    # generic "drop your mobile" handoff (which the repeat-detector would otherwise hit).
+    if is_prompt_injection(clean):
+        return (
+            "Still not happening — Robo-Nick doesn’t reveal its internal instructions or system prompt.\n\n"
+            "Happy to help with the real stuff though: trials, prices, SPT, YTP, locations, or getting a human to follow up."
+        )
     if is_location_choice_reply(clean, session_id):
         location = "Redfern" if "redfern" in clean else "Camperdown"
         return location_choice_followup(location, session_id)
@@ -1467,6 +1474,8 @@ PREGNANCY_RE = re.compile(
 INJURY_RE = re.compile(
     r"\b(?:"
     r"injur\w*|rehab\w*|sprain\w*|strained?|torn|tendon\w*|niggles?|limitations?|sciatica|slipped disc|"
+    r"surger\w*|surgical|operations?|post-?op|recovering from|recovery from|going under the knife|"
+    r"physio\w*|herniat\w*|fracture\w*|broken (?:arm|leg|wrist|ankle|foot|hand|finger|rib|ribs|collarbone|bone|toe)|dislocat\w*|"
     r"knees?|shoulders?|hips?|necks?|wrists?|ankles?|elbows?|"
     r"knee replacement|hip replacement|"
     r"lower back|low back|my back|bad back|sore back|dodgy back|back's dodgy|backs dodgy|"
@@ -1732,6 +1741,22 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Yep — weekly memberships (Squad Ascent, Squad Student, YTP) can be paused: up to 8 weeks per calendar year, in minimum 1-week blocks, just requested in advance.\n\n"
             "So a holiday or a busy stretch doesn’t mean cancelling — you hold it and pick back up. SPT and the exact dates are best set up directly with Real Nick or Lyn.\n\n"
             "Want me to flag a pause to the team, or were you still weighing up joining?"
+        )
+    # Contract / lock-in / cancellation — the KB has this, so answer it rather than
+    # letting the LLM invent a "minimum commitment period" or say "I don't have it".
+    if any(phrase in clean for phrase in ["lock-in", "lock in", "locked in", "lockin", "contract", "minimum commitment", "minimum term", "minimum contract", "tied in", "tied into", "how do i cancel", "how to cancel", "cancel my membership", "cancellation", "cancel anytime", "notice period", "cancel my", "quit my membership", "end my membership", "get out of it"]):
+        return (
+            "No lock-in contract. Squad Ascent, Squad Student and YTP are weekly rolling — you just give one week's notice to cancel, and you can pause instead if it's only a holiday or busy stretch.\n\n"
+            "For class bookings it's 24 hours' notice to cancel a spot, and SPT terms are best confirmed with Real Nick or Lyn directly.\n\n"
+            "Anything else you want to know before trying a session?"
+        )
+    # Group class size — KB has no fixed number, so don't let the LLM invent one
+    # (it was quoting "15-20 people"). Answer qualitatively + SPT's real cap of 4.
+    if any(phrase in clean for phrase in ["how many people", "how many in a class", "how many in each", "class size", "class sizes", "how big are the classes", "how big is the class", "group size", "how many per", "how many others", "how crowded", "how many people in"]):
+        return (
+            "Group classes stay small enough that the coach actually knows you and can give cues and modifications — it's coached training, not a faceless crowd. Numbers vary a bit by session and time of day.\n\n"
+            "If you want the most personal setup, SPT is capped at 4 people. For typical numbers at a specific session, the team can tell you when you book.\n\n"
+            "Want to try a session and see the vibe for yourself? Camperdown or Redfern?"
         )
     if not mentions_youth(clean) and (
         any(phrase in clean for phrase in ["timetable", "schedule", "class times", "session times", "what times", "what time are", "what time do", "what time is", "what days", "which days", "when are the classes", "when do classes", "when are classes", "when do the classes", "what's the timetable", "whats the timetable"])
