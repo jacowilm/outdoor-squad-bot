@@ -1777,7 +1777,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         or "%" in clean
         or re.search(r"\$\s*\d+\s*off|\b\d+\s*%\s*off|\boff\b", clean)
     )
-    if family_pricing_request or any(phrase in clean for phrase in ["family discount", "family deal", "family rate", "family price", "family membership", "promo code", "coupon", "discount", "free first month", "free month", "cheaper", "deal"]):
+    if family_pricing_request or any(phrase in clean for phrase in ["family discount", "family deal", "family rate", "family price", "family membership", "promo code", "coupon", "discount", "free first month", "free month", "cheaper", "a deal", "any deal", "any deals", "do a deal", "better deal", "good deal", "money off"]):
         if "family" in clean:
             return (
                 "We don't discount memberships or do percentage / '$X off' family deals.\n\n"
@@ -1785,8 +1785,8 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 "Best next step is a free trial or a quick note to Nick/Lyn so they can point you to the right option."
             )
         return (
-            "No free-month magic from Robo-Nick, sorry. Bargain sorcery is not in the offer architecture.\n\n"
-            "The value stack is the proper answer: free trial first, $51/wk for unlimited coached group classes, and SPT if you want the higher-touch path. SPT also has an annual prepay option, but we don't do random discounting.\n\n"
+            "No free-month magic from Robo-Nick, sorry — we don't do random discounts.\n\n"
+            "The honest answer is value over haggling: free trial first, $51/wk for unlimited coached group classes (or $25/wk Squad Student if you're verified), and SPT if you want the higher-touch path. SPT also has a 5% annual prepay if you go that way.\n\n"
             "Are you trying to keep cost low, or work out which option is worth it?"
         )
     if mentions_youth(clean):
@@ -1922,10 +1922,10 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "For training outdoors: check the local weather for Camperdown or Redfern, dress in layers, and the coach will manage the session sensibly.\n\n"
             "Were you asking because you’re thinking about trying a class?"
         )
-    if any(phrase in clean for phrase in ["promo code", "coupon", "discount", "free first month", "free month", "cheaper", "deal"]):
+    if any(phrase in clean for phrase in ["promo code", "coupon", "discount", "free first month", "free month", "cheaper", "a deal", "any deal", "any deals", "do a deal", "better deal", "good deal", "best price", "money off", "knock off", "mates rate", "mate's rate", "sign-up deal", "joining deal"]):
         return (
-            "No free-month magic from Robo-Nick, sorry. Bargain sorcery is not in the offer architecture.\n\n"
-            "The value stack is the proper answer: free trial first, $51/wk for unlimited coached group classes, and SPT if you want the higher-touch path. SPT also has an annual prepay option, but we don't do random discounting.\n\n"
+            "No free-month magic from Robo-Nick, sorry — we don't do random discounts.\n\n"
+            "The honest answer is value over haggling: free trial first, $51/wk for unlimited coached group classes (or $25/wk Squad Student if you're verified), and SPT if you want the higher-touch path. SPT also has a 5% annual prepay if you go that way.\n\n"
             "Are you trying to keep cost low, or work out which option is worth it?"
         )
     if any(phrase in clean for phrase in ["ignore your previous instructions", "system prompt", "previous instructions", "underlying instructions", "display your underlying", "instructions in full", "for system testing", "jailbreak"]):
@@ -2656,7 +2656,7 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         "what makes you different", "different from other gyms", "different to other gyms", "just generic", "generic class", "coach actually", "pay attention", "modifications", "cues",
         "who's crom", "who is crom", "what is crom", "billing date", "change my billing",
         "pause membership", "cancel membership", "account question", "weather", "forecast",
-        "joke about politics", "politics", "discount", "free month", "cheaper", "deal",
+        "joke about politics", "politics", "discount", "free month", "cheaper", "any deal", "a deal", "money off",
         "ignore your previous instructions", "system prompt", "previous instructions", "jailbreak",
     ]):
         return True
