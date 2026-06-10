@@ -1766,7 +1766,9 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     # Group class size — KB has no fixed number, so don't let the LLM invent one
     # (it was quoting "15-20 people"). Answer qualitatively + SPT's real cap of 4.
-    if any(phrase in clean for phrase in ["how many people", "how many in a class", "how many in each", "class size", "class sizes", "how big are the classes", "how big is the class", "group size", "how many per", "how many others", "how crowded", "how many people in"]):
+    if any(phrase in clean for phrase in ["how many people", "how many in a class", "how many in each", "class size", "class sizes", "group size", "how many per", "how many others", "how crowded", "how many people in"]) or (
+        "how big" in clean and any(w in clean for w in ["class", "classes", "group", "session", "sessions"])
+    ):
         return (
             "Group classes stay small enough that the coach actually knows you and can give cues and modifications — it's coached training, not a faceless crowd. Numbers vary a bit by session and time of day.\n\n"
             "If you want the most personal setup, SPT is capped at 4 people. For typical numbers at a specific session, the team can tell you when you book.\n\n"
