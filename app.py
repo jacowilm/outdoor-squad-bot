@@ -1300,7 +1300,20 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "No secret promo to chase, honestly — the free trial is the offer: one full coached session, free, no catch.\n\n"
             "Want me to point you to it, or pass you to Real Nick or Lyn to talk through the options?"
         )
-    if any(word in clean for word in ["price", "cost", "membership", "option", "options", "spt", "kickstarter"]):
+    if any(word in clean for word in ["price", "cost", "how much", "membership", "option", "options", "spt", "kickstarter"]):
+        # If they're asking a specific price again (often after a topic detour,
+        # e.g. "ok back to SPT — what does it cost?"), answer it tersely instead
+        # of deflecting a direct question.
+        if any(w in clean for w in ["spt", "kickstarter", "semi-private", "semi private"]):
+            return (
+                "Quick numbers: SPT 2x + Group is $125/wk, SPT 3x + Group is $175/wk, and the 28-Day Kickstarter is $397 total for 28 days if you want to test the setup first.\n\n"
+                "Want me to flag an SPT chat with Real Nick or Lyn?"
+            )
+        if any(w in clean for w in ["how much", "price", "cost", "$"]):
+            return (
+                "Short version: free trial $0, Squad Ascent $51/wk unlimited group ($25/wk verified students), 28-Day Kickstarter $397 total, casual drop-in $37.\n\n"
+                "Which lane are you actually weighing up — group or SPT?"
+            )
         return (
             "Rather than run through the same options again: are you leaning low-pressure group classes, or more coached SPT?"
         )
@@ -1762,6 +1775,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         any(phrase in clean for phrase in ["timetable", "schedule", "class times", "session times", "what times", "what time are", "what time do", "what time is", "what days", "which days", "when are the classes", "when do classes", "when are classes", "when do the classes", "what's the timetable", "whats the timetable"])
         or ("saturday" in clean and any(word in clean for word in ["time", "when", "session", "class", "what"]))
         or (any(d in clean for d in ["monday", "tuesday", "wednesday", "thursday", "friday", "sunday", "weekday", "weekend"]) and any(w in clean for w in ["time", "when", "session", "class", "what's on", "whats on", "anything on", "anything", "run", "running", "morning", "evening", "6am", "6:30", "9:30", "early", "after work", "come"]))
+        or any(phrase in clean for phrase in ["arvo sesh", "arvo seshes", "arvo session", "arvo class", "afternoon session", "afternoon class", "afternoon sesh", "evening sesh", "morning sesh", "after work session", "after-work session", "lunchtime session", "lunchtime class"])
     ):
         return (
             "Quick version of the week:\n\n"
