@@ -1708,12 +1708,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if not mentions_youth(clean) and (
         any(phrase in clean for phrase in ["timetable", "schedule", "class times", "session times", "what times", "what time are", "what time do", "what time is", "what days", "which days", "when are the classes", "when do classes", "when are classes", "when do the classes", "what's the timetable", "whats the timetable"])
         or ("saturday" in clean and any(word in clean for word in ["time", "when", "session", "class", "what"]))
+        or (any(d in clean for d in ["monday", "tuesday", "wednesday", "thursday", "friday", "sunday", "weekday", "weekend"]) and any(w in clean for w in ["time", "when", "session", "class", "what's on", "whats on", "anything on", "anything", "run", "running", "morning", "evening", "6am", "6:30", "9:30", "early", "after work", "come"]))
     ):
         return (
             "Quick version of the week:\n\n"
             "- Mornings: 6am most days, plus 9:30am Mon/Wed/Fri at Camperdown.\n"
             "- Evenings: 6:30pm at Camperdown (Mon/Tue/Wed).\n"
-            "- Saturday: 8am at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown.\n\n"
+            "- Saturday: 8am at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown.\n"
+            "- No Sunday sessions — Saturday is the weekend option.\n\n"
             "Class types rotate across the week (Strength'N'Tone, HiiT'N'Run, Power'N'Pilates, Flow'N'Flex, Buff'N'Puff, Core'N'Sore). Easiest way to lock an exact time is the free trial — Camperdown or Redfern?"
         )
     if ("student" in clean or "concession" in clean) and not any(word in clean for word in ["trainer", "coach", "instructor"]):
