@@ -964,8 +964,12 @@ def clean_agent_reply(reply: str | None) -> str:
         text,
     )
     text = re.sub(r"Quick\s*\n+\s*options:", "Quick options:", text, flags=re.IGNORECASE)
+    # Put a standalone question on its own line — but ONLY at a real sentence
+    # boundary. The old (?<!\n) version fired mid-sentence ("Good. So what's the
+    # main thing…") and orphaned "Good. So" onto its own line (Nicholas's widget
+    # screenshot, 2026-06-10).
     text = re.sub(
-        r"(?<!\n)(Which option|What kind of injury|What(?:'|’)s the main thing|What are you mainly looking for)",
+        r"(?<=[.!?])\s+(Which option|What kind of injury|What(?:'|’)s the main thing|What are you mainly looking for)",
         r"\n\n\1",
         text,
         flags=re.IGNORECASE,
