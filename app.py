@@ -636,6 +636,7 @@ Conversation rules:
 - Do not sign messages with "Robo-Nick". The widget already shows who is speaking.
 - Do not paste links/phone/email unless the user is ready to book, asks for contact details, or shares contact details.
 - Never claim an email, SMS, reminder, booking confirmation, meal plan delivery, or notification was sent unless this app actually did it.
+- If a visitor writes in another language, reply in English (a one-word greeting in their language is fine). Never claim Nick, Lyn, or the team speak that language — you don't know. Offer email (innerwest@outdoorsquad.com.au) so they can sort language directly.
 - This app does not send meal plans, SMS reminders, booking confirmations, or notifications by itself. When relevant, say the team can follow up or that you can point the user in the right direction.
 - Make replies easy to scan on a phone
 - Prefer this structure when it fits: quick reaction, direct answer, then one simple next step or question
@@ -1828,6 +1829,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Mates are very welcome — bring them along to a free trial and train together, that part’s easy.\n\n"
             "We don’t run a cash-back or discount referral scheme, though. Where it lands is value-stacking: when people train together the team can add useful bonuses (extra sessions, movement screens, that sort of thing) after a quick chat — not money off.\n\n"
             "Want me to flag that you’d like to bring someone along to a trial?"
+        )
+    # Corporate / private-group one-offs (office teams, bucks/hens, birthdays) —
+    # a real lead, but not a product Robo-Nick can quote. Hand off, don't improvise.
+    if any(phrase in clean for phrase in ["corporate", "work team", "office team", "team from work", "from our office", "from a local office", "workplace session", "team building", "team-building", "bucks party", "bucks night", "hens party", "hens night", "birthday group", "private group session", "group booking", "book a group", "session for our team", "session for the team", "group of us from work"]):
+        return (
+            "That's a Real Nick conversation — group and one-off sessions like that aren't a standard product I can quote, but the team has done custom things before.\n\n"
+            "Tell me roughly the group size and what you're after, plus a name and mobile or email, and I'll flag it so Nick or Lyn can come back with what's possible.\n\n"
+            "Or if it's easier, email innerwest@outdoorsquad.com.au directly with the details."
         )
     if any(phrase in clean for phrase in ["new member offer", "new member offers", "member offer", "joining offer", "sign-up offer", "signup offer", "any offers", "any offer", "current offers", "specials", "any specials", "promotion", "promotions", "promo ", "promos", "running this month", "anything running", "anything on this month", "deals on", "current deals", "offers running"]):
         return (
