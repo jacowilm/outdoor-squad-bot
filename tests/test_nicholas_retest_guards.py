@@ -23,10 +23,12 @@ def test_multi_person_family_answers_adults_and_teen():
     text = reply("My wife and I both want to join, and our 14-year-old is keen too.")
 
     lowered = text.lower()
-    assert "two squad ascent" in lowered
+    assert "$51/wk each" in lowered
     assert "youth training program" in lowered
     assert "saturday" in lowered
     assert "9:15" in lowered
+    # the household answer must be visitor copy, not a leaked internal note
+    assert "answer all three people" not in lowered
 
 
 def test_spt_size_answers_four_max_first_without_group_hedge():
@@ -68,6 +70,9 @@ def test_privacy_question_gets_plain_privacy_answer():
     text = reply("Who can see what I've typed?")
 
     lowered = text.lower()
-    assert "only share what you’re comfortable" in lowered or "only share what you're comfortable" in lowered
+    # honest blurb: says chats are logged, who sees them, and that contact
+    # details are masked in stored logs (launch prerequisite, Nicholas 2026-06-11)
+    assert "logged" in lowered
     assert "nick" in lowered or "lyn" in lowered
+    assert "masked" in lowered
     assert "innerwest@outdoorsquad.com.au" in lowered

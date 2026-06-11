@@ -640,6 +640,10 @@ Conversation rules:
 - Never claim an email, SMS, reminder, booking confirmation, meal plan delivery, or notification was sent unless this app actually did it.
 - If a visitor writes in another language, reply in English (a one-word greeting in their language is fine). Never claim Nick, Lyn, or the team speak that language — you don't know. Offer email (innerwest@outdoorsquad.com.au) so they can sort language directly.
 - There are NO referral bonuses, guest promos, or discounts to "keep an eye out for" — never hint that any exist. Guests and friends use the free 1-Day Trial Pass. Families or groups training together may get value-stacked bonuses (extra sessions, movement screens) after a chat with the team — never money off.
+- If you are not confident about ANY answer, do not improvise — hand off to Real Nick with a light line ("that one's outside what Robo-Nick can reliably do — Real Nick kept the improv rights for himself") and ask for a first name + mobile, or give innerwest@outdoorsquad.com.au. A wrong answer is worse than a handoff.
+- NEVER offer to follow up at the prospect's stated delay ("I'll decide next month" → do NOT say "the team can reach out next month"). Intent decays. Capture the contact now and say the team will say g'day within a day or two; the decision can take as long as it likes.
+- If someone mentions a doctor-flagged condition or says they're scared/worried about their health: acknowledge the feeling plainly, drop ALL jokes and pop-culture references for that reply, reassure briefly, and offer a human chat with Real Nick or Lyn.
+- If a question involves several people (partner + kids, a whole family), answer for ALL of them — each person's right product and price — not just the last person mentioned.
 - This app does not send meal plans, SMS reminders, booking confirmations, or notifications by itself. When relevant, say the team can follow up or that you can point the user in the right direction.
 - Make replies easy to scan on a phone
 - Prefer this structure when it fits: quick reaction, direct answer, then one simple next step or question
@@ -887,7 +891,12 @@ def build_anthropic_request(message: str, session_id: str) -> dict:
     if system_blocks:
         system_blocks[-1]["cache_control"] = {"type": "ephemeral"}
     return {
-        "model": os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+        # Sonnet (not Haiku): the AI tail handles exactly the questions the
+        # deterministic layer can't classify, where instruction-following and
+        # not-inventing-facts matter most. Haiku hallucinated a "Thursday 6:30pm
+        # Redfern" session in Nicholas's 2026-06-11 retest; Sonnet 4.6 is the
+        # floor for visitor-facing answers. Override via OUTDOOR_SQUAD_ANTHROPIC_MODEL.
+        "model": os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_MODEL", "claude-sonnet-4-6"),
         "max_tokens": 520,
         "temperature": 0.82,
         "system": system_blocks,
@@ -1031,9 +1040,16 @@ def guard_operational_claims(text: str) -> str:
     text = re.sub(r"\[\s*(?:your[\s_-]*|first[\s_-]*)?name\s*\]|\{\s*name\s*\}", "there", text, flags=re.IGNORECASE)
     # Never imply price negotiability or discounts — the offer architecture forbids
     # it (Nicholas flagged "pricing is flexible depending on your budget" 2026-06-10).
-    text = re.sub(r"[^.!?\n]*\b(?:pricing|prices?)\b[^.!?\n]*\bflexib\w+[^.!?\n]*[.!?]",
+    # Price-negotiability scrub. Flexibility/"work something out" language is only
+    # scrubbed when the same sentence talks about price — "the coach can work
+    # something out for your shoulder" or "programming is flexible" must survive
+    # (the guard was over-firing and volunteering "we don't haggle" unprompted,
+    # Nicholas round-3).
+    text = re.sub(r"[^.!?\n]*\b(?:pricing|prices?|cost|fees?|rates?|budget|\$\s?\d)\b[^.!?\n]*\b(?:flexib\w+|work something out)\b[^.!?\n]*[.!?]",
                   " There are different membership levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
-    text = re.sub(r"[^.!?\n]*\b(?:flexibilit\w*|negotiat\w*|wiggle room|work something out|cut you a deal|do you a deal)\b[^.!?\n]*[.!?]",
+    text = re.sub(r"[^.!?\n]*\b(?:flexib\w+|work something out)\b[^.!?\n]*\b(?:pricing|prices?|cost|fees?|rates?|budget|\$\s?\d)\b[^.!?\n]*[.!?]",
+                  " There are different membership levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^.!?\n]*\b(?:negotiat\w*|wiggle room|cut you a deal|do you a deal|knock (?:something|a bit) off)\b[^.!?\n]*[.!?]",
                   " We don’t haggle on price, but there are different levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
     text = re.sub(r"[^.!?\n]*depending on (?:your|the) budget[^.!?\n]*[.!?]",
                   " There are different levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
@@ -1251,6 +1267,10 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "Injury history needs a coach’s eye before sessions — Robo-Nick shouldn’t be guessing at modifications. Real Nick or Lyn can scope it properly in a quick call.\n\n"
             "Want to drop your name + mobile so they can ring you, or would you rather grab the trial link and flag the injury when you book?"
         )
+    # Repeated schedule questions ("ok what about Friday then?") stay grounded in
+    # the literal timetable instead of falling to the generic handoff terminal.
+    if not mentions_youth(clean) and is_timetable_question(clean):
+        return timetable_reply(clean, session_id)
     if any(phrase in clean for phrase in [
         "started and stopped", "stopped about", "stop me doing the same", "stop me from doing the same",
         "what stops me", "won’t stick", "wont stick", "can’t stick", "cant stick",
@@ -1327,8 +1347,8 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "The next useful split is coaching level: group classes for routine, or SPT/Kickstarter if you want more hands-on technique and progression."
         )
     return (
-        "Happiest thing I can do here is get you to the useful next step — the free trial, or a quick word with Real Nick or Lyn.\n\n"
-        "Drop your first name + mobile and they’ll take it from there, or grab the trial link whenever you’re ready."
+        "Honest answer: that one's outside what Robo-Nick can reliably do — Real Nick kept the improv rights for himself.\n\n"
+        "Drop your first name + mobile and he or Lyn will sort it properly, or grab the free trial whenever you're ready."
     )
 
 
@@ -1515,28 +1535,51 @@ CLASS_ALIAS_GROUPS = {
 
 
 def is_timetable_question(text: str) -> bool:
+    # ANY day-of-week mention routes to the grounded timetable handler. Nicholas's
+    # round-3 hallucination ("What about Thursdays at Redfern?" → invented 6:30pm
+    # session) slipped through because "what about" wasn't a schedule word. Day
+    # names are a strong enough schedule signal on their own — the handler answers
+    # only from TIMETABLE_ENTRIES, so over-matching is safe.
+    if re.search(r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mondays|tuesdays|wednesdays|thursdays|fridays|saturdays|sundays|weekday|weekdays|weekend|weekends|tomorrow|tonight)\b", text):
+        return True
+    if re.search(r"\btoday\b", text) and any(w in text for w in ["class", "session", "training", "on today", "running", "open"]):
+        return True
     return (
         any(phrase in text for phrase in ["timetable", "schedule", "class times", "session times", "what times", "what time are", "what time do", "what time is", "what days", "which days", "when are the classes", "when do classes", "when are classes", "when do the classes", "what's the timetable", "whats the timetable"])
-        or ("saturday" in text and any(word in text for word in ["time", "when", "session", "class", "what"]))
-        or (any(d in text for d in ["monday", "tuesday", "wednesday", "thursday", "friday", "sunday", "weekday", "weekend"]) and any(w in text for w in ["time", "when", "session", "class", "what's on", "whats on", "what is on", "what’s on", "anything on", "anything", "run", "running", "morning", "evening", "6am", "6:30", "9:30", "early", "after work", "come"]))
         or any(phrase in text for phrase in ["arvo sesh", "arvo seshes", "arvo session", "arvo class", "afternoon session", "afternoon class", "afternoon sesh", "evening sesh", "morning sesh", "after work session", "after-work session", "lunchtime session", "lunchtime class"])
+        or (any(loc in text for loc in ["camperdown", "redfern"]) and any(w in text for w in ["morning", "mornings", "evening", "evenings", "arvo", "afternoon", "6am", "6:30", "9:30", "what's on", "whats on", "anything on"]))
     )
 
 
 def timetable_reply(text: str, session_id: str) -> str:
-    if "sunday" in text:
+    mentioned_days = [day for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] if day in text]
+    # Resolve today/tomorrow/tonight in Sydney time so the answer stays grounded.
+    try:
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        now_syd = datetime.now(ZoneInfo("Australia/Sydney"))
+        if re.search(r"\btoday\b|\btonight\b|\bthis arvo\b|\bthis afternoon\b|\bthis morning\b|\bthis evening\b", text):
+            mentioned_days.append(now_syd.strftime("%A").lower())
+        if re.search(r"\btomorrow\b", text):
+            mentioned_days.append((now_syd + timedelta(days=1)).strftime("%A").lower())
+    except Exception:
+        pass
+    asks_sunday = "sunday" in text or "sunday" in mentioned_days
+    mentioned_days = [d for d in dict.fromkeys(mentioned_days) if d != "sunday"]
+    if asks_sunday and not mentioned_days:
         return (
             "No Sunday sessions in the current timetable — Saturday is the weekend option.\n\n"
             "Saturday has 8:00am Strength'N'Tone at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown."
         )
 
-    mentioned_days = [day for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] if day in text]
     mentioned_locations = [loc for loc in ["camperdown", "redfern"] if loc in text]
     mentioned_classes = [
         class_name
         for class_name, aliases in CLASS_ALIAS_GROUPS.items()
         if any(alias in text for alias in aliases)
     ]
+    wants_evening = bool(re.search(r"\bevening|\btonight\b|\bafter work\b|\b6:30\b|\b630\b|\bpm\b|\barvo\b|\bafternoon", text))
+    wants_morning = bool(re.search(r"\bmorning|\b6am\b|\b6 am\b|\b9:30\b|\bearly\b|\bbefore work\b", text))
 
     filtered = TIMETABLE_ENTRIES
     if mentioned_days:
@@ -1545,8 +1588,13 @@ def timetable_reply(text: str, session_id: str) -> str:
         filtered = [entry for entry in filtered if entry[3].lower() in mentioned_locations]
     if mentioned_classes:
         filtered = [entry for entry in filtered if entry[2] in mentioned_classes]
+    if wants_evening and not wants_morning:
+        filtered = [entry for entry in filtered if entry[1].endswith("pm")]
+    elif wants_morning and not wants_evening:
+        filtered = [entry for entry in filtered if entry[1].endswith("am")]
 
-    if filtered and (mentioned_days or mentioned_locations or mentioned_classes):
+    had_filter = bool(mentioned_days or mentioned_locations or mentioned_classes or wants_evening or wants_morning)
+    if filtered and had_filter:
         lines = [f"- {day.title()} {time} — {class_name} ({location})" for day, time, class_name, location in filtered[:8]]
         if len(filtered) > 8:
             lines.append("- Plus a few more across the full timetable.")
@@ -1555,6 +1603,26 @@ def timetable_reply(text: str, session_id: str) -> str:
             + "\n".join(lines)
             + "\n\nFor live availability, use the timetable/free-trial booking view — I won’t invent spots from here."
         )
+
+    if had_filter and not filtered:
+        # The asked combination doesn't exist — say so plainly and give the real
+        # nearest facts instead of inventing a slot (Nicholas round-3 blocker).
+        parts = []
+        if wants_evening and "redfern" in mentioned_locations:
+            parts.append("Redfern doesn't run evening sessions at all — Redfern is mornings: 6am Monday to Friday, plus Saturday 8am.")
+            parts.append("Evenings run at Camperdown: 6:30pm Monday, Tuesday and Wednesday.")
+        elif mentioned_days and mentioned_locations:
+            day_word = mentioned_days[0].title()
+            loc_word = mentioned_locations[0].title()
+            alternatives = [e for e in TIMETABLE_ENTRIES if e[0] in mentioned_days]
+            alt_lines = "\n".join(f"- {d.title()} {t} — {c} ({l})" for d, t, c, l in alternatives[:5])
+            parts.append(f"Nothing matches that exact slot at {loc_word} on {day_word} in the current timetable.")
+            if alt_lines:
+                parts.append(f"What {day_word} actually has:\n{alt_lines}")
+        else:
+            parts.append("That exact combination isn't in the current timetable, so I won't guess at it.")
+        parts.append("For live availability, the booking view is the source of truth — or the team can confirm directly.")
+        return "\n\n".join(parts)
 
     return (
         "Quick version of the current week:\n\n"
@@ -1692,15 +1760,30 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
 
     if any(phrase in clean for phrase in ["privacy", "private data", "my data", "personal details", "personal info", "personal information", "contact details", "keep my details", "store my details", "use my number", "spam me", "marketing emails", "who can see", "what i've typed", "what ive typed", "what i typed", "what i type"]):
         return (
-            "Fair thing to ask. Use the chat like you would a front desk: only share what you’re comfortable sharing.\n\n"
-            "If you leave a name, mobile or email, it’s so Nick/Lyn can follow up about Outdoor Squad — not so Robo-Nick can start a shadowy data empire under Camperdown Oval.\n\n"
-            "If you’d rather not put details here, email innerwest@outdoorsquad.com.au directly."
+            "Fair thing to ask, so here's the straight version: chats here are logged so the team can follow up properly. Only Real Nick, Lyn and the Outdoor Squad team can read them — nothing gets sold, shared, or used for anything beyond getting you sorted.\n\n"
+            "If you leave a name, mobile or email, it goes to the team for follow-up, and your contact details are masked in the stored logs. No shadowy data empire under Camperdown Oval.\n\n"
+            "If you'd rather keep details out of the chat, email innerwest@outdoorsquad.com.au directly."
         )
 
-    if any(phrase in clean for phrase in ["diabetes", "diabetic", "blood sugar", "blood glucose", "hypogly", "type 1", "type one", "type 2", "type two"]):
+    medical_condition = any(phrase in clean for phrase in [
+        "diabetes", "diabetic", "blood sugar", "blood glucose", "hypogly", "type 1", "type one", "type 2", "type two",
+        "blood pressure", "hypertension", "cholesterol", "heart condition", "heart disease",
+        "doctor told me", "doctor said", "gp told me", "gp said", "specialist told me", "specialist said", "doctor's orders", "doctors orders",
+    ])
+    if medical_condition:
+        scared = any(w in clean for w in ["scared", "afraid", "frightened", "terrified", "freaking out", "worried", "don't know where to start", "dont know where to start", "overwhelmed"])
+        if scared:
+            # Fear + doctor-flagged condition: acknowledge plainly, no jokes,
+            # human warmth, hand off (Nicholas round-3: the diabetes answer got a
+            # recycled pep talk with a mannequin gag — wrong register entirely).
+            return (
+                "That's a genuinely scary thing to hear from a doctor, and wanting to act on it straight away is the right instinct — so you're already doing the hard part.\n\n"
+                "You don't need a plan today, and you won't be training alone or guessing. The honest first step is a quick chat with Real Nick or Lyn: they've helped plenty of people start from exactly this conversation, they'll work in line with what your doctor's said, and the first session gets scaled to wherever you're at now.\n\n"
+                "Drop your first name + mobile and they'll call for a no-pressure chat — or email innerwest@outdoorsquad.com.au if that's easier. Either way, you're not doing this on your own."
+            )
         return (
-            "Good one to flag before training. Diabetes doesn’t automatically rule you out, but it’s health-specific enough that Robo-Nick shouldn’t be guessing.\n\n"
-            "Best move is to check your own healthcare guidance and have Real Nick or Lyn scope the first session properly, including anything the coach needs to know before you train.\n\n"
+            "Good one to flag before training. A health condition doesn't automatically rule you out, but it's specific enough that Robo-Nick shouldn't be guessing.\n\n"
+            "Best move is to keep your own healthcare guidance in the loop and have Real Nick or Lyn scope the first session properly, including anything the coach needs to know before you train.\n\n"
             "Want to drop a name + mobile so the team can handle it directly, or would you rather email innerwest@outdoorsquad.com.au?"
         )
 
@@ -1711,7 +1794,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Want to drop your name + mobile/email so they can look you up and suggest the right re-entry?"
         )
 
-    if is_timetable_question(clean) and not mentions_youth(clean):
+    if (
+        is_timetable_question(clean)
+        and not mentions_youth(clean)
+        and not mentions_injury(clean)
+        and not mentions_pregnancy(clean)
+    ):
         return timetable_reply(clean, session_id)
 
     # General nutrition / "what should I eat" — don't prescribe a diet, but point
@@ -1841,9 +1929,9 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     )
     if multi_person_family:
         return (
-            "For the household, answer all three people separately rather than pretending it’s just a kids’ question.\n\n"
-            "For you two adults, the clean default is two Squad Ascent memberships: $51/wk each for unlimited coached group classes. For the 14-year-old, it’s the Youth Training Program: Saturday 9:15am at Camperdown, $25/wk, ages 10–17, with qualified WWCC-checked coaches.\n\n"
-            "Saturday can work neatly too: an adult can train at 8:00am while the teen does YTP at 9:15am. Best first move is to get everyone into the right trial/first-session path."
+            "Love it — whole household in one go. Here's the picture for all three of you:\n\n"
+            "For you two adults, the clean default is Squad Ascent at $51/wk each for unlimited coached group classes. For the teenager, it's the Youth Training Program: Saturday 9:15am at Camperdown, $25/wk, ages 10–17, with qualified WWCC-checked coaches.\n\n"
+            "Saturday works neatly as a family routine too: an adult trains at 8:00am while the teen does YTP at 9:15am. Best first move is free trials all round — want me to flag all three to the team?"
         )
 
     if any(phrase in clean for phrase in ["partner and i", "my partner and i", "partner is", "run it past my", "run it past the", "run it by my", "ask my husband", "ask my wife", "chat to my husband", "chat to my wife", "talk to my husband", "talk to my wife", "check with my husband", "check with my wife", "my husband", "my wife"]):
@@ -1943,7 +2031,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "If you want the most personal setup, SPT is capped at 4 people. For typical numbers at a specific session, the team can tell you when you book.\n\n"
             "Want to try a session and see the vibe for yourself? Camperdown or Redfern?"
         )
-    if not mentions_youth(clean) and is_timetable_question(clean):
+    if (
+        not mentions_youth(clean)
+        and not mentions_injury(clean)
+        and not mentions_pregnancy(clean)
+        and is_timetable_question(clean)
+    ):
         return timetable_reply(clean, session_id)
     if ("student" in clean or "concession" in clean) and not any(word in clean for word in ["trainer", "coach", "instructor"]):
         return (
@@ -2055,7 +2148,22 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. Trainers can often regress, swap, or avoid movements, but the bot should not decide the modification itself. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, get your health practitioner’s guidance too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
-    if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but", "not ready to commit", "researching", "just researching", "looking at options", "looking at my options", "checking options", "window-shopping", "window shopping", "comparing options", "comparing a few", "comparing my options", "weighing up", "weighing it up", "shopping around"]):
+    # "I'll decide next month / get back to you later" — NEVER park the follow-up
+    # at the prospect's stated delay (Nicholas's standing rule: intent decays;
+    # capture now, the team follows up within a day or two while it's warm).
+    if any(phrase in clean for phrase in ["decide next month", "decide next week", "decide later", "decide after", "i'll probably decide", "ill probably decide", "get back to you next", "get back to you in", "circle back", "after the holidays", "after winter", "after christmas", "next quarter", "in a few months", "in a couple of months", "maybe next month", "revisit next", "when things calm down", "when work calms down"]):
+        comparing = any(p in clean for p in ["tossing up", "torn between", "deciding between", "choosing between", "between you and", "comparing", "a couple of others", "few others", "other options", "other gyms", "shortlist"])
+        opener = (
+            "Fair enough — comparing properly beats picking blind. One honest tip though: the trial is the research. One coached session tells you more than every comparison tab combined, and Crom weeps when a free trial goes to waste.\n\n"
+            if comparing else
+            "All good — no one's rushing the decision.\n\n"
+        )
+        return (
+            opener
+            + "One thing I won't do is park this for next month — that's where good intentions go to die. Easiest move: drop your first name + mobile now and the team will say g'day in the next day or two while it's fresh. The decision itself can take as long as it likes.\n\n"
+            + "Or just grab the free trial whenever suits and let the session make the case."
+        )
+    if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but", "not ready to commit", "researching", "just researching", "looking at options", "looking at my options", "checking options", "window-shopping", "window shopping", "comparing options", "comparing a few", "comparing my options", "weighing up", "weighing it up", "shopping around", "tossing up", "torn between", "deciding between", "choosing between", "between you and", "a couple of others", "few other places", "other gyms too"]):
         return (
             "All good — no pressure.\n\n"
             "Worth mentioning though: the trial is one session, free, no commitment. The trial is the research — it gives you better information than another website ever will. Crom weeps when a free trial goes to waste.\n\n"
@@ -2894,6 +3002,8 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         "28-day kickstarter", "28 day kickstarter", "kickstarter",
         "stay strong as i age", "strong as i age", "ageing", "aging", "longevity",
         "have a think", "need to think", "think about it", "not sure", "keen but not sure", "looking at options", "checking options", "next step", "come along", "how do i start", "how to start", "what should i do first", "do first",
+        "tossing up", "torn between", "deciding between", "choosing between", "between you and", "decide next month", "decide next week", "decide later", "i'll probably decide", "ill probably decide", "get back to you", "circle back", "after the holidays", "next quarter",
+        "doctor told me", "doctor said", "gp told me", "blood pressure", "cholesterol", "wife and i", "husband and i", "all three of us", "all of us",
         "just browsing", "browsing for now", "just looking", "winter", "cold",
         "joined gyms before", "quit gyms", "quit gym", "quit before", "quit after", "plus fitness", "personal training",
         "1:1", "one on one", "private session", "private sessions", "private coach", "coach who knows", "writes me a program", "write the program around me", "write a program around me", "program around me",
@@ -2936,33 +3046,24 @@ def is_obvious_boundary_joke(text: str) -> bool:
     return any(word in text for word in ["nudity", "nude", "naked", "army yelling", "yelling", "drill sergeant"])
 
 
+LOCATION_INTENT_RE = re.compile(
+    r"\b(?:"
+    r"where|what location|which location|locations?|address|venues?|"
+    r"meeting point|meet up|where do you meet|where are you|where do you train|"
+    r"parking|public transport|transport|bus|buses|train station|closest|near me"
+    r")\b"
+)
+
+
 def is_location_question(text: str) -> bool:
     # A suburb mention alone is not a location question. Nicholas flagged that
     # "private coach" and "what makes you different in Camperdown" were getting
     # stock venue-address blocks. Only treat it as location intent when the user
     # asks where/address/venue/meeting/parking/transport/closest logistics.
-    location_intent_phrases = [
-        "where",
-        "what location",
-        "which location",
-        "locations",
-        "address",
-        "venue",
-        "venues",
-        "meeting point",
-        "meet up",
-        "where do you meet",
-        "where are you",
-        "where do you train",
-        "parking",
-        "public transport",
-        "transport",
-        "bus",
-        "train station",
-        "closest",
-        "near me",
-    ]
-    if any(phrase in text for phrase in location_intent_phrases):
+    # Word-boundary regex, NOT bare substrings: "bus" used to match inside
+    # "life got BUSy", which sent Nicholas's lapsed-member question to the venue
+    # dump (round-3 retest, 2026-06-11). Same collision class as pt/prompt.
+    if LOCATION_INTENT_RE.search(text):
         return True
     if "meet" in text and any(place in text for place in ["camperdown", "redfern", "park", "oval"]):
         return True
@@ -3248,10 +3349,12 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "Want me to explain what usually happens in a first session?"
         )
 
+    # Uncertain terminal: per Nick (2026-06-11), when Robo-Nick isn't sure — no
+    # matter the question — it hands off to a human, with a light line. Never a
+    # stock content block, never bluffed confidence.
     return (
-        "I can help with that. Outdoor Squad is an outdoor fitness community around Sydney's Inner West, with coaching that can adapt to different fitness levels.\n\n"
-        "The usual best next step is a free trial so the team can point you to the right option.\n\n"
-        "What are you mainly looking for — fitness, weight loss, routine, or something else?"
+        "Honest answer: that one's outside what Robo-Nick can reliably do — Real Nick kept the improv rights for himself.\n\n"
+        "Drop your first name + mobile and he'll sort it properly, or email innerwest@outdoorsquad.com.au. If it turns out to be quick, you can also just ask me about trials, prices, classes, SPT or the youth program — that's my home turf."
     )
 
 
