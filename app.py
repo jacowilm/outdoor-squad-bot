@@ -163,6 +163,8 @@ OPERATING_FACTS_REFERENCE = """Required operating facts:
 - Camperdown: The Barracks at Camperdown Tennis & Oval, Mallett St, Camperdown NSW 2050. Meeting point: Camperdown Tennis. Serves Camperdown, Newtown, Stanmore, and nearby Inner West suburbs. Parking around Australia St and Mallet St; Newtown Station is about 900m away; buses 413, 440, 480, and 483 stop on Parramatta Rd about 25m away.
 - Redfern: Redfern Park, Redfern St, Redfern NSW 2016. Meeting point: near the Park Cafe at the Sports Oval end; wet-weather fallback is undercover behind the cafe. Serves Redfern, Waterloo, and Surry Hills. Parking on Chalmers St and underground at Woolworths; Redfern Station is about 700m away; buses 310, 343, and 395 serve the area.
 - If asked what locations there are, answer directly with Camperdown and Redfern before asking which is closer. Never say exact locations or suburb names are unavailable.
+- Timetable guardrail: only use the exact timetable in the source context / master timetable. Do not invent class times. If uncertain or if the visitor needs the live booking view, point them to the timetable/free-trial link.
+- Current master timetable: Mon 6am Buff'N'Puff Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Tue 6am Buff'N'Puff Redfern, 6am Flow'N'Flex Camperdown, 6:30pm HiiT'N'Run Camperdown; Wed 6am Strength'N'Tone Camperdown/Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Thu 6am HiiT'N'Run Camperdown, 6am Power'N'Pilates Redfern; Fri 6am Core'N'Sore Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown; Sat 8am Strength'N'Tone Camperdown/Redfern, 9:15am Youth Training Program Camperdown. No Sunday sessions.
 """
 
 DEFAULT_TRIAL_LINK = "https://momence.com/The-Outdoor-Squad-/membership/Squad-Intro-Class/263360"
@@ -1478,6 +1480,92 @@ def trial_close(session_id: str) -> str:
     return "Camperdown or Redfern — whichever is closer is fine."
 
 
+TIMETABLE_ENTRIES = [
+    ("monday", "6:00am", "Buff'N'Puff", "Camperdown"),
+    ("monday", "6:00am", "Strength'N'Tone", "Redfern"),
+    ("monday", "9:30am", "Strength'N'Tone", "Camperdown"),
+    ("monday", "6:30pm", "Strength'N'Tone", "Camperdown"),
+    ("tuesday", "6:00am", "Buff'N'Puff", "Redfern"),
+    ("tuesday", "6:00am", "Flow'N'Flex", "Camperdown"),
+    ("tuesday", "6:30pm", "HiiT'N'Run", "Camperdown"),
+    ("wednesday", "6:00am", "Strength'N'Tone", "Camperdown"),
+    ("wednesday", "6:00am", "Strength'N'Tone", "Redfern"),
+    ("wednesday", "9:30am", "Strength'N'Tone", "Camperdown"),
+    ("wednesday", "6:30pm", "Strength'N'Tone", "Camperdown"),
+    ("thursday", "6:00am", "HiiT'N'Run", "Camperdown"),
+    ("thursday", "6:00am", "Power'N'Pilates", "Redfern"),
+    ("friday", "6:00am", "Core'N'Sore", "Camperdown"),
+    ("friday", "6:00am", "Strength'N'Tone", "Redfern"),
+    ("friday", "9:30am", "Strength'N'Tone", "Camperdown"),
+    ("saturday", "8:00am", "Strength'N'Tone", "Camperdown"),
+    ("saturday", "8:00am", "Strength'N'Tone", "Redfern"),
+    ("saturday", "9:15am", "Youth Training Program", "Camperdown"),
+]
+
+
+CLASS_ALIAS_GROUPS = {
+    "Strength'N'Tone": ["strength'n'tone", "strength n tone", "strength", "weights", "resistance"],
+    "HiiT'N'Run": ["hiit'n'run", "hiit n run", "hiit", "run", "running", "conditioning"],
+    "Power'N'Pilates": ["power'n'pilates", "power n pilates", "pilates"],
+    "Flow'N'Flex": ["flow'n'flex", "flow n flex", "yoga", "mobility", "flex"],
+    "Buff'N'Puff": ["buff'n'puff", "buff n puff", "hybrid"],
+    "Core'N'Sore": ["core'n'sore", "core n sore", "core"],
+    "Youth Training Program": ["youth", "ytp", "kid", "kids", "teen", "teenager"],
+}
+
+
+def is_timetable_question(text: str) -> bool:
+    return (
+        any(phrase in text for phrase in ["timetable", "schedule", "class times", "session times", "what times", "what time are", "what time do", "what time is", "what days", "which days", "when are the classes", "when do classes", "when are classes", "when do the classes", "what's the timetable", "whats the timetable"])
+        or ("saturday" in text and any(word in text for word in ["time", "when", "session", "class", "what"]))
+        or (any(d in text for d in ["monday", "tuesday", "wednesday", "thursday", "friday", "sunday", "weekday", "weekend"]) and any(w in text for w in ["time", "when", "session", "class", "what's on", "whats on", "anything on", "anything", "run", "running", "morning", "evening", "6am", "6:30", "9:30", "early", "after work", "come"]))
+        or any(phrase in text for phrase in ["arvo sesh", "arvo seshes", "arvo session", "arvo class", "afternoon session", "afternoon class", "afternoon sesh", "evening sesh", "morning sesh", "after work session", "after-work session", "lunchtime session", "lunchtime class"])
+    )
+
+
+def timetable_reply(text: str, session_id: str) -> str:
+    if "sunday" in text:
+        return (
+            "No Sunday sessions in the current timetable — Saturday is the weekend option.\n\n"
+            "Saturday has 8:00am Strength'N'Tone at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown."
+        )
+
+    mentioned_days = [day for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] if day in text]
+    mentioned_locations = [loc for loc in ["camperdown", "redfern"] if loc in text]
+    mentioned_classes = [
+        class_name
+        for class_name, aliases in CLASS_ALIAS_GROUPS.items()
+        if any(alias in text for alias in aliases)
+    ]
+
+    filtered = TIMETABLE_ENTRIES
+    if mentioned_days:
+        filtered = [entry for entry in filtered if entry[0] in mentioned_days]
+    if mentioned_locations:
+        filtered = [entry for entry in filtered if entry[3].lower() in mentioned_locations]
+    if mentioned_classes:
+        filtered = [entry for entry in filtered if entry[2] in mentioned_classes]
+
+    if filtered and (mentioned_days or mentioned_locations or mentioned_classes):
+        lines = [f"- {day.title()} {time} — {class_name} ({location})" for day, time, class_name, location in filtered[:8]]
+        if len(filtered) > 8:
+            lines.append("- Plus a few more across the full timetable.")
+        return (
+            "From the current timetable:\n"
+            + "\n".join(lines)
+            + "\n\nFor live availability, use the timetable/free-trial booking view — I won’t invent spots from here."
+        )
+
+    return (
+        "Quick version of the current week:\n\n"
+        "- Mornings: 6am most weekdays, plus 9:30am Mon/Wed/Fri at Camperdown.\n"
+        "- Evenings: 6:30pm at Camperdown on Mon/Tue/Wed.\n"
+        "- Saturday: 8am Strength'N'Tone at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown.\n"
+        "- Sunday: no sessions.\n\n"
+        "Exact live spots can change in the booking view. " + trial_close(session_id)
+    )
+
+
 # Sensitive-topic detectors. Word-boundary safe on purpose — bare substring
 # matching caused the "raining" inside "training" bug (commit c447660), and
 # "back"/"hip"/"neck" collide with very common words (background, ship,
@@ -1601,6 +1689,30 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "If you eat a particular way, Nick or Lyn can point you at what actually fits rather than me guessing — and on the SPT side there’s proper nutrition support that can be tailored.\n\n"
             "Want me to flag the meal plan to send through (just drop an email), or line up a quick chat with the team about the food side?"
         )
+
+    if any(phrase in clean for phrase in ["privacy", "private data", "my data", "personal details", "personal info", "personal information", "contact details", "keep my details", "store my details", "use my number", "spam me", "marketing emails"]):
+        return (
+            "Fair thing to ask. Use the chat like you would a front desk: only share what you’re comfortable sharing.\n\n"
+            "If you leave a name, mobile or email, it’s so Nick/Lyn can follow up about Outdoor Squad — not so Robo-Nick can start a shadowy data empire under Camperdown Oval.\n\n"
+            "If you’d rather not put details here, email innerwest@outdoorsquad.com.au directly."
+        )
+
+    if any(phrase in clean for phrase in ["diabetes", "diabetic", "blood sugar", "blood glucose", "hypogly", "type 1", "type one", "type 2", "type two"]):
+        return (
+            "Good one to flag before training. Diabetes doesn’t automatically rule you out, but it’s health-specific enough that Robo-Nick shouldn’t be guessing.\n\n"
+            "Best move is to check your own healthcare guidance and have Real Nick or Lyn scope the first session properly, including anything the coach needs to know before you train.\n\n"
+            "Want to drop a name + mobile so the team can handle it directly, or would you rather email innerwest@outdoorsquad.com.au?"
+        )
+
+    if any(phrase in clean for phrase in ["used to train", "used to come", "former member", "old member", "returning member", "come back", "coming back", "haven't been in ages", "havent been in ages", "been away", "restart", "re-start", "rejoin", "re-join", "lapsed"]):
+        return (
+            "Welcome back-ish. The sensible path is usually not to pretend nothing happened and charge straight into heroic nonsense.\n\n"
+            "Nick or Lyn can check where you’re at now, any injuries or schedule changes, then point you to the cleanest restart — group classes, SPT, or a trial-style first session if that makes more sense.\n\n"
+            "Want to drop your name + mobile/email so they can look you up and suggest the right re-entry?"
+        )
+
+    if is_timetable_question(clean) and not mentions_youth(clean):
+        return timetable_reply(clean, session_id)
 
     # General nutrition / "what should I eat" — don't prescribe a diet, but point
     # to the real food support instead of falling to a generic non-answer. Guarded
@@ -1792,20 +1904,8 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "If you want the most personal setup, SPT is capped at 4 people. For typical numbers at a specific session, the team can tell you when you book.\n\n"
             "Want to try a session and see the vibe for yourself? Camperdown or Redfern?"
         )
-    if not mentions_youth(clean) and (
-        any(phrase in clean for phrase in ["timetable", "schedule", "class times", "session times", "what times", "what time are", "what time do", "what time is", "what days", "which days", "when are the classes", "when do classes", "when are classes", "when do the classes", "what's the timetable", "whats the timetable"])
-        or ("saturday" in clean and any(word in clean for word in ["time", "when", "session", "class", "what"]))
-        or (any(d in clean for d in ["monday", "tuesday", "wednesday", "thursday", "friday", "sunday", "weekday", "weekend"]) and any(w in clean for w in ["time", "when", "session", "class", "what's on", "whats on", "anything on", "anything", "run", "running", "morning", "evening", "6am", "6:30", "9:30", "early", "after work", "come"]))
-        or any(phrase in clean for phrase in ["arvo sesh", "arvo seshes", "arvo session", "arvo class", "afternoon session", "afternoon class", "afternoon sesh", "evening sesh", "morning sesh", "after work session", "after-work session", "lunchtime session", "lunchtime class"])
-    ):
-        return (
-            "Quick version of the week:\n\n"
-            "- Mornings: 6am most days, plus 9:30am Mon/Wed/Fri at Camperdown.\n"
-            "- Evenings: 6:30pm at Camperdown (Mon/Tue/Wed).\n"
-            "- Saturday: 8am at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown.\n"
-            "- No Sunday sessions — Saturday is the weekend option.\n\n"
-            "Class types rotate across the week (Strength'N'Tone, HiiT'N'Run, Power'N'Pilates, Flow'N'Flex, Buff'N'Puff, Core'N'Sore). Easiest way to lock an exact time is the free trial — Camperdown or Redfern?"
-        )
+    if not mentions_youth(clean) and is_timetable_question(clean):
+        return timetable_reply(clean, session_id)
     if ("student" in clean or "concession" in clean) and not any(word in clean for word in ["trainer", "coach", "instructor"]):
         return (
             "Yep — there’s a Squad Student membership at $25/wk for verified students: unlimited coached group classes, same as the main membership.\n\n"
@@ -2739,6 +2839,10 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
     if is_goal_choice_reply(text, session_id):
         return True
     if any(word in text for word in ["nutrition", "meal", "diet", "weight loss", "lose weight"]):
+        return True
+    if is_timetable_question(text):
+        return True
+    if any(phrase in text for phrase in ["privacy", "private data", "my data", "personal details", "personal info", "personal information", "diabetes", "diabetic", "blood sugar", "blood glucose", "used to train", "former member", "returning member", "come back", "coming back", "restart", "rejoin", "lapsed"]):
         return True
     if mentions_youth(text):
         return True
