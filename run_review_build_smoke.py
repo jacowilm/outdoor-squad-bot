@@ -253,6 +253,48 @@ def main() -> int:
                     if term in reply.lower():
                         failures.append(f"{name}: leaked forbidden wording {term}")
 
+        nicholas_retest_cases = [
+            (
+                "plain-budget-no-phantom-partner",
+                "Money's tight this quarter — what are the options?",
+                ["$51/wk", "free trial"],
+                ["partner", "both", "either of you", "haggle", "discount"],
+            ),
+            (
+                "family-all-people",
+                "My wife and I both want to join, and our 14-year-old is keen too.",
+                ["two Squad Ascent", "Youth Training Program", "Saturday", "9:15"],
+                ["discount"],
+            ),
+            (
+                "spt-size-direct",
+                "How many people are in those SPT sessions again?",
+                ["4", "max"],
+                ["numbers vary", "group classes stay small"],
+            ),
+            (
+                "value-125-no-discount-guard",
+                "What do I get for $125 a week?",
+                ["SPT", "$125/wk", "four-person max"],
+                ["haggle", "discount", "random discounts"],
+            ),
+        ]
+        for name, message, required_terms, forbidden_terms in nicholas_retest_cases:
+            session_id = f"review-smoke-nicholas-retest-{name}-{uuid.uuid4().hex[:8]}"
+            response = client.post("/api/chat", json={"session_id": session_id, "message": message})
+            data = response.json()
+            reply = (data.get("reply") or "").strip()
+            preview = " ".join(reply.split())[:180]
+            print(f"{name}: status={response.status_code} fallback={data.get('fallback')} reply={preview}")
+            if response.status_code != 200:
+                failures.append(f"{name}: HTTP {response.status_code}")
+            for term in required_terms:
+                if term.lower() not in reply.lower():
+                    failures.append(f"{name}: missing required term {term}")
+            for term in forbidden_terms:
+                if term.lower() in reply.lower():
+                    failures.append(f"{name}: leaked forbidden wording {term}")
+
         location_session = f"review-smoke-location-{uuid.uuid4().hex[:8]}"
         response = client.post(
             "/api/chat",

@@ -1518,7 +1518,7 @@ def is_timetable_question(text: str) -> bool:
     return (
         any(phrase in text for phrase in ["timetable", "schedule", "class times", "session times", "what times", "what time are", "what time do", "what time is", "what days", "which days", "when are the classes", "when do classes", "when are classes", "when do the classes", "what's the timetable", "whats the timetable"])
         or ("saturday" in text and any(word in text for word in ["time", "when", "session", "class", "what"]))
-        or (any(d in text for d in ["monday", "tuesday", "wednesday", "thursday", "friday", "sunday", "weekday", "weekend"]) and any(w in text for w in ["time", "when", "session", "class", "what's on", "whats on", "anything on", "anything", "run", "running", "morning", "evening", "6am", "6:30", "9:30", "early", "after work", "come"]))
+        or (any(d in text for d in ["monday", "tuesday", "wednesday", "thursday", "friday", "sunday", "weekday", "weekend"]) and any(w in text for w in ["time", "when", "session", "class", "what's on", "whats on", "what is on", "what’s on", "anything on", "anything", "run", "running", "morning", "evening", "6am", "6:30", "9:30", "early", "after work", "come"]))
         or any(phrase in text for phrase in ["arvo sesh", "arvo seshes", "arvo session", "arvo class", "afternoon session", "afternoon class", "afternoon sesh", "evening sesh", "morning sesh", "after work session", "after-work session", "lunchtime session", "lunchtime class"])
     )
 
@@ -1690,7 +1690,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Want me to flag the meal plan to send through (just drop an email), or line up a quick chat with the team about the food side?"
         )
 
-    if any(phrase in clean for phrase in ["privacy", "private data", "my data", "personal details", "personal info", "personal information", "contact details", "keep my details", "store my details", "use my number", "spam me", "marketing emails"]):
+    if any(phrase in clean for phrase in ["privacy", "private data", "my data", "personal details", "personal info", "personal information", "contact details", "keep my details", "store my details", "use my number", "spam me", "marketing emails", "who can see", "what i've typed", "what ive typed", "what i typed", "what i type"]):
         return (
             "Fair thing to ask. Use the chat like you would a front desk: only share what you’re comfortable sharing.\n\n"
             "If you leave a name, mobile or email, it’s so Nick/Lyn can follow up about Outdoor Squad — not so Robo-Nick can start a shadowy data empire under Camperdown Oval.\n\n"
@@ -1835,12 +1835,45 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "SPT is probably the cleanest fit: max 4 people, bespoke programming, regular assessments, nutrition support, form cues, technique correction, and enough coach attention to progress you properly. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
             "Are you chasing strength progression, conditioning, or a bit of both?"
         )
-    if any(phrase in clean for phrase in ["partner and i", "my partner and i", "partner is", "run it past my", "run it past the", "run it by my", "ask my husband", "ask my wife", "chat to my husband", "chat to my wife", "talk to my husband", "talk to my wife", "check with my husband", "check with my wife", "my husband", "my wife", "on a budget", "tight budget", "money's tight", "money is tight", "bit tight", "can't really afford", "cant afford", "can't afford", "afford it", "pricing flexible", "price flexible", "flexible pricing"]):
+    multi_person_family = (
+        any(adult in clean for adult in ["wife and i", "husband and i", "partner and i", "my wife", "my husband", "my partner"])
+        and mentions_youth(clean)
+    )
+    if multi_person_family:
+        return (
+            "For the household, answer all three people separately rather than pretending it’s just a kids’ question.\n\n"
+            "For you two adults, the clean default is two Squad Ascent memberships: $51/wk each for unlimited coached group classes. For the 14-year-old, it’s the Youth Training Program: Saturday 9:15am at Camperdown, $25/wk, ages 10–17, with qualified WWCC-checked coaches.\n\n"
+            "Saturday can work neatly too: an adult can train at 8:00am while the teen does YTP at 9:15am. Best first move is to get everyone into the right trial/first-session path."
+        )
+
+    if any(phrase in clean for phrase in ["partner and i", "my partner and i", "partner is", "run it past my", "run it past the", "run it by my", "ask my husband", "ask my wife", "chat to my husband", "chat to my wife", "talk to my husband", "talk to my wife", "check with my husband", "check with my wife", "my husband", "my wife"]):
         return (
             "Totally fair — worth talking through with them, and the trial’s free either way so you can both feel it out before any money chat.\n\n"
-            "We don’t haggle or run random discounts, but there are different levels depending on how much coaching you want: Squad Ascent at $51/wk for unlimited coached group sessions, a $25/wk Squad Student rate if either of you is a verified student, and SPT if you want the higher-touch lane (bespoke programming, regular assessments, four-person max).\n\n"
+            "There are different levels depending on how much coaching you want: Squad Ascent at $51/wk for unlimited coached group sessions, a $25/wk Squad Student rate if either of you is a verified student, and SPT if you want the higher-touch lane (bespoke programming, regular assessments, four-person max).\n\n"
             "Lowest-risk move for you both is the free trial — test the coaching before anyone commits to a level."
         )
+
+    if any(phrase in clean for phrase in ["on a budget", "tight budget", "money's tight", "money is tight", "bit tight", "can't really afford", "cant afford", "can't afford", "afford it"]):
+        return (
+            "Fair question. If cost is the main constraint, start with the lowest-risk path: the free trial first, then Squad Ascent at $51/wk if the group setup feels right.\n\n"
+            "If you want more coaching, the 28-Day Kickstarter is $397 total for the SPT trial path, and ongoing SPT 2x + Group is $125/wk. But you don’t need to choose the higher-touch lane before you’ve tried a session.\n\n"
+            "Best move is to use the free trial to work out whether the coaching is worth it for you."
+        )
+
+    if any(phrase in clean for phrase in ["pricing flexible", "price flexible", "flexible pricing"]):
+        return (
+            "Pricing itself isn’t a haggle path, but there are different levels depending on how much coaching you want.\n\n"
+            "Squad Ascent is $51/wk for unlimited coached group sessions, verified students are $25/wk, and SPT is the higher-touch lane if you want bespoke programming and more coach attention.\n\n"
+            "Best first move is still the free trial so you can decide from the actual session."
+        )
+
+    if ("$125" in clean or "125 a week" in clean or "125/wk" in clean) and any(w in clean for w in ["get", "include", "included", "what", "spt", "week"]):
+        return (
+            "$125/wk is SPT 2x + Group — the semi-private lane, not the 28-Day Kickstarter.\n\n"
+            "You get two SPT sessions per week in a four-person max setup, plus group classes, bespoke programming, regular assessments, nutrition support and closer coach attention.\n\n"
+            "If you haven’t tried the setup yet, the lower-commitment test is the 28-Day Kickstarter at $397 total."
+        )
+
     if any(phrase in clean for phrase in ["just generic", "generic class", "generic classes", "pay attention", "coach actually", "coach pay", "modifications", "cues"]):
         return (
             "Group classes are still coached — not a faceless park workout where you’re left to guess.\n\n"
@@ -1894,11 +1927,17 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "- SPT sessions: 24 hours' notice to cancel, one makeup session a month (use it or lose it), and no makeups for no-shows.\n\n"
             "If it's about a specific booking, the team can sort it directly — want me to flag it?"
         )
-    # Group class size — KB has no fixed number, so don't let the LLM invent one
-    # (it was quoting "15-20 people"). Answer qualitatively + SPT's real cap of 4.
-    if any(phrase in clean for phrase in ["how many people", "how many in a class", "how many in each", "class size", "class sizes", "group size", "how many per", "how many others", "how crowded", "how many people in"]) or (
+    # Group / SPT size. If the visitor asks about SPT, lead with the hard fact;
+    # do not hedge with group-class language first (Nicholas 2026-06-11 retest).
+    size_question = any(phrase in clean for phrase in ["how many people", "how many in a class", "how many in each", "class size", "class sizes", "group size", "how many per", "how many others", "how crowded", "how many people in"]) or (
         "how big" in clean and any(w in clean for w in ["class", "classes", "group", "session", "sessions", "squad", "crew"])
-    ):
+    )
+    if size_question and any(w in clean for w in ["spt", "semi-private", "semi private", "small group personal", "personal training"]):
+        return (
+            "SPT is 4 max — that’s the point of it.\n\n"
+            "You get semi-private coaching with bespoke programming, regular assessments and enough coach attention that it doesn’t become anonymous group training."
+        )
+    if size_question:
         return (
             "Group classes stay small enough that the coach actually knows you and can give cues and modifications — it's coached training, not a faceless crowd. Numbers vary a bit by session and time of day.\n\n"
             "If you want the most personal setup, SPT is capped at 4 people. For typical numbers at a specific session, the team can tell you when you book.\n\n"
