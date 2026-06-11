@@ -2028,6 +2028,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "So a holiday or a busy stretch doesn’t mean cancelling — you hold it and pick back up. SPT and the exact dates are best set up directly with Real Nick or Lyn.\n\n"
             "Want me to flag a pause to the team, or were you still weighing up joining?"
         )
+    # FIFO / on-rotation workers — "away 2 of every 4 weeks, worth it?" should get
+    # the pause policy + casual option, not the generic price ladder (found 2026-06-11).
+    if any(phrase in clean for phrase in ["fifo", "fly in fly out", "fly-in fly-out", "on rotation", "on a rotation", "away for work", "travel for work", "work away", "away every", "away half", "away 2 weeks", "away two weeks", "interstate half", "on swing", "swing shift"]):
+        return (
+            "Genuinely workable — you've got two honest options rather than paying for air.\n\n"
+            "Memberships can be paused for the away stretches: up to 8 weeks per calendar year, in minimum 1-week blocks, requested in advance. If your roster chews through more than that, $37 casual drop-ins only cost you when you're actually in town.\n\n"
+            "Best move is the free trial first, then a quick word with Nick or Lyn about which setup fits your rotation. Want me to flag it?"
+        )
     # Contract / lock-in / cancellation — the KB has this, so answer it rather than
     # letting the LLM invent a "minimum commitment period" or say "I don't have it".
     if any(phrase in clean for phrase in ["lock-in", "lock in", "locked in", "lockin", "contract", "minimum commitment", "minimum term", "minimum contract", "tied in", "tied into", "how do i cancel", "how to cancel", "cancel my membership", "cancellation", "cancel anytime", "notice period", "cancel my", "quit my membership", "end my membership", "get out of it"]):
@@ -2160,6 +2168,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 "Love the instinct — though the Youth Training Program starts at 10, so they’re just a touch young for it right now.\n\n"
                 "Worth a quick word with Nick or Lyn about whether there’s anything suitable in the meantime, or flagging them to start when they turn 10 (it’s Saturday 9:15am at Camperdown, $25/wk, WWCC-checked coaches).\n\n"
                 "Want me to pass that on?"
+            )
+        # Shy/anxious kid: answer the actual worry — confidence-building is the
+        # YTP's stated purpose in the source docs (found 2026-06-11).
+        if any(w in clean for w in ["shy", "nervous", "anxious", "confidence", "self-conscious", "self conscious", "introvert", "won't know anyone", "wont know anyone", "cope in a group", "cope with a group", "scared of groups", "doesn't like groups", "doesnt like groups"]):
+            return (
+                "Really common worry — and honestly, shy kids are exactly who the Youth Training Program is built for.\n\n"
+                "It's a small Saturday group (9:15am at Camperdown, $25/wk) with qualified WWCC-checked coaches, and the whole point is confidence and physical literacy, not performing in front of anyone. Nobody gets singled out, everything scales, and parents are welcome to stay and watch — which usually settles the nerves on both sides.\n\n"
+                "Easiest first step is one no-pressure session to see how they find it. Want the team to set that up gently?"
             )
         return (
             "Yep — that’s the Youth Training Program, for ages 10–17.\n\n"
@@ -3051,6 +3067,7 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         "trial twice", "trial again", "another trial", "another free", "second trial",
         "as a gift", "gift for", "gift membership", "voucher", "a present for",
         "toilet", "toilets", "bathroom", "shower", "showers", "locker", "lockers", "change room", "changing room", "leave my bag", "leave bags", "bag storage",
+        "fifo", "fly in fly out", "on rotation", "away for work", "work away", "away every", "away 2 weeks", "away two weeks", "on swing",
         "pause membership", "cancel membership", "account question", "weather", "forecast",
         "joke about politics", "politics", "discount", "free month", "cheaper", "any deal", "a deal", "money off",
         "ignore your previous instructions", "system prompt", "previous instructions", "jailbreak",
