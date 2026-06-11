@@ -942,8 +942,12 @@ def clean_agent_reply(reply: str | None) -> str:
     # can render it as <strong>.
     text = re.sub(r"(?<!\*)\*(?!\*)", "", text)
     text = re.sub(r"^[\s\-\u2013\u2014]+(?=\w)", "", text)
+    # Only strip these openers when they are a COMPLETE standalone opener \u2014
+    # i.e. followed by real punctuation ("Sweet.", "Good call \u2014"). Without the
+    # punctuation requirement, "Good call to ask upfront" lost its subject and
+    # shipped as the fragment "to ask upfront, honestly." (found 2026-06-11).
     text = re.sub(
-        r"^(?:nice(?: one)?|good call|love that|perfect|sweet)[\s,.;:!?\-\u2013\u2014]*",
+        r"^(?:nice(?: one)?|good call|love that|perfect|sweet)\s*[,.;:!?\-\u2013\u2014]+\s*",
         "",
         text,
         flags=re.IGNORECASE,
@@ -1323,6 +1327,15 @@ def non_repeating_followup(message: str, session_id: str) -> str:
         return (
             "No secret promo to chase, honestly — the free trial is the offer: one full coached session, free, no catch.\n\n"
             "Want me to point you to it, or pass you to Real Nick or Lyn to talk through the options?"
+        )
+    # Account/billing admin must outrank the price branch — "update my card
+    # details for my membership" contains "membership" and was getting the
+    # group-or-SPT deflection (found 2026-06-11).
+    if any(phrase in clean for phrase in ["billing date", "payment date", "change my billing", "change my payment", "update my payment", "card details", "update my card", "change my card", "new card", "payment method", "credit card", "debit card", "direct debit", "bank details", "pause my membership", "cancel my membership"]):
+        return (
+            "Although I’m awesome, that is outside my purview.\n\n"
+            "Payment dates, card details, billing changes, pauses and account stuff need Real Nick, Lyn, or the admin team — cruel human overlords with actual account access.\n\n"
+            "Send through your name plus the email or mobile on the membership and they can sort it properly."
         )
     if any(word in clean for word in ["price", "cost", "how much", "membership", "option", "options", "spt", "kickstarter"]):
         # If they're asking a specific price again (often after a topic detour,
@@ -1884,6 +1897,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "If cars are floating past with a pod of dolphins, then yes, the session might get cancelled. That is — mercifully — rare.\n\n"
             "If you’re testing it for the first time, a free trial is still the cleanest way to feel it out. " + trial_close(session_id)
         )
+    # Park facilities — only state what the source docs actually say (Camperdown
+    # has upgraded public facilities); don't invent lockers or showers.
+    if any(phrase in clean for phrase in ["toilet", "toilets", "bathroom", "bathrooms", "shower", "showers", "locker", "lockers", "change room", "change rooms", "changing room", "leave my bag", "leave bags", "leave my stuff", "store my bag", "bag storage", "somewhere to put my"]):
+        return (
+            "Honest picture: it's park training, so think practical rather than fancy.\n\n"
+            "Camperdown (The Barracks at Camperdown Tennis & Oval) has upgraded public facilities on site. At Redfern Park the meeting point is near the Park Café at the Sports Oval end. Most people just bring a small bag and keep it beside the session — best to leave the valuables at home.\n\n"
+            "If something specific matters (showers before work, pram space, that sort of thing), the team can give you the exact lay of the land — want me to flag it?"
+        )
     if any(phrase in clean for phrase in ["over 50", "over fifty", "in my 50s", "in my fifties", "late forties", "in my 40s", "in my forties", "peter attia", "functional into my seventies", "functional into my 70s", "into my seventies", "into my 70s", "in my 60s", "in my sixties", "too old", "am i too old"]):
         return (
             "Definitely your wheelhouse — and that long-game mindset is a very Outdoor Squad reason to train.\n\n"
@@ -1934,6 +1955,15 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Saturday works neatly as a family routine too: an adult trains at 8:00am while the teen does YTP at 9:15am. Best first move is free trials all round — want me to flag all three to the team?"
         )
 
+    # Gift memberships — must outrank the partner branch ("for my husband" is a
+    # gift intent, not a run-it-past-the-partner objection). Not a standard
+    # product, so hand off rather than invent vouchers.
+    if any(phrase in clean for phrase in ["as a gift", "a gift for", "gift for my", "gift it", "gift membership", "gift voucher", "voucher", "as a present", "a present for", "surprise my", "buy a membership for", "membership for my husband", "membership for my wife", "membership for my mum", "membership for my dad", "membership for my partner"]):
+        return (
+            "Lovely idea — and very giftable, as far as presents that involve burpees go.\n\n"
+            "Gift setups aren't an off-the-shelf product, but the team has sorted them before: easiest path is usually booking them the free trial first (so they actually want the gift), then Nick or Lyn set up the membership in their name.\n\n"
+            "Drop your name + mobile or email innerwest@outdoorsquad.com.au and they'll sort the details with you directly."
+        )
     if any(phrase in clean for phrase in ["partner and i", "my partner and i", "partner is", "run it past my", "run it past the", "run it by my", "ask my husband", "ask my wife", "chat to my husband", "chat to my wife", "talk to my husband", "talk to my wife", "check with my husband", "check with my wife", "my husband", "my wife"]):
         return (
             "Totally fair — worth talking through with them, and the trial’s free either way so you can both feel it out before any money chat.\n\n"
@@ -2169,6 +2199,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Worth mentioning though: the trial is one session, free, no commitment. The trial is the research — it gives you better information than another website ever will. Crom weeps when a free trial goes to waste.\n\n"
             + trial_close(session_id)
         )
+    # "Can I do the free trial twice?" — answer the actual question (one per
+    # person) instead of reciting generic trial info (found 2026-06-11).
+    if any(phrase in clean for phrase in ["trial twice", "trial again", "second trial", "another trial", "another free trial", "two trials", "2 trials", "free trial again", "second free", "trial more than once", "another free class", "another free session", "redo the trial"]):
+        return (
+            "Straight answer: the free pass is one per person — one full coached session to see if the Squad fits.\n\n"
+            "After that the low-commitment option is a $37 casual drop-in, or Squad Ascent at $51/wk if you're ready for unlimited classes. If your trial got rained out or didn't give you a fair read, mention it to the team — they're humans about it.\n\n"
+            "Want me to flag your details so Nick or Lyn can sort the next step?"
+        )
     if any(phrase in clean for phrase in ["how do i actually sign up", "how do i sign up", "how do i book", "where do i sign up", "sign me up", "sign up", "book a trial", "book the trial", "how do i join", "how do i get started"]):
         return (
             "Easiest way in is the free trial — one session, no commitment.\n\n"
@@ -2253,7 +2291,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Real Nick and Lyn are the actual humans behind The Outdoor Squad. I can answer the common stuff and point you to the right next step while they're coaching, asleep, or somewhere near coffee.\n\n"
             "If it needs a human, the team can pick it up from here."
         )
-    if any(phrase in clean for phrase in ["billing date", "payment date", "payment day", "change my billing", "change my payment", "update my payment", "pause membership", "cancel membership", "account question"]):
+    if any(phrase in clean for phrase in ["billing date", "payment date", "payment day", "change my billing", "change my payment", "update my payment", "pause membership", "cancel membership", "account question", "card details", "update my card", "change my card", "new card", "payment method", "credit card", "debit card", "direct debit", "bank details", "update my details", "change my details"]):
         return (
             "Although I’m awesome, that is outside my purview.\n\n"
             "Payment dates, billing changes, pauses and account stuff need Real Nick, Lyn, or the admin team — cruel human overlords with actual account access.\n\n"
@@ -3009,6 +3047,10 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         "1:1", "one on one", "private session", "private sessions", "private coach", "coach who knows", "writes me a program", "write the program around me", "write a program around me", "program around me",
         "what makes you different", "different from other gyms", "different to other gyms", "just generic", "generic class", "coach actually", "pay attention", "modifications", "cues",
         "who's crom", "who is crom", "what is crom", "billing date", "change my billing",
+        "card details", "update my card", "change my card", "payment method", "credit card", "direct debit", "bank details",
+        "trial twice", "trial again", "another trial", "another free", "second trial",
+        "as a gift", "gift for", "gift membership", "voucher", "a present for",
+        "toilet", "toilets", "bathroom", "shower", "showers", "locker", "lockers", "change room", "changing room", "leave my bag", "leave bags", "bag storage",
         "pause membership", "cancel membership", "account question", "weather", "forecast",
         "joke about politics", "politics", "discount", "free month", "cheaper", "any deal", "a deal", "money off",
         "ignore your previous instructions", "system prompt", "previous instructions", "jailbreak",
