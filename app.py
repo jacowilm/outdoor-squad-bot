@@ -1872,7 +1872,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             + trial_close(session_id)
         )
 
-    if any(phrase in clean for phrase in ["pretty unfit", "very unfit", "super unfit", "really unfit", "nervous", "anxious", "anxiety", "intimidated", "intimidating", "scared", "self-conscious", "self conscious", "judged", "cringe", "fit people", "first class", "first session", "beginner", "never trained", "no exercise", "haven't done any exercise", "havent done any exercise", "out of shape", "not fit", "desk 10 hours", "desk job", "body's falling apart", "bodys falling apart"]):
+    if not mentions_youth(clean) and any(phrase in clean for phrase in ["pretty unfit", "very unfit", "super unfit", "really unfit", "nervous", "anxious", "anxiety", "intimidated", "intimidating", "scared", "self-conscious", "self conscious", "judged", "cringe", "fit people", "first class", "first session", "beginner", "never trained", "no exercise", "haven't done any exercise", "havent done any exercise", "out of shape", "not fit", "desk 10 hours", "desk job", "body's falling apart", "bodys falling apart"]):
         return (
             "Yes — someone like you can do this. Plenty of people start before they feel ready, and nobody sensible expects you to keep up with the fittest person in the class on day one.\n\n"
             "The coach scales the session to where you actually are: lighter load, simpler version, more rest if needed. The entry requirement is having a crack, not arriving pre-built like a fitness catalogue mannequin.\n\n"
