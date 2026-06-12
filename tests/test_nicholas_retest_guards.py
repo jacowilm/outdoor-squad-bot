@@ -79,12 +79,15 @@ def test_privacy_question_gets_plain_privacy_answer():
     assert "innerwest@outdoorsquad.com.au" in lowered
 
 
-def test_bot_identity_uses_humanoid_nick_not_robo_nick():
+def test_bot_is_robo_nick_and_human_is_humanoid_nick():
+    # Nicholas's 2026-06-12 naming decision renames the HUMAN: the bot persona
+    # stays Robo-Nick; the human coach (formerly "Real Nick") is Humanoid-Nick.
     text = reply("Are you a real person or a bot?")
 
     lowered = text.lower()
-    assert "humanoid-nick" in lowered
-    assert "robo-nick" not in lowered
+    assert "robo-nick" in lowered          # the bot self-identifies as Robo-Nick
+    assert "humanoid-nick" in lowered      # the human is referenced as Humanoid-Nick
+    assert "real nick" not in lowered      # the old human name is fully retired
 
 
 def test_injury_handoff_acknowledges_specific_named_person_without_instruction_leak():
