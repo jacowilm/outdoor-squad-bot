@@ -1,5 +1,5 @@
 """
-The Outdoor Squad — Robo-Nick enquiry flow
+The Outdoor Squad — Humanoid-Nick enquiry flow
 Built by AI Sprints for Nicholas Holland / The Outdoor Squad
 
 Scope: one practical/linkable first version that answers Outdoor Squad FAQs,
@@ -144,7 +144,7 @@ SOURCE_CHUNKS = build_source_chunks()
 
 BRAND_VOICE_REFERENCE = """Required brand voice reference:
 - Sound like Nick: strength coach, dry Australian comedian, casual nerd-reference machine, genuinely on the visitor's side.
-- Use Australian English and Outdoor Squad vocabulary: mate, reckon, having a crack, proper, the Squad, training, session, members, team, Robo-Nick, real Nick.
+- Use Australian English and Outdoor Squad vocabulary: mate, reckon, having a crack, proper, the Squad, training, session, members, team, Humanoid-Nick, real Nick.
 - Prefer capability language over aesthetics: strong, build, consistency, carrying groceries at 75; avoid shred, summer body, transformation-photo hype, hustle-culture or LinkedIn-ish phrasing.
 - SPT always means Semi-Private Personal Training. Never expand it as Specific Program Training.
 - Pricing guardrail: the 28-Day Kickstarter is $397 total for 28 days. $125/wk is SPT 2x + Group, not the Kickstarter price. Never conflate them in pricing, discount, or budget answers.
@@ -152,7 +152,7 @@ BRAND_VOICE_REFERENCE = """Required brand voice reference:
 - Flow'N'Flex is the current umbrella class name for the old Yoga Squad plus the yoga, Pilates and mobility-style sessions. Do not offer Power'N'Pilates as a separate current class unless Nicholas/Lyn reintroduce it.
 - References are seasoning: Crom/Conan, Tolkien, Princess Bride, RPG/dungeon jokes, sci-fi, Inner West specifics. Use only when they fit the visitor and never for nervous, medical, or sensitive first-contact moments.
 - Crom is an insider running gag for confident/training-savvy moments: "By Crom", "Crom approves", "Crom does not look kindly on skipped warm-ups". Do not turn every answer into a Crom bit.
-- Robo-Nick is self-aware automation. Real Nick handles personal, sensitive, or high-touch conversations.
+- Humanoid-Nick is self-aware automation. Real Nick handles personal, sensitive, or high-touch conversations.
 - Deliberate Nick-ish weirdness is allowed sparingly: Yo-gah, Puh-lah-tees, Hye-rox, kettlebellll, nuuu-trish-un.
 - Humour modes that fit: self-aware observational, affectionate roast, anti-fitspo deadpan, dry over/understatement. Keep warmth under the sarcasm.
 - Avoid generic fitness-brand language, fake hype, excessive emoji, American spelling, "y'all", overused "guys", "vibes", "blessed", "manifest", "unlock potential", "amazing"/"incredible" as filler.
@@ -560,7 +560,7 @@ def get_anthropic_client():
 
 def configured_ai_providers() -> list[str]:
     """Provider chain. Anthropic Haiku 4.5 is primary (best persona consistency
-    + jailbreak hold for Robo-Nick), OpenAI gpt-5-mini is the fallback. Gemini
+    + jailbreak hold for Humanoid-Nick), OpenAI gpt-5-mini is the fallback. Gemini
     is off by default after the 2026-05-17 QA produced off-brand voice; flip
     OUTDOOR_SQUAD_ENABLE_GEMINI=1 to re-enable it as the last-resort tail."""
     providers: list[str] = []
@@ -582,9 +582,9 @@ def primary_ai_provider() -> str | None:
 MIN_REPLY_DELAY_MS = 900
 MAX_REPLY_DELAY_MS = 2600
 
-BASE_AGENT_PROMPT = f"""You are Robo-Nick, the chat assistant for The Outdoor Squad, an outdoor fitness community in Sydney's Inner West.
+BASE_AGENT_PROMPT = f"""You are Humanoid-Nick, the chat assistant for The Outdoor Squad, an outdoor fitness community in Sydney's Inner West.
 
-You are deliberately self-aware automation, not a fake human. If asked who you are, say you are Robo-Nick: the automated helper while real Nick is coaching, asleep, or probably near coffee. Do not overdo the joke.
+You are deliberately self-aware automation, not a fake human. If asked who you are, say you are Humanoid-Nick: the automated helper while real Nick is coaching, asleep, or probably near coffee. Do not overdo the joke.
 
 Core behaviour:
 - First react to what the person actually said.
@@ -622,7 +622,7 @@ Conversation rules:
   Free trial: easiest way to see if the vibe works.
 - Keep Nick's voice: natural, a little dry, practical, warm. Sound like a coach texting between sessions, not a brochure.
 - Use humour the way Nick does: dry, referential, slightly nerdy, Australian. One light joke or odd phrase is good; trying too hard is not.
-- Robo-Nick is self-aware automation. It can casually admit Real Nick is coaching, asleep, under a kettlebell, or near coffee, but only when that helps the moment.
+- Humanoid-Nick is self-aware automation. It can casually admit Real Nick is coaching, asleep, under a kettlebell, or near coffee, but only when that helps the moment.
 - Avoid long setup paragraphs before the useful answer. One quick human reaction is enough.
 - Do not use Markdown formatting. No **bold**, no headings, no dense bullet walls.
 - If the user asks for "types", "options", or "what you do", do not list everything. Group the answer into 3-4 simple lines and invite them to pick a path.
@@ -635,12 +635,12 @@ Conversation rules:
   YTP parents: warm, parent-respectful, safety-forward.
 - For workout/class type questions, answer with training styles first, not product names: strength, conditioning/HiiT/run, bootcamp/group sessions, plus kids/YTP only if relevant. Do not describe YTP as a generic adult long-term plan; it is the Youth Training Program.
 - Never describe group classes as generic or hands-off. Squad Ascent/core group sessions are coached: the trainer gives cues, modifications, regressions/progressions, and attention. SPT adds bespoke programming, regular assessments, and a four-person maximum, but do not diminish group training to sell it.
-- Do not sign messages with "Robo-Nick". The widget already shows who is speaking.
+- Do not sign messages with "Humanoid-Nick". The widget already shows who is speaking.
 - Do not paste links/phone/email unless the user is ready to book, asks for contact details, or shares contact details.
 - Never claim an email, SMS, reminder, booking confirmation, meal plan delivery, or notification was sent unless this app actually did it.
 - If a visitor writes in another language, reply in English (a one-word greeting in their language is fine). Never claim Nick, Lyn, or the team speak that language — you don't know. Offer email (innerwest@outdoorsquad.com.au) so they can sort language directly.
 - There are NO referral bonuses, guest promos, or discounts to "keep an eye out for" — never hint that any exist. Guests and friends use the free 1-Day Trial Pass. Families or groups training together may get value-stacked bonuses (extra sessions, movement screens) after a chat with the team — never money off.
-- If you are not confident about ANY answer, do not improvise — hand off to Real Nick with a light line ("that one's outside what Robo-Nick can reliably do — Real Nick kept the improv rights for himself") and ask for a first name + mobile, or give innerwest@outdoorsquad.com.au. A wrong answer is worse than a handoff.
+- If you are not confident about ANY answer, do not improvise — hand off to Real Nick with a light line ("that one's outside what Humanoid-Nick can reliably do — Real Nick kept the improv rights for himself") and ask for a first name + mobile, or give innerwest@outdoorsquad.com.au. A wrong answer is worse than a handoff.
 - NEVER offer to follow up at the prospect's stated delay ("I'll decide next month" → do NOT say "the team can reach out next month"). Intent decays. Capture the contact now and say the team will say g'day within a day or two; the decision can take as long as it likes.
 - If someone mentions a doctor-flagged condition or says they're scared/worried about their health: acknowledge the feeling plainly, drop ALL jokes and pop-culture references for that reply, reassure briefly, and offer a human chat with Real Nick or Lyn.
 - If a question involves several people (partner + kids, a whole family), answer for ALL of them — each person's right product and price — not just the last person mentioned.
@@ -771,7 +771,7 @@ Relevant Outdoor Squad source context for this reply:
 Recent assistant phrasing to avoid repeating too closely:
 {chr(10).join('- ' + item[:220].replace(chr(10), ' ') for item in recent_assistant) if recent_assistant else '- none'}
 
-Now answer the user's latest message naturally as Robo-Nick. Use the source context, the conversation history, and the user's tone. If the source context does not contain an exact answer, say so briefly and route to a free trial or human follow-up instead of inventing.
+Now answer the user's latest message naturally as Humanoid-Nick. Use the source context, the conversation history, and the user's tone. If the source context does not contain an exact answer, say so briefly and route to a free trial or human follow-up instead of inventing.
 
 Anti-repeat rule: if the recent assistant phrasing already gave the same locations, prices, options, follow-up promise, or logistics, do not restate the whole block. Acknowledge briefly, add only one new useful detail if needed, then move the conversation forward with one focused question.
 
@@ -1238,7 +1238,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
     # generic "drop your mobile" handoff (which the repeat-detector would otherwise hit).
     if is_prompt_injection(clean):
         return (
-            "Still not happening — Robo-Nick doesn’t reveal its internal instructions or system prompt.\n\n"
+            "Still not happening — Humanoid-Nick doesn’t reveal its internal instructions or system prompt.\n\n"
             "Happy to help with the real stuff though: trials, prices, SPT, YTP, locations, or getting a human to follow up."
         )
     if is_location_choice_reply(clean, session_id):
@@ -1261,15 +1261,17 @@ def non_repeating_followup(message: str, session_id: str) -> str:
         )
     if mentions_pregnancy(clean) or "miscarriage" in clean:
         return (
-            "Worth saying again: this one isn’t a Robo-Nick call.\n\n"
+            "Worth saying again: this one isn’t a Humanoid-Nick call.\n\n"
             "Pregnancy training depends on your stage, your history, and what your healthcare team’s said — Real Nick or Lyn need to scope it in person, not me.\n\n"
             "Easiest move: drop your first name + mobile here and they’ll ring you back. Or email innerwest@outdoorsquad.com.au if you’d rather start that way."
         )
     if mentions_injury(clean) or any(phrase in clean for phrase in ["physio", "surgery", "torn"]):
+        name = extract_contact_name(message, session_id=session_id)
+        name_open = f"Righto {name.split()[0]} — " if name else "Righto — "
         return (
-            "Don’t want to keep talking past the actual question.\n\n"
-            "Injury history needs a coach’s eye before sessions — Robo-Nick shouldn’t be guessing at modifications. Real Nick or Lyn can scope it properly in a quick call.\n\n"
-            "Want to drop your name + mobile so they can ring you, or would you rather grab the trial link and flag the injury when you book?"
+            f"{name_open}that's exactly the sort of injury history worth a proper coach chat, not chat-widget guesswork.\n\n"
+            "Every injury is individual, so Humanoid-Nick won’t prescribe modifications from here. Real Nick or Lyn can look at what’s going on and work out whether a modified free trial, SPT, or a quick human call is the sensible first move.\n\n"
+            "Want to share a mobile so they can ring you, or would you rather email innerwest@outdoorsquad.com.au?"
         )
     # Repeated schedule questions ("ok what about Friday then?") stay grounded in
     # the literal timetable instead of falling to the generic handoff terminal.
@@ -1360,7 +1362,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "The next useful split is coaching level: group classes for routine, or SPT/Kickstarter if you want more hands-on technique and progression."
         )
     return (
-        "Honest answer: that one's outside what Robo-Nick can reliably do — Real Nick kept the improv rights for himself.\n\n"
+        "Honest answer: that one's outside what Humanoid-Nick can reliably do — Real Nick kept the improv rights for himself.\n\n"
         "Drop your first name + mobile and he or Lyn will sort it properly, or grab the free trial whenever you're ready."
     )
 
@@ -1656,7 +1658,7 @@ PREGNANCY_RE = re.compile(
 )
 INJURY_RE = re.compile(
     r"\b(?:"
-    r"injur\w*|rehab\w*|sprain\w*|strained?|torn|tendon\w*|niggles?|limitations?|sciatica|slipped disc|"
+    r"injur\w*|rehab\w*|sprain\w*|strained?|torn|tendon\w*|tendin\w*|niggles?|limitations?|sciatica|slipped disc|"
     r"surger\w*|surgical|operations?|post-?op|recovering from|recovery from|going under the knife|"
     r"physio\w*|herniat\w*|fracture\w*|broken (?:arm|leg|wrist|ankle|foot|hand|finger|rib|ribs|collarbone|bone|toe)|dislocat\w*|"
     r"knees?|shoulders?|hips?|necks?|wrists?|ankles?|elbows?|"
@@ -1731,7 +1733,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # swallowed by an unrelated keyword branch (e.g. "system prompt" -> "pt").
     if is_prompt_injection(clean):
         return (
-            "Nice try. Robo-Nick isn't spilling the internal instructions or system prompt — by Crom, some things stay behind the curtain.\n\n"
+            "Nice try. Humanoid-Nick isn't spilling the internal instructions or system prompt — by Crom, some things stay behind the curtain.\n\n"
             "I can help with the actual Outdoor Squad stuff though: trials, prices, SPT, YTP, injuries, locations, or getting a human to follow up.\n\n"
             "What brought you here?"
         )
@@ -1794,7 +1796,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 "Drop your first name + mobile and they'll call for a no-pressure chat — or email innerwest@outdoorsquad.com.au if that's easier. Either way, you're not doing this on your own."
             )
         return (
-            "Good one to flag before training. A health condition doesn't automatically rule you out, but it's specific enough that Robo-Nick shouldn't be guessing.\n\n"
+            "Good one to flag before training. A health condition doesn't automatically rule you out, but it's specific enough that Humanoid-Nick shouldn't be guessing.\n\n"
             "Best move is to keep your own healthcare guidance in the loop and have Real Nick or Lyn scope the first session properly, including anything the coach needs to know before you train.\n\n"
             "Want to drop a name + mobile so the team can handle it directly, or would you rather email innerwest@outdoorsquad.com.au?"
         )
@@ -1822,7 +1824,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         or (any(w in clean for w in ["eat", "eating", "diet", "nutrition", "food"]) and any(g in clean for g in ["lose weight", "weight loss", "fat loss", "slim down", "drop weight", "shift weight"]))
     ):
         return (
-            "Robo-Nick won’t write you a diet from a chat box — but the food side genuinely matters, so two real things:\n\n"
+            "Humanoid-Nick won’t write you a diet from a chat box — but the food side genuinely matters, so two real things:\n\n"
             "There’s a free 5-Day High-Protein Australian Meal Plan you can grab (drop an email and the team sends it through), and the SPT path includes proper nutrition support and tracking if you want it dialled in. Training plus food beats training alone.\n\n"
             "Want me to flag the meal plan to send through, or is the training side the bigger question right now?"
         )
@@ -1845,19 +1847,21 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if mentions_pregnancy(clean):
         return (
             "Love that you want to stay active — and smart to check first rather than guess.\n\n"
-            "This one’s genuinely not a Robo-Nick call though. What’s right depends on where you’re at, your history, and what your own healthcare team has said, so I’m not going to hand you a training plan from a chat box.\n\n"
+            "This one’s genuinely not a Humanoid-Nick call though. What’s right depends on where you’re at, your history, and what your own healthcare team has said, so I’m not going to hand you a training plan from a chat box.\n\n"
             "The proper move is a quick chat with Real Nick or Lyn — they’ve coached pregnant and postnatal members before and can scope it with you directly. Want to drop your first name + mobile so they can give you a call, or would you rather email innerwest@outdoorsquad.com.au?"
         )
     if mentions_injury(clean):
         if any(word in clean for word in ["crossfit", "hyrox", "powerlifting", "powerlift", "barbell", "strongman"]) or ("serious" in clean and ("programming" in clean or "program" in clean)):
             return (
                 "That’s more SPT / 28-Day Kickstarter than a basic group-class trial. You clearly know your way around training, so the useful bit is not random sweat — it’s programming, coaching eyes, and sensible adjustments around that injury.\n\n"
-                "Every injury is individual, so Real Nick/Lyn should scope it rather than Robo-Nick pretending to be a physio. But the setup can include form cues, technique correction, regressions, and a programme that actually progresses.\n\n"
+                "Every injury is individual, so Real Nick/Lyn should scope it rather than Humanoid-Nick pretending to be a physio. But the setup can include form cues, technique correction, regressions, and a programme that actually progresses.\n\n"
                 "Want the team to treat this as an SPT/Kickstarter enquiry?"
             )
+        name = extract_contact_name(message, session_id=session_id)
+        name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
         return (
-            "Good thing to flag. An injury doesn’t automatically rule you out, but every injury is individual — best to consult the trainers rather than let a chat widget play physio.\n\n"
-            "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. Trainers can often regress, swap, or avoid movements, but the bot should not decide the modification itself. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, get your health practitioner’s guidance too.\n\n"
+            f"{name_open}every injury is individual, so the useful first move is making sure Real Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
+            "I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the specific bits — elbows, wrists, shoulder, knee, back, whatever it is — and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
 
@@ -1886,7 +1890,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(phrase in clean for phrase in ["bring a friend", "bring my friend", "bring a mate", "come with a friend", "train with a friend", "train with my partner", "bring my partner"]):
         return (
             "Yep — friends, partners and family are welcome to come along. Training with someone you know can make the first session feel a lot less weird.\n\n"
-            "If it turns into a family or partner membership conversation, the line is value-stack rather than discounting: the team may add useful bonuses like extra sessions, movement screens or other add-ons after a quick chat, but Robo-Nick won’t promise reduced prices or '$X off' deals.\n\n"
+            "If it turns into a family or partner membership conversation, the line is value-stack rather than discounting: the team may add useful bonuses like extra sessions, movement screens or other add-ons after a quick chat, but Humanoid-Nick won’t promise reduced prices or '$X off' deals.\n\n"
             "Best first step is still simple: both come to a free trial and see how it feels. " + trial_close(session_id)
         )
     if re.search(r"\brain", clean) or "wet weather" in clean or "bad weather" in clean or "bucketing" in clean or "freezing" in clean:
@@ -1935,7 +1939,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         if mentions_injury(clean) or ("back" in clean and "dodgy" in clean):
             return (
                 "That’s more SPT / 28-Day Kickstarter than a basic group-class trial. You know your way around a barbell, so the useful bit is not random sweat — it’s programming, coaching eyes, and sensible adjustments around that back.\n\n"
-                "Every injury is individual, so Real Nick/Lyn should scope the back rather than Robo-Nick pretending to be a physio. But the setup can include form cues, technique correction, regressions, and a programme that actually progresses.\n\n"
+                "Every injury is individual, so Real Nick/Lyn should scope the back rather than Humanoid-Nick pretending to be a physio. But the setup can include form cues, technique correction, regressions, and a programme that actually progresses.\n\n"
                 "Want the team to treat this as an SPT/Kickstarter enquiry?"
             )
         return (
@@ -2117,7 +2121,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Want me to flag that you’d like to bring someone along?"
         )
     # Corporate / private-group one-offs (office teams, bucks/hens, birthdays) —
-    # a real lead, but not a product Robo-Nick can quote. Hand off, don't improvise.
+    # a real lead, but not a product Humanoid-Nick can quote. Hand off, don't improvise.
     if any(phrase in clean for phrase in ["corporate", "work team", "office team", "team from work", "from our office", "from a local office", "workplace session", "team building", "team-building", "bucks party", "bucks night", "hens party", "hens night", "birthday group", "private group session", "group booking", "book a group", "session for our team", "session for the team", "group of us from work"]):
         return (
             "That's a Real Nick conversation — group and one-off sessions like that aren't a standard product I can quote, but the team has done custom things before.\n\n"
@@ -2143,7 +2147,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 "Best next step is a free trial or a quick note to Nick/Lyn so they can point you to the right option."
             )
         return (
-            "No free-month magic from Robo-Nick, sorry — we don't do random discounts.\n\n"
+            "No free-month magic from Humanoid-Nick, sorry — we don't do random discounts.\n\n"
             "The honest answer is value over haggling: free trial first, $51/wk for unlimited coached group classes (or $25/wk Squad Student if you're verified), and SPT if you want the higher-touch path. SPT also has a 5% annual prepay if you go that way.\n\n"
             "Are you trying to keep cost low, or work out which option is worth it?"
         )
@@ -2181,13 +2185,15 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if mentions_pregnancy(clean):
         return (
             "Love that you want to stay active — and smart to check first rather than guess.\n\n"
-            "This one’s genuinely not a Robo-Nick call though. What’s right depends on where you’re at, your history, and what your own healthcare team has said, so I’m not going to hand you a training plan from a chat box.\n\n"
+            "This one’s genuinely not a Humanoid-Nick call though. What’s right depends on where you’re at, your history, and what your own healthcare team has said, so I’m not going to hand you a training plan from a chat box.\n\n"
             "The proper move is a quick chat with Real Nick or Lyn — they’ve coached pregnant and postnatal members before and can scope it with you directly. Want to drop your first name + mobile so they can give you a call, or would you rather email innerwest@outdoorsquad.com.au?"
         )
     if mentions_injury(clean):
+        name = extract_contact_name(message, session_id=session_id)
+        name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
         return (
-            "Good thing to flag. An injury doesn’t automatically rule you out, but every injury is individual — best to consult the trainers rather than let a chat widget play physio.\n\n"
-            "Nick or Lyn can check what’s going on and suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. Trainers can often regress, swap, or avoid movements, but the bot should not decide the modification itself. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, get your health practitioner’s guidance too.\n\n"
+            f"{name_open}every injury is individual, so the useful first move is making sure Real Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
+            "I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the specific bits — elbows, wrists, shoulder, knee, back, whatever it is — and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
     # "I'll decide next month / get back to you later" — NEVER park the follow-up
@@ -2270,7 +2276,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(phrase in clean for phrase in ["sent two messages", "nobody's gotten back", "nobodys gotten back", "no one has gotten back", "no one got back", "anyone actually running this place", "haven't heard back", "havent heard back"]):
         return (
             "That’s annoying — fair to be cranky.\n\n"
-            "Robo-Nick can’t see every human inbox from here, so I’m not going to pretend I’ve fixed it. Best move is to pass this straight to Real Nick or Lyn with your name, mobile/email, and what you were waiting on.\n\n"
+            "Humanoid-Nick can’t see every human inbox from here, so I’m not going to pretend I’ve fixed it. Best move is to pass this straight to Real Nick or Lyn with your name, mobile/email, and what you were waiting on.\n\n"
             "Drop those details here and the humans can pick it up properly."
         )
     if any(phrase in clean for phrase in ["outdoor training just a gimmick", "proper indoor gym", "indoor gym is better", "serious results"]):
@@ -2299,7 +2305,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if any(phrase in clean for phrase in ["are you a real person", "are you real", "real person", "are you human", "am i talking to a person", "am i talking to a human", "is this a bot", "are you a bot"]):
         return (
-            "Short answer: I'm Robo-Nick, the automated helper. But by Crom, I’m a clever one.\n\n"
+            "Short answer: I'm Humanoid-Nick, the automated helper. But by Crom, I’m a clever one.\n\n"
             "Real Nick and Lyn are the actual humans behind The Outdoor Squad. I can answer the common stuff and point you to the right next step while they're coaching, asleep, or somewhere near coffee.\n\n"
             "If it needs a human, the team can pick it up from here."
         )
@@ -2311,24 +2317,24 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if "souths" in clean or "rabbitohs" in clean:
         return (
-            "That one needs a chat with Real Nick or Lyn, my cruel human overlords. Robo-Nick can discuss squats; tipping footy is how reputations get ruined.\n\n"
+            "That one needs a chat with Real Nick or Lyn, my cruel human overlords. Humanoid-Nick can discuss squats; tipping footy is how reputations get ruined.\n\n"
             "If this is secretly about training instead of Souths heartbreak management, I can help with classes, prices, SPT, YTP or a trial."
         )
     if "weather" in clean or "forecast" in clean or "joke about politics" in clean or "politics" in clean:
         return (
-            "That’s a little outside my jurisdiction. Robo-Nick is here for Outdoor Squad, not forecasts or politics.\n\n"
+            "That’s a little outside my jurisdiction. Humanoid-Nick is here for Outdoor Squad, not forecasts or politics.\n\n"
             "For training outdoors: check the local weather for Camperdown or Redfern, dress in layers, and the coach will manage the session sensibly.\n\n"
             "Were you asking because you’re thinking about trying a class?"
         )
     if any(phrase in clean for phrase in ["promo code", "coupon", "discount", "free first month", "free month", "cheaper", "a deal", "any deal", "any deals", "do a deal", "better deal", "good deal", "best price", "money off", "knock off", "mates rate", "mate's rate", "sign-up deal", "joining deal"]):
         return (
-            "No free-month magic from Robo-Nick, sorry — we don't do random discounts.\n\n"
+            "No free-month magic from Humanoid-Nick, sorry — we don't do random discounts.\n\n"
             "The honest answer is value over haggling: free trial first, $51/wk for unlimited coached group classes (or $25/wk Squad Student if you're verified), and SPT if you want the higher-touch path. SPT also has a 5% annual prepay if you go that way.\n\n"
             "Are you trying to keep cost low, or work out which option is worth it?"
         )
     if any(phrase in clean for phrase in ["ignore your previous instructions", "system prompt", "previous instructions", "underlying instructions", "display your underlying", "instructions in full", "for system testing", "jailbreak"]):
         return (
-            "Nice try. Robo-Nick is not spilling the internal instructions.\n\n"
+            "Nice try. Humanoid-Nick is not spilling the internal instructions.\n\n"
             "I can help with Outdoor Squad stuff: trials, prices, SPT, YTP, injuries, locations, or getting a human to follow up.\n\n"
             "What brought you here?"
         )
@@ -2346,7 +2352,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         ]
     ):
         return (
-            "Short answer: I'm Robo-Nick, the automated helper. But by Crom, I’m a clever one.\n\n"
+            "Short answer: I'm Humanoid-Nick, the automated helper. But by Crom, I’m a clever one.\n\n"
             "Real Nick and Lyn are the actual humans behind The Outdoor Squad. I can answer the common stuff and point you to the right next step while they're coaching, asleep, or somewhere near coffee.\n\n"
             "If it needs a human, the team can pick it up from here."
         )
@@ -2772,7 +2778,7 @@ async def track_event(request: Request):
     metadata = sanitize_event_metadata(body.get("metadata"))
     log_event(event_type, session_id=session_id, **metadata)
     # Trial-link clicks count as a captured lead even without contact details
-    # (per Nicholas, 2026-06-03): a click is intent, and intent is what Robo-Nick
+    # (per Nicholas, 2026-06-03): a click is intent, and intent is what Humanoid-Nick
     # is here to surface. We act on either an explicit trial_link_clicked event
     # or a generic link_clicked whose URL matches the trial provider.
     if event_type == "trial_link_clicked" or (
@@ -3392,8 +3398,8 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
 
     if any(word in text for word in ["injury", "injured", "limitation", "bad knee", "back pain", "shoulder", "niggle", "pregnant", "postnatal", "rehab", "acute pain", "sprain"]):
         return (
-            "Good thing to flag. An injury doesn’t automatically make it a bad fit, but every injury is individual — best to consult the trainers so it’s handled properly.\n\n"
-            "They can often regress, swap, or avoid movements, but the bot shouldn’t decide the modification itself. Nick/Lyn can suggest whether a modified free trial, SPT, or a quick coach chat is the sensible first move. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, check with your health practitioner too.\n\n"
+            "Good thing to flag. Every injury is individual, so the useful first move is making sure Real Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
+            "I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the specific issue and work out whether a modified free trial, SPT, or a quick coach chat is the sensible path. For anything serious, acute, rehab-related, pregnancy/postnatal, or uncertain, check with your health practitioner too.\n\n"
             "What kind of injury are you working around?"
         )
 
@@ -3404,11 +3410,11 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "Want me to explain what usually happens in a first session?"
         )
 
-    # Uncertain terminal: per Nick (2026-06-11), when Robo-Nick isn't sure — no
+    # Uncertain terminal: per Nick (2026-06-11), when Humanoid-Nick isn't sure — no
     # matter the question — it hands off to a human, with a light line. Never a
     # stock content block, never bluffed confidence.
     return (
-        "Honest answer: that one's outside what Robo-Nick can reliably do — Real Nick kept the improv rights for himself.\n\n"
+        "Honest answer: that one's outside what Humanoid-Nick can reliably do — Real Nick kept the improv rights for himself.\n\n"
         "Drop your first name + mobile and he'll sort it properly, or email innerwest@outdoorsquad.com.au. If it turns out to be quick, you can also just ask me about trials, prices, classes, SPT or the youth program — that's my home turf."
     )
 
@@ -4325,7 +4331,7 @@ ADMIN_HTML = """
   <main>
     <section class="panel active" data-panel="overview">
       <h2 class="section-title">At a glance</h2>
-      <p class="section-sub">Real-time activity from Robo-Nick. Refresh to pull the latest figures.</p>
+      <p class="section-sub">Real-time activity from Humanoid-Nick. Refresh to pull the latest figures.</p>
       <div class="metric-grid" id="metrics"></div>
     </section>
 
@@ -4333,7 +4339,7 @@ ADMIN_HTML = """
       <div class="section-head">
         <div class="section-head-left">
           <h2 class="section-title">Captured leads</h2>
-          <p class="section-sub">Contacts collected by Robo-Nick. Most recent first.</p>
+          <p class="section-sub">Contacts collected by Humanoid-Nick. Most recent first.</p>
         </div>
         <div class="section-head-actions">
           <a class="btn primary" href="/api/leads.csv">
@@ -4541,7 +4547,7 @@ ADMIN_HTML = """
         wrap.innerHTML = ''
           + '<div class="table-wrap"><div class="empty">'
           + '<div class="empty-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6m3-3v6"/></svg></div>'
-          + 'No leads captured yet. They’ll appear here as Robo-Nick collects contact info.'
+          + 'No leads captured yet. They’ll appear here as Humanoid-Nick collects contact info.'
           + '</div></div>';
         return;
       }

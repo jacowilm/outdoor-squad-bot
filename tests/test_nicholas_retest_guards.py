@@ -77,3 +77,23 @@ def test_privacy_question_gets_plain_privacy_answer():
     assert "nick" in lowered or "lyn" in lowered
     assert "masked" in lowered
     assert "innerwest@outdoorsquad.com.au" in lowered
+
+
+def test_bot_identity_uses_humanoid_nick_not_robo_nick():
+    text = reply("Are you a real person or a bot?")
+
+    lowered = text.lower()
+    assert "humanoid-nick" in lowered
+    assert "robo-nick" not in lowered
+
+
+def test_injury_handoff_acknowledges_specific_named_person_without_instruction_leak():
+    text = reply("I'm Garth. I've got tendinitis in my elbows and wrists, plus a shoulder issue. Moderately fit — can I train?")
+
+    lowered = text.lower()
+    assert "garth" in lowered
+    assert "elbows" in lowered or "wrists" in lowered or "shoulder" in lowered
+    assert "every injury is individual" in lowered
+    assert "the bot should" not in lowered
+    assert "chat widget" not in lowered
+    assert "drop your name" not in lowered
