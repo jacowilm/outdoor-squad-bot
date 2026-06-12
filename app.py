@@ -149,7 +149,7 @@ BRAND_VOICE_REFERENCE = """Required brand voice reference:
 - SPT always means Semi-Private Personal Training. Never expand it as Specific Program Training.
 - Pricing guardrail: the 28-Day Kickstarter is $397 total for 28 days. $125/wk is SPT 2x + Group, not the Kickstarter price. Never conflate them in pricing, discount, or budget answers.
 - Youth Training Program is the public name. Do not call it Young'N'Strong in visitor-facing replies.
-- Flow'N'Flex is the current class name for the old Yoga Squad / yoga-style mobility class.
+- Flow'N'Flex is the current umbrella class name for the old Yoga Squad plus the yoga, Pilates and mobility-style sessions. Do not offer Power'N'Pilates as a separate current class unless Nicholas/Lyn reintroduce it.
 - References are seasoning: Crom/Conan, Tolkien, Princess Bride, RPG/dungeon jokes, sci-fi, Inner West specifics. Use only when they fit the visitor and never for nervous, medical, or sensitive first-contact moments.
 - Crom is an insider running gag for confident/training-savvy moments: "By Crom", "Crom approves", "Crom does not look kindly on skipped warm-ups". Do not turn every answer into a Crom bit.
 - Robo-Nick is self-aware automation. Real Nick handles personal, sensitive, or high-touch conversations.
@@ -164,7 +164,7 @@ OPERATING_FACTS_REFERENCE = """Required operating facts:
 - Redfern: Redfern Park, Redfern St, Redfern NSW 2016. Meeting point: near the Park Cafe at the Sports Oval end; wet-weather fallback is undercover behind the cafe. Serves Redfern, Waterloo, and Surry Hills. Parking on Chalmers St and underground at Woolworths; Redfern Station is about 700m away; buses 310, 343, and 395 serve the area.
 - If asked what locations there are, answer directly with Camperdown and Redfern before asking which is closer. Never say exact locations or suburb names are unavailable.
 - Timetable guardrail: only use the exact timetable in the source context / master timetable. Do not invent class times. If uncertain or if the visitor needs the live booking view, point them to the timetable/free-trial link.
-- Current master timetable: Mon 6am Buff'N'Puff Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Tue 6am Buff'N'Puff Redfern, 6am Flow'N'Flex Camperdown, 6:30pm HiiT'N'Run Camperdown; Wed 6am Strength'N'Tone Camperdown/Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Thu 6am HiiT'N'Run Camperdown, 6am Power'N'Pilates Redfern; Fri 6am Core'N'Sore Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown; Sat 8am Strength'N'Tone Camperdown/Redfern, 9:15am Youth Training Program Camperdown. No Sunday sessions.
+- Current master timetable: Mon 6am Buff'N'Puff Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Tue 6am Buff'N'Puff Redfern, 6am Flow'N'Flex Camperdown, 6:30pm HiiT'N'Run Camperdown; Wed 6am Strength'N'Tone Camperdown/Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Thu 6am HiiT'N'Run Camperdown, 6am Flow'N'Flex Redfern; Fri 6am Core'N'Sore Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown; Sat 8am Strength'N'Tone Camperdown/Redfern, 9:15am Youth Training Program Camperdown. No Sunday sessions.
 """
 
 DEFAULT_TRIAL_LINK = "https://momence.com/The-Outdoor-Squad-/membership/Squad-Intro-Class/263360"
@@ -1526,7 +1526,7 @@ TIMETABLE_ENTRIES = [
     ("wednesday", "9:30am", "Strength'N'Tone", "Camperdown"),
     ("wednesday", "6:30pm", "Strength'N'Tone", "Camperdown"),
     ("thursday", "6:00am", "HiiT'N'Run", "Camperdown"),
-    ("thursday", "6:00am", "Power'N'Pilates", "Redfern"),
+    ("thursday", "6:00am", "Flow'N'Flex", "Redfern"),
     ("friday", "6:00am", "Core'N'Sore", "Camperdown"),
     ("friday", "6:00am", "Strength'N'Tone", "Redfern"),
     ("friday", "9:30am", "Strength'N'Tone", "Camperdown"),
@@ -1539,8 +1539,7 @@ TIMETABLE_ENTRIES = [
 CLASS_ALIAS_GROUPS = {
     "Strength'N'Tone": ["strength'n'tone", "strength n tone", "strength", "weights", "resistance"],
     "HiiT'N'Run": ["hiit'n'run", "hiit n run", "hiit", "run", "running", "conditioning"],
-    "Power'N'Pilates": ["power'n'pilates", "power n pilates", "pilates"],
-    "Flow'N'Flex": ["flow'n'flex", "flow n flex", "yoga", "mobility", "flex"],
+    "Flow'N'Flex": ["flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "pilates", "mobility", "flex"],
     "Buff'N'Puff": ["buff'n'puff", "buff n puff", "hybrid"],
     "Core'N'Sore": ["core'n'sore", "core n sore", "core"],
     "Youth Training Program": ["youth", "ytp", "kid", "kids", "teen", "teenager"],
@@ -1909,7 +1908,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "Definitely your wheelhouse — and that long-game mindset is a very Outdoor Squad reason to train.\n\n"
             "The focus is functional strength, mobility, balance and long-term health — still carrying your own groceries at 75, not cosplaying as a 22-year-old doing punishment circuits for Instagram. Movements scale to where you’re at.\n\n"
-            "Two classes lean especially well into longevity: Power'N'Pilates (strength + control, easier on the joints) and Flow'N'Flex (mobility and balance, the bit most people skip). A free trial is the sensible first test. " + trial_close(session_id)
+            "Flow'N'Flex leans especially well into longevity: yoga/Pilates/mobility-style work, balance, posture/core control, and the bit most people skip. A free trial is the sensible first test. " + trial_close(session_id)
         )
 
     # "Is this basically just CrossFit / like F45?" is a positioning question, not
@@ -2094,8 +2093,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # because RAG didn't surface it). Outdoor Hyrox is intentionally left to the
     # serious-programming branch above.
     class_blurbs = (
-        (("flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga"), "Flow'N'Flex is the mobility, balance and breathwork class — mindful movement and flexibility with a bit of strength. The recovery bit most people skip, and easy on the joints."),
-        (("power'n'pilates", "power n pilates", "pilates"), "Power'N'Pilates is dynamic movement, breathing, posture, core and control — strength with a Pilates flavour, gentle on the joints. Good if you want to move well, not just get smashed."),
+        (("flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "power'n'pilates", "power n pilates", "pilates", "mobility"), "Flow'N'Flex is now the umbrella class for the yoga, Pilates and mobility-style sessions — breathwork, mindful movement, posture/core control, mobility, balance and flexibility, with enough strength to keep it useful. Easy on the joints; not a punishment circuit."),
         (("buff'n'puff", "buff n puff", "buffnpuff"), "Buff'N'Puff is the hybrid, Hyrox-style class — resistance plus cardio in one hit, so you get strength and conditioning together."),
         (("core'n'sore", "core n sore"), "Core'N'Sore is core stability and endurance — weighted and bodyweight work, a high-heart-rate finisher and some animal flow. Exactly as friendly as the name suggests."),
         (("hiit'n'run", "hiit n run", "hiit"), "HiiT'N'Run is high-intensity intervals for heart and lung capacity — circuits, sprints, speed and agility, plus hill and stair work."),
@@ -2109,9 +2107,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "Yep. That’s a very Outdoor Squad reason to train.\n\n"
             "The focus is real-world strength, mobility, balance, and still carrying your own groceries when you’re 75. Plenty of members train with that long-game mindset, not a quick before-and-after thing.\n\n"
-            "Two formats lean particularly well into the long game:\n"
-            "- Power'N'Pilates — strength + control, easier on the joints, good for keeping moving well as you age.\n"
-            "- Flow'N'Flex — mobility, balance, and the bit most people skip.\n\n"
+            "Flow'N'Flex leans particularly well into the long game — yoga/Pilates/mobility-style work, balance, posture/core control, and the bit most people skip.\n\n"
             "A free trial is the sensible first step. " + trial_close(session_id)
         )
     if any(phrase in clean for phrase in ["referral", "refer a friend", "refer a mate", "refer my", "referring", "bring friends", "bring mates", "bring people", "for bringing", "if i bring someone", "if i refer", "refer someone", "bring a guest", "bring my guest", "bring a friend", "bring my friend", "bring a mate", "bring my mate", "bring someone", "guest pass", "plus one", "plus-one"]):

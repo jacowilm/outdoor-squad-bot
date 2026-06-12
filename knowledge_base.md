@@ -114,7 +114,7 @@
 
 ### Thursday
 - 6:00 AM HiiT'N'Run — Camperdown
-- 6:00 AM Power'N'Pilates — Redfern
+- 6:00 AM Flow'N'Flex — Redfern
 
 ### Friday
 - 6:00 AM Core'N'Sore — Camperdown
@@ -133,9 +133,8 @@
 ## Class types
 - Strength'N'Tone: progressive resistance training for functional strength and power; power bags, kettlebells, dumbbells, TRX, bodyweight, medicine balls, deadballs.
 - HiiT'N'Run: high-intensity interval training for heart/lung capacity using circuits, sprints, speed/agility, hill/stair training, animal movement.
-- Power'N'Pilates: dynamic movement, breathing, posture, core, and control.
 - Core'N'Sore: core stability, endurance, strength, weighted/bodyweight movement, high-heart-rate finishers, animal flow.
-- Flow'N'Flex: breathwork, mobility, mindful movement, strength, balance, flexibility.
+- Flow'N'Flex: umbrella class for the yoga, Pilates and mobility-style sessions: breathwork, mindful movement, posture, core/control, mobility, strength, balance and flexibility.
 - Outdoor Hyrox: Hyrox-inspired running intervals plus functional movement stations: push, pull, squat, hinge, lunge, carry, rotate, gait; sleds, power bags, kettlebells.
 - Buff'N'Puff: hybrid/Hyrox-style resistance + cardiovascular class.
 
@@ -162,7 +161,7 @@ Signals: not fit, starting from scratch, desk job, back/neck pain, intimidated, 
 Signals: CrossFit, powerlifting, Hyrox, strongman, kettlebells, deadlift/snatch/clean, event prep, bored of commercial gyms. Use specific, credibility-forward responses. Mention programming, equipment, Outdoor Hyrox, strongman work, animal flow. Consider 28-Day Kickstarter if they want proper programming.
 
 ### Social / holistic / longevity mover
-Signals: ageing well, mobility, recovery, perimenopause/menopause, longevity, Pilates/yoga + strength, school-aged kids. Emphasise strength for longevity and variety. Recommend a class based on interest.
+Signals: ageing well, mobility, recovery, perimenopause/menopause, longevity, Pilates/yoga + strength, school-aged kids. Emphasise strength for longevity and variety. Treat yoga, Pilates and mobility-style interest as Flow'N'Flex unless Nicholas/Lyn provide a newer class split. Recommend a class based on interest.
 
 ### SPT prospect
 Signals: personal training, more attention, a coach, programme, specific goals, plateau, post-injury return, partner/friend training. Position SPT as smarter than 1:1 for most people. Recommend 28-Day Kickstarter; existing members can speak to Real Nick.

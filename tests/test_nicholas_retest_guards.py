@@ -60,7 +60,8 @@ def test_redfern_thursday_uses_exact_timetable_not_generic_fallback():
 
     lowered = text.lower()
     assert "thursday 6:00am" in lowered
-    assert "power'n'pilates" in lowered
+    assert "flow'n'flex" in lowered
+    assert "power'n'pilates" not in lowered
     assert "redfern" in lowered
     assert "6:30pm" not in lowered
     assert "i won’t invent" in lowered or "won't invent" in lowered
