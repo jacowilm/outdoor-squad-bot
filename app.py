@@ -1644,6 +1644,7 @@ def timetable_reply(text: str, session_id: str) -> str:
         "- Evenings: 6:30pm at Camperdown on Mon/Tue/Wed.\n"
         "- Saturday: 8am Strength'N'Tone at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown.\n"
         "- Sunday: no sessions.\n\n"
+        "Class types rotate across the week: Strength'N'Tone, HiiT'N'Run, Buff'N'Puff, Core'N'Sore and Flow'N'Flex (the yoga/Pilates/mobility umbrella).\n\n"
         "Exact live spots can change in the booking view. " + trial_close(session_id)
     )
 
