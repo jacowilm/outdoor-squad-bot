@@ -296,7 +296,7 @@
             <div class="os-header">
                 <div class="os-header-avatar">OS</div>
                 <div class="os-header-text">
-                    <div class="os-header-name">Humanoid-Nick</div>
+                    <div class="os-header-name">Robo-Nick</div>
                     <div class="os-header-sub">Outdoor Squad · usually replies instantly</div>
                 </div>
                 <button class="os-close" type="button" aria-label="Close chat">
@@ -313,15 +313,15 @@
             </div>
             <div class="os-input-area">
                 <div class="os-input-wrap">
-                    <input type="text" id="os-input" placeholder="Ask Humanoid-Nick anything…" autocomplete="off">
+                    <input type="text" id="os-input" placeholder="Ask Robo-Nick anything…" autocomplete="off">
                 </div>
                 <button id="os-send" class="os-send-btn" type="button" aria-label="Send message">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
                 </button>
             </div>
-            <div class="os-footer">Powered by <strong>Humanoid-Nick</strong> · The Outdoor Squad</div>
+            <div class="os-footer">Powered by <strong>Robo-Nick</strong> · The Outdoor Squad</div>
         </div>
-        <button id="os-chat-bubble" type="button" aria-label="Open chat with Humanoid-Nick">
+        <button id="os-chat-bubble" type="button" aria-label="Open chat with Robo-Nick">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>

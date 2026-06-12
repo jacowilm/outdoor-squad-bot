@@ -1,6 +1,6 @@
-# Humanoid-Nick — The Outdoor Squad enquiry bot
+# Robo-Nick — The Outdoor Squad enquiry bot
 
-Humanoid-Nick is the chat assistant embedded on the Outdoor Squad website. It answers
+Robo-Nick is the chat assistant embedded on the Outdoor Squad website. It answers
 common enquiries in Nick's voice, routes people toward the right first step (free
 trial, SPT, Youth Training Program), and captures leads for the team.
 
@@ -54,7 +54,7 @@ The bot's knowledge lives in two places:
 - **`source-docs/`** — the longer source material (FAQ, brand voice, member reviews,
   injury protocol).
 
-Current naming/timetable note: Nicholas chose **Humanoid-Nick** for the bot voice,
+Current naming/timetable note: the bot persona is **Robo-Nick**; per Nicholas's 2026-06-12 decision the bot refers to the human Nick as **Humanoid-Nick** (replacing "Real Nick") in its replies,
 and the current class source treats **Flow'N'Flex** as the umbrella class for the
 old Yoga Squad plus yoga, Pilates and mobility-style sessions. Do not reintroduce
 Power'N'Pilates as a separate current class unless Nick/Lyn explicitly bring it

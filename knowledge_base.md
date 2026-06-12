@@ -164,10 +164,10 @@ Signals: CrossFit, powerlifting, Hyrox, strongman, kettlebells, deadlift/snatch/
 Signals: ageing well, mobility, recovery, perimenopause/menopause, longevity, Pilates/yoga + strength, school-aged kids. Emphasise strength for longevity and variety. Treat yoga, Pilates and mobility-style interest as Flow'N'Flex unless Nicholas/Lyn provide a newer class split. Recommend a class based on interest.
 
 ### SPT prospect
-Signals: personal training, more attention, a coach, programme, specific goals, plateau, post-injury return, partner/friend training. Position SPT as smarter than 1:1 for most people. Recommend 28-Day Kickstarter; existing members can speak to Real Nick.
+Signals: personal training, more attention, a coach, programme, specific goals, plateau, post-injury return, partner/friend training. Position SPT as smarter than 1:1 for most people. Recommend 28-Day Kickstarter; existing members can speak to Humanoid-Nick.
 
 ### YTP parent-buyer
-Signals: kid/child/son/daughter, age 10–17, screen time, confidence, sport prep, social anxiety. Reassure on safety and WWCC checks. Offer free trial or chat with Real Nick; accommodate parents who want to watch first.
+Signals: kid/child/son/daughter, age 10–17, screen time, confidence, sport prep, social anxiety. Reassure on safety and WWCC checks. Offer free trial or chat with Humanoid-Nick; accommodate parents who want to watch first.
 
 ## Injury / medical safety protocol
 Source: Nick, 2026-06-05.
