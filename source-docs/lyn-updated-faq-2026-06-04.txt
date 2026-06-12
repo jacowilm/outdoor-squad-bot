@@ -24,7 +24,7 @@ Practical
 * For Evening Classes,  sessions generally start from 6:30 PM onwards.
 * Class times can vary depending on the program and location, so we recommend checking the latest schedule via Momence and through our Timetable. https://www.outdoorsquad.com.au/timetable-and-classes
 * Can I bring a friend?
-* You are most welcome to bring a friend! In fact, we offer referral bonuses so keep an eye out for our promos and discounts. 
+* You are most welcome to bring a friend! The easiest way is to bring them along to a free trial so you can train together. We don't run cash referral bonuses, promos or discounts — when people train together the team can add value instead (extra sessions, movement screens or other helpful add-ons after a quick chat). [Superseded per Nick 2026-06-04 no-discount rule] 
 * What should I wear?
 * We recommend wearing comfortable activewear that you can move freely in and suitable footwear for outdoor training. For most sessions, we suggest:
 * Comfortable workout clothes
@@ -55,7 +55,7 @@ Affordable unlimited training for verified students.
 Includes:
 * Unlimited group classes
 * Student pricing available with verification
-YTP (Young’N’Strong) — $25/week
+YTP (Youth Training Program) — $25/week
 Our youth training program designed for kids and teens aged 10 to 17.
 Includes:
 * Saturday Camperdown classes
@@ -104,7 +104,7 @@ Available upon request and not actively promoted.
 * How do I cancel?
 * You can cancel your membership by contacting our team directly through your membership platform or by emailing us. You can also leave a message through our Whatsapp. 
 * Is there a contract?
-* Some memberships may have minimum commitment periods, while others are more flexible.
+* Group memberships (Squad Ascent, Squad Student, YTP) are weekly rolling with one week's notice to cancel — no lock-in. SPT has a 12-week minimum term, then rolls fortnight-to-fortnight.
 * We offer different options to suit different lifestyles and goals, so you can choose what works best for you.
 * Do you do family discounts?
 * We don’t discount memberships, but for families training together we’ll often add value through bonuses instead. This could include things like extra sessions, movement screens, nutrition consults, parent perks, or other helpful add-ons depending on the situation.
@@ -192,7 +192,7 @@ Group training focuses more on community fitness and high-energy workouts, while
 * It’s ideal for beginners, people returning to fitness, or anyone wanting a fresh start with support, accountability, and guidance along the way.
 * YTP-specific
 * How old does my kid need to be?
-* Our Young’N’Strong Program is designed for kids and teens aged 10 to 17 years old.
+* Our Youth Training Program Program is designed for kids and teens aged 10 to 17 years old.
 * Sessions are structured to help young people build confidence, strength, coordination, fitness, and healthy movement habits in a fun and supportive outdoor environment.
 * Are your trainers checked?
 * Yes. We take safety and professionalism seriously. Our trainers are experienced, qualified, and committed to creating a safe, supportive, and encouraging environment for all participants.
@@ -205,3 +205,5 @@ Sources to draw from
 * Momence inbox enquiries (last 6 months)
 * Lyn's notes from chatting with prospects
 * The trainers' memory — a 15-minute round-up over coffee at training will surface most of it
+* Do you have yoga, Pilates or mobility classes?
+* Yes — Flow'N'Flex is our umbrella class for the yoga, Pilates and mobility-style sessions: breathwork, mindful movement, posture and core control, mobility, balance and flexibility. Easy on the joints. [Added 2026-06-12: Flow'N'Flex absorbed the old Yoga Squad and Power'N'Pilates]
