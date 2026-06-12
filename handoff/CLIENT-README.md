@@ -1,6 +1,6 @@
-# Robo-Nick — The Outdoor Squad enquiry bot
+# Humanoid-Nick — The Outdoor Squad enquiry bot
 
-Robo-Nick is the chat assistant embedded on the Outdoor Squad website. It answers
+Humanoid-Nick is the chat assistant embedded on the Outdoor Squad website. It answers
 common enquiries in Nick's voice, routes people toward the right first step (free
 trial, SPT, Youth Training Program), and captures leads for the team.
 
@@ -54,6 +54,12 @@ The bot's knowledge lives in two places:
 - **`source-docs/`** — the longer source material (FAQ, brand voice, member reviews,
   injury protocol).
 
+Current naming/timetable note: Nicholas chose **Humanoid-Nick** for the bot voice,
+and the current class source treats **Flow'N'Flex** as the umbrella class for the
+old Yoga Squad plus yoga, Pilates and mobility-style sessions. Do not reintroduce
+Power'N'Pilates as a separate current class unless Nick/Lyn explicitly bring it
+back.
+
 To change an answer: edit the relevant file, commit, and push to `main` — Render
 redeploys automatically. *Note: this is a developer task (editing files + git). If
 no one on the team is comfortable with that, keep a developer on call for occasional
@@ -80,4 +86,5 @@ and set a **monthly spend cap** on your Anthropic/OpenAI accounts as a cost back
 ## Ownership
 
 The Outdoor Squad owns this product, its hosting, data, and accounts, and the ongoing
-hosting/API/database costs (typically ~$15–40/month at low volume).
+hosting/API/database costs (typically ~$10–25/month at normal enquiry volume, up to
+~$50–60/month if chat traffic gets heavy).

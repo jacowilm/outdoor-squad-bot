@@ -43,7 +43,7 @@ BACKEND_UNAVAILABLE = "trouble reaching the AI backend"
 REQUIRED_BRAND_TERMS = [
     "Crom",
     "Conan",
-    "Robo-Nick",
+    "Humanoid-Nick",
     "Yo-gah",
     "Puh-lah-tees",
     "having a crack",
