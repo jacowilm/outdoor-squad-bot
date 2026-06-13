@@ -160,8 +160,8 @@ BRAND_VOICE_REFERENCE = """Required brand voice reference:
 
 OPERATING_FACTS_REFERENCE = """Required operating facts:
 - Current main locations are Camperdown and Redfern.
-- Camperdown: The Barracks at Camperdown Tennis & Oval, Mallett St, Camperdown NSW 2050. Meeting point: Camperdown Tennis. Serves Camperdown, Newtown, Stanmore, and nearby Inner West suburbs. Parking around Australia St and Mallet St; Newtown Station is about 900m away; buses 413, 440, 480, and 483 stop on Parramatta Rd about 25m away.
-- Redfern: Redfern Park, Redfern St, Redfern NSW 2016. Meeting point: near the Park Cafe at the Sports Oval end; wet-weather fallback is undercover behind the cafe. Serves Redfern, Waterloo, and Surry Hills. Parking on Chalmers St and underground at Woolworths; Redfern Station is about 700m away; buses 310, 343, and 395 serve the area.
+- Camperdown: The Barracks at Camperdown Tennis & Oval, Mallett St, Camperdown NSW 2050. Meeting point: Camperdown Tennis. Serves Camperdown, Newtown, Stanmore, and nearby Inner West suburbs. Features upgraded public facilities, public toilets, an outdoor gym, and access to Camperdown Oval. Parking around Australia St and Mallet St; Newtown Station is about 900m away; buses 413, 440, 480, and 483 stop on Parramatta Rd about 25m away.
+- Redfern: Redfern Park, Redfern St, Redfern NSW 2016. Meeting point: near the Park Cafe at the Sports Oval end; wet-weather fallback is undercover behind the cafe. Serves Redfern, Waterloo, and Surry Hills. Historic site that is the home of the South Sydney Rabbitohs; has the Park Cafe and public toilets on site. Parking on Chalmers St and underground at Woolworths; Redfern Station is about 700m away; buses 310, 343, and 395 serve the area.
 - If asked what locations there are, answer directly with Camperdown and Redfern before asking which is closer. Never say exact locations or suburb names are unavailable.
 - Timetable guardrail: only use the exact timetable in the source context / master timetable. Do not invent class times. If uncertain or if the visitor needs the live booking view, point them to the timetable/free-trial link.
 - Current master timetable: Mon 6am Buff'N'Puff Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Tue 6am Buff'N'Puff Redfern, 6am Flow'N'Flex Camperdown, 6:30pm HiiT'N'Run Camperdown; Wed 6am Strength'N'Tone Camperdown/Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Thu 6am HiiT'N'Run Camperdown, 6am Flow'N'Flex Redfern; Fri 6am Core'N'Sore Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown; Sat 8am Strength'N'Tone Camperdown/Redfern, 9:15am Youth Training Program Camperdown. No Sunday sessions.
@@ -1905,9 +1905,25 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # has upgraded public facilities); don't invent lockers or showers.
     if any(phrase in clean for phrase in ["toilet", "toilets", "bathroom", "bathrooms", "shower", "showers", "locker", "lockers", "change room", "change rooms", "changing room", "leave my bag", "leave bags", "leave my stuff", "store my bag", "bag storage", "somewhere to put my"]):
         return (
-            "Honest picture: it's park training, so think practical rather than fancy.\n\n"
-            "Camperdown (The Barracks at Camperdown Tennis & Oval) has upgraded public facilities on site. At Redfern Park the meeting point is near the Park Café at the Sports Oval end. Most people just bring a small bag and keep it beside the session — best to leave the valuables at home.\n\n"
+            "Honest picture: it's park training, so think practical rather than fancy — but both spots have real public amenities.\n\n"
+            "Camperdown (The Barracks at Camperdown Tennis & Oval) has upgraded public facilities on site, including public toilets and an outdoor gym, plus access to Camperdown Oval. Redfern Park has public toilets and the Park Café right by the Sports Oval end meeting point. Most people just bring a small bag and keep it beside the session — best to leave the valuables at home.\n\n"
             "If something specific matters (showers before work, pram space, that sort of thing), the team can give you the exact lay of the land — want me to flag it?"
+        )
+    # Social handles / "what's your Instagram / how do I follow you / WhatsApp" —
+    # the master KB lists these; sharing the public links is fine (the bot still
+    # can't post/DM natively). Added 2026-06-13 from the authoritative master KB.
+    if any(phrase in clean for phrase in ["instagram", "insta", "facebook", " fb ", "socials", "social media", "follow you", "follow the squad", "where can i find you online", "your handles", "whatsapp", "whats app", "youtube", "twitter", "x.com", "pinterest", "tiktok", "on social", "online presence", "google reviews", "google profile"]):
+        wants_tiktok = "tiktok" in clean
+        tiktok_note = "We're not on TikTok, but here's where we actually live online:\n\n" if wants_tiktok else ""
+        return (
+            f"{tiktok_note}"
+            "Come say g'day:\n"
+            "- Instagram: https://www.instagram.com/theoutdoorsquadinnerwest\n"
+            "- Facebook: https://www.facebook.com/outdoorsquadinnerwest\n"
+            "- YouTube: https://www.youtube.com/@theoutdoorsquad\n"
+            "- WhatsApp: https://api.whatsapp.com/send/?phone=61402439361\n"
+            "- Google reviews: Camperdown https://share.google/Fy2fcWRWx9uxeXx0f · Redfern https://share.google/z6uRDTUZAw82nOqTo\n\n"
+            "If you want the receipts before training: 250+ five-star reviews across both Google profiles. The fastest first step is still the free trial, but the socials give you a feel for the vibe."
         )
     if any(phrase in clean for phrase in ["over 50", "over fifty", "in my 50s", "in my fifties", "late forties", "in my 40s", "in my forties", "peter attia", "functional into my seventies", "functional into my 70s", "into my seventies", "into my 70s", "in my 60s", "in my sixties", "too old", "am i too old"]):
         return (
@@ -2181,7 +2197,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "Yep — that’s the Youth Training Program, for ages 10–17.\n\n"
             "It’s Saturday 9:15am at Camperdown, $25/wk, and coached by qualified, WWCC-checked trainers. Parents are welcome to watch first so it doesn’t feel like sending your kid into the wilderness with a whistle.\n\n"
-            "Anyone between 10 and 17 is right in the age range. Want the team to point you to the best first session?"
+            "Anyone between 10 and 17 is right in the age range. Saturday 9:15am is the current session, with a Wednesday 4pm class likely to follow as demand grows. Want the team to point you to the best first session?"
         )
     if mentions_pregnancy(clean):
         return (
@@ -2289,7 +2305,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(phrase in clean for phrase in ["reviews", "testimonials", "proof", "what do members say", "member feedback", "5 star", "five star"]):
         return (
             "Yep — there’s proper member proof, and it sounds like real training rather than glossy transformation nonsense.\n\n"
-            "A few examples from member reviews: Pip called it \"always different\" with a friendly, welcoming group; Helen said Nick pushes people while keeping technique front and centre; Carla said the Squad helped rebuild strength and confidence; and Julia called it a welcoming community flexible enough for bringing a baby in the pram.\n\n"
+            "The headline number: 250+ five-star reviews across our two Google profiles. A few in members' own words: Pip called it \"always different\" with a friendly, welcoming group; Helen said Nick pushes people while keeping technique front and centre; Carla said the Squad helped rebuild strength and confidence; and Julia called it a welcoming community flexible enough for bringing a baby in the pram.\n\n"
             "Best test is still simple: come to a free trial, meet the coach, feel the pace, and decide from the actual session."
         )
     if re.search(r"\bpt\b", clean) or any(phrase in clean for phrase in ["personal training", "private session", "private sessions", "private coach", "private coaching", "1:1", "1 on 1", "one-on-one", "one on one", "one-to-one", "coach who knows", "specific goals", "pay attention", "writes me a program", "write the program around me", "write a program around me", "program around me"]):
@@ -3070,6 +3086,7 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         "trial twice", "trial again", "another trial", "another free", "second trial",
         "as a gift", "gift for", "gift membership", "voucher", "a present for",
         "toilet", "toilets", "bathroom", "shower", "showers", "locker", "lockers", "change room", "changing room", "leave my bag", "leave bags", "bag storage",
+        "instagram", "insta", "facebook", "socials", "social media", "follow you", "whatsapp", "youtube", "pinterest", "tiktok", "your handles", "online presence", "google reviews",
         "fifo", "fly in fly out", "on rotation", "away for work", "work away", "away every", "away 2 weeks", "away two weeks", "on swing",
         "pause membership", "cancel membership", "account question", "weather", "forecast",
         "joke about politics", "politics", "discount", "free month", "cheaper", "any deal", "a deal", "money off",
