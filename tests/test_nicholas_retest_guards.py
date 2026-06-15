@@ -100,3 +100,43 @@ def test_injury_handoff_acknowledges_specific_named_person_without_instruction_l
     assert "the bot should" not in lowered
     assert "chat widget" not in lowered
     assert "drop your name" not in lowered
+
+def test_torn_between_f45_is_not_injury_or_name():
+    text = reply("I'm torn between you and F45 — why would I choose Outdoor Squad?")
+
+    lowered = text.lower()
+    assert "righto torn" not in lowered
+    assert "every injury is individual" not in lowered
+    assert "f45" in lowered or "branded-format" in lowered
+    assert "free trial" in lowered
+
+
+def test_redfern_evening_negative_mentions_cross_venue_membership():
+    text = reply("Are there evening classes at Redfern?")
+
+    lowered = text.lower()
+    assert "redfern" in lowered
+    assert "evening" in lowered
+    assert "camperdown" in lowered
+    assert "membership works across both venues" in lowered
+
+
+def test_ytp_parent_can_train_nearby_and_gets_trial_lure():
+    text = reply("If my 13-year-old does YTP, can I train nearby at the same time?")
+
+    lowered = text.lower()
+    assert "yes" in lowered
+    assert "youth training program" in lowered
+    assert "8:00am" in lowered
+    assert "free trial" in lowered
+
+
+def test_outdoor_hyrox_does_not_pivot_to_powerlifter_spt():
+    text = reply("Do you run Outdoor Hyrox sessions?")
+
+    lowered = text.lower()
+    assert "hyrox" in lowered
+    assert "fixed" in lowered and "current timetable" in lowered
+    assert "serious-programming lane" not in lowered
+    assert "powerlifting" not in lowered
+

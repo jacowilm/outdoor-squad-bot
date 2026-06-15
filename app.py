@@ -1624,7 +1624,7 @@ def timetable_reply(text: str, session_id: str) -> str:
         parts = []
         if wants_evening and "redfern" in mentioned_locations:
             parts.append("Redfern doesn't run evening sessions at all — Redfern is mornings: 6am Monday to Friday, plus Saturday 8am.")
-            parts.append("Evenings run at Camperdown: 6:30pm Monday, Tuesday and Wednesday.")
+            parts.append("Evenings run at Camperdown: 6:30pm Monday, Tuesday and Wednesday — and membership works across both venues, so you can use Camperdown evenings even if Redfern is your usual spot.")
         elif mentioned_days and mentioned_locations:
             day_word = mentioned_days[0].title()
             loc_word = mentioned_locations[0].title()
@@ -1678,7 +1678,33 @@ def mentions_pregnancy(text: str) -> bool:
 
 
 def mentions_injury(text: str) -> bool:
+    if re.search(r"\b(?:i['’]?m|i am|am)\s+torn\s+between\b", text):
+        text = re.sub(r"\b(?:i['’]?m|i am|am)\s+torn\s+between\b", " ", text)
     return bool(INJURY_RE.search(text))
+
+
+def named_injury_terms(text: str) -> list[str]:
+    """Return visitor-mentioned injury/body-part terms for sensitive handoffs."""
+    labels = [
+        ("tendinitis", ["tendinitis", "tendonitis", "tendon"]),
+        ("elbows", ["elbow", "elbows"]),
+        ("wrists", ["wrist", "wrists"]),
+        ("shoulder", ["shoulder", "shoulders"]),
+        ("knees", ["knee", "knees"]),
+        ("back", ["back", "lower back", "low back", "sciatica", "slipped disc"]),
+        ("hip", ["hip", "hips"]),
+        ("ankle", ["ankle", "ankles"]),
+        ("neck", ["neck"]),
+        ("sprain", ["sprain", "sprained"]),
+        ("tear", ["torn", "tear"]),
+        ("surgery", ["surgery", "surger", "post-op", "post op"]),
+        ("rehab", ["rehab", "physio"]),
+    ]
+    found: list[str] = []
+    for label, needles in labels:
+        if any(needle in text for needle in needles) and label not in found:
+            found.append(label)
+    return found
 
 
 # Youth / parent detector. Word-boundary safe so "boys"/"girls" don't collide
@@ -1860,9 +1886,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             )
         name = extract_contact_name(message, session_id=session_id)
         name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
+        terms = named_injury_terms(clean)
+        specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
         return (
             f"{name_open}every injury is individual, so the useful first move is making sure Humanoid-Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
-            "I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the specific bits — elbows, wrists, shoulder, knee, back, whatever it is — and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
+            f"I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the {specific_issue} and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
 
@@ -1935,7 +1963,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # "Is this basically just CrossFit / like F45?" is a positioning question, not
     # a serious-lifter signal — answer the comparison instead of pitching SPT.
     if any(w in clean for w in ["crossfit", "f45", "f-45", "hyrox", "bootcamp", "orangetheory", "orange theory", "anytime", "plus fitness", "snap fitness"]) and any(
-        p in clean for p in ["is this", "is it", "are you just", "basically", "just like", "like a", "similar to", "same as", "difference", "vs ", "versus", "compared to", "over f45", "than f45", "cheaper", "steep", "steeper", "costs less", "less than", "down the road", "why would i pay", "why pay", "a week", "why bother with you", "what's the point"]
+        p in clean for p in ["is this", "is it", "are you just", "basically", "just like", "like a", "similar to", "same as", "difference", "vs ", "versus", "compared to", "over f45", "than f45", "cheaper", "steep", "steeper", "costs less", "less than", "down the road", "why would i pay", "why pay", "why would i choose", "why choose", "a week", "why bother with you", "what's the point"]
     ):
         return (
             "There’s some overlap, but it’s its own thing rather than a branded-format clone.\n\n"
@@ -1950,7 +1978,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "The group sessions still get cues, modifications and attention, and the Squad structure makes consistency easier because people actually know when you vanish. SPT adds bespoke programming and assessments if you want the higher-touch lane.\n\n"
             "Best test is the free trial — the session tells you more than another comparison page."
         )
-    if any(word in clean for word in ["crossfit", "hyrox", "powerlifting", "powerlift", "barbell", "strongman"]) or (
+    if "hyrox" in clean and any(w in clean for w in ["outdoor", "class", "classes", "session", "sessions", "when", "timetable", "schedule", "run", "running"]):
+        return (
+            "Hyrox-style work is in the training wheelhouse — running, conditioning and strength under fatigue — but there isn’t a fixed Outdoor Hyrox slot in the current timetable.\n\n"
+            "The team can tell you when that format next pops up; meanwhile HiiT'N'Run, Buff'N'Puff and Strength'N'Tone are the closest regular ingredients. Since you ask, it would be remiss of me not to mention the free trial.\n\n"
+            "Want Camperdown or Redfern?"
+        )
+
+    if any(word in clean for word in ["crossfit", "powerlifting", "powerlift", "barbell", "strongman"]) or (
         "serious" in clean and ("programming" in clean or "program" in clean)
     ):
         if mentions_injury(clean) or ("back" in clean and "dodgy" in clean):
@@ -2148,7 +2183,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(phrase in clean for phrase in ["new member offer", "new member offers", "member offer", "joining offer", "sign-up offer", "signup offer", "any offers", "any offer", "current offers", "specials", "any specials", "promotion", "promotions", "promo ", "promos", "running this month", "anything running", "anything on this month", "deals on", "current deals", "offers running"]):
         return (
             "The standing offer is the 1-Day Free Trial Pass — one coached session, no cost, no catch. That’s the one that matters.\n\n"
-            "After that the doors are simple: Squad Ascent at $51/wk unlimited (or $25/wk Squad Student if you’re verified), the 28-Day Kickstarter at $397 total for the SPT trial, and $37 casual drop-ins. We don’t run random promos or discounts — the value’s in the coaching, not a sticker price.\n\n"
+            "After that the doors are simple: Squad Ascent at $51/wk unlimited (or $25/wk Squad Student if you’re verified), the 28-Day Kickstarter at $397 total for the SPT trial, and $37 casual drop-ins. We don’t run random promos or discounts — there’s lots of value in the coaching, not a sticker price.\n\n"
             "Best move is to use the free trial and decide from the actual session."
         )
     family_pricing_request = "family" in clean and (
@@ -2177,6 +2212,13 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "It's Saturday 9:15am at Camperdown, $25/wk, with qualified WWCC-checked coaches — proper strength and fitness training, not a kids' playgroup. Once you turn 18 you roll into the adult classes.\n\n"
             "Want the team to sort your first session? Easiest is to have a parent drop their contact details here."
         )
+    if mentions_youth(clean) and any(phrase in clean for phrase in ["same time", "at the same time", "can i train", "can we train", "nearby", "while they", "while he", "while she", "while my kid", "while the kids", "adult class"]):
+        return (
+            "Yes — you can train nearby rather than just doing parent-waiting-room purgatory.\n\n"
+            "The Youth Training Program is Saturday 9:15am at Camperdown. Adult Strength'N'Tone runs at Camperdown at 8:00am that same morning, so it can work as a family routine around the same park. Since you ask, it would be remiss of me not to mention the free trial for you too.\n\n"
+            "Want the team to flag both: YTP for them and a free trial for you?"
+        )
+
     if mentions_youth(clean):
         under_10 = bool(re.search(r"\b[5-9]\b|\b(?:five|six|seven|eight|nine)\b", clean)) and not re.search(
             r"\b1[0-7]\b|\b(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b", clean)
@@ -2208,9 +2250,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if mentions_injury(clean):
         name = extract_contact_name(message, session_id=session_id)
         name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
+        terms = named_injury_terms(clean)
+        specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
         return (
             f"{name_open}every injury is individual, so the useful first move is making sure Humanoid-Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
-            "I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the specific bits — elbows, wrists, shoulder, knee, back, whatever it is — and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
+            f"I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the {specific_issue} and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
     # "I'll decide next month / get back to you later" — NEVER park the follow-up
@@ -3511,7 +3555,7 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
             "hoping", "wanting", "ready", "done", "good", "great", "fine", "ok", "okay", "cool",
             "nice", "sure", "yeah", "yep", "yes", "nope", "no", "thanks", "hi", "hey", "hello",
             "mate", "sorry", "actually", "probably", "maybe", "free", "busy", "back", "into",
-            "about", "after", "from", "curious", "unsure", "definitely", "absolutely",
+            "about", "after", "from", "curious", "unsure", "definitely", "absolutely", "torn",
         }
         captured = [
             part for part in explicit_name.groups()
