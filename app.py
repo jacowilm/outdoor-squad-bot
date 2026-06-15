@@ -1718,7 +1718,8 @@ def named_injury_terms(text: str) -> list[str]:
 # answer (Nicholas 2026-06-09 Q4 regression).
 YOUTH_RE = re.compile(
     r"\b(?:kids?|child|children|sons?|daughters?|teens?|teenagers?|youngsters?|"
-    r"young\W?n\W?strong|youth|ytp|boys?|girls?|11 and 15|year[\s-]?olds?)\b"
+    r"young\W?n\W?strong|youth|ytp|boys?|girls?|11 and 15|year[\s-]?olds?|"
+    r"(?:1[0-7]|[5-9])\s?yo|(?:1[0-7]|[5-9])\s?y[\.\/]?o)\b"
 )
 
 
@@ -2001,7 +2002,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             )
         return (
             "That sounds more like the serious-programming lane than a basic group-class question.\n\n"
-            "SPT is probably the cleanest fit: max 4 people, bespoke programming, regular assessments, nutrition support, form cues, technique correction, and enough coach attention to progress you properly. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
+            "SPT is probably the cleanest fit: max 4 people, bespoke programming, regular assessments, nutrition support, form cues, technique correction, and enough coach attention to progress you properly — and unlimited group classes are bundled in on top, so you're not choosing between the two. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
             "Are you chasing strength progression, conditioning, or a bit of both?"
         )
     multi_person_family = (
@@ -2217,7 +2218,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "It's Saturday 9:15am at Camperdown, $25/wk, with qualified WWCC-checked coaches — proper strength and fitness training, not a kids' playgroup. Once you turn 18 you roll into the adult classes.\n\n"
             "Want the team to sort your first session? Easiest is to have a parent drop their contact details here."
         )
-    if mentions_youth(clean) and any(phrase in clean for phrase in ["same time", "at the same time", "can i train", "can we train", "nearby", "while they", "while he", "while she", "while my kid", "while the kids", "adult class"]):
+    if mentions_youth(clean) and any(phrase in clean for phrase in ["same time", "at the same time", "can i train", "can we train", "nearby", "while they", "while he", "while she", "while my kid", "while the kids", "while i train", "while i'm training", "while im training", "train while", "train together", "same session", "join me", "alongside", "adult class"]):
         return (
             "Yes — you can train nearby rather than just doing parent-waiting-room purgatory.\n\n"
             "The Youth Training Program is Saturday 9:15am at Camperdown. Adult Strength'N'Tone runs at Camperdown at 8:00am that same morning, so it can work as a family routine around the same park. Since you ask, it would be remiss of me not to mention the free trial for you too.\n\n"
@@ -2357,10 +2358,24 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "The headline number: 250+ five-star reviews across our two Google profiles. A few in members' own words: Pip called it \"always different\" with a friendly, welcoming group; Helen said Nick pushes people while keeping technique front and centre; Carla said the Squad helped rebuild strength and confidence; and Julia called it a welcoming community flexible enough for bringing a baby in the pram.\n\n"
             "Best test is still simple: come to a free trial, meet the coach, feel the pace, and decide from the actual session."
         )
+    # "What do I get / what's included with SPT" — must spell out that unlimited
+    # group classes are bundled (Nicholas Q1, 2026-06-15: SPT answers weren't
+    # surfacing the group inclusion, which is a real selling point).
+    if ("spt" in clean or "semi-private" in clean or "semi private" in clean) and any(
+        p in clean for p in ["what do i get", "what's included", "whats included", "what is included", "what does it include", "what does spt include", "what comes with", "what's in", "whats in"]
+    ):
+        return (
+            "SPT (Semi-Private Personal Training) is the higher-touch lane, and it includes the group membership rather than replacing it. You get:\n\n"
+            "- 2 or 3 semi-private sessions a week, max 4 people\n"
+            "- Bespoke programming on 6-week cycles + regular assessments\n"
+            "- A movement screen, personalised warm-up, and nutrition support\n"
+            "- UNLIMITED group classes bundled in — so you're not choosing between SPT and group, you get both\n\n"
+            "It's $125/wk for SPT 2x + Group or $175/wk for SPT 3x + Group; the 28-Day Kickstarter ($397 total) is the lower-commitment way to test the setup. Want me to flag an SPT chat with Humanoid-Nick or Lyn?"
+        )
     if re.search(r"\bpt\b", clean) or any(phrase in clean for phrase in ["personal training", "private session", "private sessions", "private coach", "private coaching", "1:1", "1 on 1", "one-on-one", "one on one", "one-to-one", "coach who knows", "specific goals", "pay attention", "writes me a program", "write the program around me", "write a program around me", "program around me"]):
         return (
             "Yep — there are a couple of private-coaching lanes, depending how much one-on-one you want.\n\n"
-            "SPT is usually the best value: max 4 people, bespoke programming, regular assessments, coaching cues, and more personal attention than a normal group session. True 1:1 PT exists too at $150/session.\n\n"
+            "SPT is usually the best value: max 4 people, bespoke programming, regular assessments, coaching cues, more personal attention than a normal group session, and unlimited group classes bundled in on top. True 1:1 PT exists too at $150/session.\n\n"
             "The 28-Day Kickstarter is the lower-commitment way to test the SPT setup. Want me to walk you through it?"
         )
     if any(phrase in clean for phrase in ["who's crom", "who is crom", "what is crom"]):
