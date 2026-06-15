@@ -111,6 +111,23 @@ def test_torn_between_f45_is_not_injury_or_name():
     assert "free trial" in lowered
 
 
+def test_knee_reconstruction_does_not_leak_garth_injury_terms():
+    text = reply("I had a knee reconstruction 3 months ago — can I train with you?")
+
+    lowered = text.lower()
+    assert "knee" in lowered
+    assert "surgery" in lowered or "health practitioner" in lowered
+    assert "every injury is individual" in lowered
+    assert "elbows" not in lowered
+    assert "wrists" not in lowered
+    assert "shoulder" not in lowered
+    assert "garth" not in lowered
+
+
+def test_torn_between_phrase_alone_is_not_injury():
+    assert app.mentions_injury("i'm torn between you and F45") is False
+
+
 def test_redfern_evening_negative_mentions_cross_venue_membership():
     text = reply("Are there evening classes at Redfern?")
 

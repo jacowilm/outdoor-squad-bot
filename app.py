@@ -1265,12 +1265,17 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "Pregnancy training depends on your stage, your history, and what your healthcare team’s said — Humanoid-Nick or Lyn need to scope it in person, not me.\n\n"
             "Easiest move: drop your first name + mobile here and they’ll ring you back. Or email innerwest@outdoorsquad.com.au if you’d rather start that way."
         )
-    if mentions_injury(clean) or any(phrase in clean for phrase in ["physio", "surgery", "torn"]):
+    if mentions_injury(clean) or any(phrase in clean for phrase in ["physio", "surgery"]):
+        # Do not treat "I'm torn between you and F45" as an injury or a name.
+        # The injury handoff must only echo terms from this visitor's message,
+        # never cached specifics from another test session.
         name = extract_contact_name(message, session_id=session_id)
         name_open = f"Righto {name.split()[0]} — " if name else "Righto — "
+        terms = named_injury_terms(clean)
+        specific_issue = ", ".join(terms[:3]) if terms else "injury history"
         return (
-            f"{name_open}that's exactly the sort of injury history worth a proper coach chat, not chat-widget guesswork.\n\n"
-            "Every injury is individual, so Robo-Nick won’t prescribe modifications from here. Humanoid-Nick or Lyn can look at what’s going on and work out whether a modified free trial, SPT, or a quick human call is the sensible first move.\n\n"
+            f"{name_open}that's exactly the sort of {specific_issue} worth a proper coach chat, not chat-widget guesswork.\n\n"
+            "Every injury is individual, so Robo-Nick won’t prescribe modifications from here. Humanoid-Nick or Lyn can look at what’s going on and work out whether a modified free trial, SPT, or a quick human call is the sensible first move. For recent surgery, acute/complex pain, or anything your clinician is still managing, keep your health practitioner’s guidance in the loop too.\n\n"
             "Want to share a mobile so they can ring you, or would you rather email innerwest@outdoorsquad.com.au?"
         )
     # Repeated schedule questions ("ok what about Friday then?") stay grounded in
@@ -1889,7 +1894,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         terms = named_injury_terms(clean)
         specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
         return (
-            f"{name_open}every injury is individual, so the useful first move is making sure Humanoid-Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
+            f"{name_open}Every injury is individual, so the useful first move is making sure Humanoid-Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
             f"I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the {specific_issue} and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
@@ -2253,7 +2258,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         terms = named_injury_terms(clean)
         specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
         return (
-            f"{name_open}every injury is individual, so the useful first move is making sure Humanoid-Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
+            f"{name_open}Every injury is individual, so the useful first move is making sure Humanoid-Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
             f"I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the {specific_issue} and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
             "What’s the issue: old injury, current pain, or mostly a confidence thing?"
         )
