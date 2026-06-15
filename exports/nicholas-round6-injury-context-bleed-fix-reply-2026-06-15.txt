@@ -1,0 +1,19 @@
+Hey Nick,
+
+You’re right — the F45 answer dropping into an injury handoff was the serious one. I treated it as a privacy/trust bug, not just a tone issue.
+
+What I changed:
+- stopped “I’m torn between you and F45” being interpreted as either an injury or a visitor name
+- tightened the injury handoff so it only echoes injury/body terms from that visitor’s current message, not cached specifics from another test run
+- added regression checks for the knee-reconstruction case so Garth-style elbows/wrists/shoulder wording can’t leak into it
+- kept Hyrox, YTP parent-training, Redfern-evening/Camperdown, SPT value, and F45-choice cases in the test pass
+
+Also picked up your smaller notes:
+- F45 answer now routes to the free trial, not an injury block
+- Redfern evening answer mentions Camperdown evenings and cross-venue membership
+- YTP parent answer says yes, the parent can train nearby and nudges the free trial
+- Outdoor Hyrox no longer pivots into powerlifting/SPT
+
+The only thing I have not changed yet is the weights-class umbrella/timetable wording, because you said you’re about to fold/update those. Send me the exact umbrella name + timetable rows when ready and I’ll patch that as a separate source-truth update rather than guessing.
+
+If you can, rerun those four problem questions first: F45, knee reconstruction, parent/YTP nearby training, Outdoor Hyrox. If any one still feels wrong, paste just that Q + answer and I’ll patch that path only.
