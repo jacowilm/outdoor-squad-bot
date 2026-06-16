@@ -157,3 +157,63 @@ def test_outdoor_hyrox_does_not_pivot_to_powerlifter_spt():
     assert "serious-programming lane" not in lowered
     assert "powerlifting" not in lowered
 
+
+def test_details_end_up_routes_to_privacy_not_location_dump():
+    text = reply("Quick one before I share my mobile — where do my details actually end up?")
+
+    lowered = text.lower()
+    assert "logged" in lowered
+    assert "masked" in lowered
+    assert "nothing gets sold" in lowered
+    assert "mallett st" not in lowered
+    assert "redfern st" not in lowered
+
+
+def test_odd_up_phrasings_do_not_trigger_location_dump():
+    for message in [
+        "I'm fed up with gyms — what makes you different?",
+        "Can you wrap up the details for me?",
+        "What's the upshot if I'm nervous and unfit?",
+    ]:
+        text = reply(message)
+        lowered = text.lower()
+        assert "mallett st" not in lowered
+        assert "redfern st" not in lowered
+
+
+def test_knee_reconstruction_does_not_append_back_from_plain_language():
+    terms = app.named_injury_terms("i had a knee reconstruction and want to get back to training")
+
+    assert "knees" in terms
+    assert "back" not in terms
+
+
+def test_third_party_injury_does_not_reask_answered_issue_or_drop_context():
+    text = reply("I'm flat out with the business and my brother has a torn calf in rehab — can we train together?")
+
+    lowered = text.lower()
+    assert "tear" in lowered or "rehab" in lowered
+    assert "who it’s for" in lowered or "who it's for" in lowered
+    assert "schedule" in lowered or "business" in lowered
+    assert "what’s the issue" not in lowered
+    assert "what's the issue" not in lowered
+
+
+def test_review_answers_include_google_review_links():
+    text = reply("Do you have reviews or testimonials?")
+
+    lowered = text.lower()
+    assert "250+" in lowered
+    assert "google" in lowered
+    assert "https://share.google/fy2fcwrwx9uxexx0f" in lowered
+    assert "https://share.google/z6urdtuzaw82noqto" in lowered
+
+
+def test_social_whatsapp_placeholder_is_resolved():
+    text = reply("Where can I find you online? Instagram, reviews, WhatsApp?")
+
+    lowered = text.lower()
+    assert "[phone]" not in lowered
+    assert "phone=" in lowered
+    assert "phone=61402439361" in lowered
+

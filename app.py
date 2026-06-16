@@ -1689,25 +1689,30 @@ def mentions_injury(text: str) -> bool:
 
 
 def named_injury_terms(text: str) -> list[str]:
-    """Return visitor-mentioned injury/body-part terms for sensitive handoffs."""
+    """Return only visitor-mentioned injury/body-part terms for sensitive handoffs.
+
+    This deliberately uses word/phrase boundaries. Bare substring checks let
+    unrelated wording such as "get me back to training" append "back" as a body
+    part even when the visitor only named a knee (Nicholas round-7 Q3, 2026-06-16).
+    """
     labels = [
-        ("tendinitis", ["tendinitis", "tendonitis", "tendon"]),
-        ("elbows", ["elbow", "elbows"]),
-        ("wrists", ["wrist", "wrists"]),
-        ("shoulder", ["shoulder", "shoulders"]),
-        ("knees", ["knee", "knees"]),
-        ("back", ["back", "lower back", "low back", "sciatica", "slipped disc"]),
-        ("hip", ["hip", "hips"]),
-        ("ankle", ["ankle", "ankles"]),
-        ("neck", ["neck"]),
-        ("sprain", ["sprain", "sprained"]),
-        ("tear", ["torn", "tear"]),
-        ("surgery", ["surgery", "surger", "post-op", "post op"]),
-        ("rehab", ["rehab", "physio"]),
+        ("tendinitis", r"\b(?:tendinitis|tendonitis|tendon)\b"),
+        ("elbows", r"\belbows?\b"),
+        ("wrists", r"\bwrists?\b"),
+        ("shoulder", r"\bshoulders?\b"),
+        ("knees", r"\bknees?\b"),
+        ("back", r"\b(?:lower back|low back|bad back|sore back|dodgy back|back pain|back injury|back issue|back problem|sciatica|slipped disc)\b"),
+        ("hip", r"\bhips?\b"),
+        ("ankle", r"\bankles?\b"),
+        ("neck", r"\bneck\b"),
+        ("sprain", r"\bsprain(?:ed)?\b"),
+        ("tear", r"\b(?:torn|tear)\b"),
+        ("surgery", r"\b(?:surgery|surger\w*|post-?op)\b"),
+        ("rehab", r"\b(?:rehab\w*|physio\w*)\b"),
     ]
     found: list[str] = []
-    for label, needles in labels:
-        if any(needle in text for needle in needles) and label not in found:
+    for label, pattern in labels:
+        if re.search(pattern, text) and label not in found:
             found.append(label)
     return found
 
@@ -1805,7 +1810,18 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Want me to flag the meal plan to send through (just drop an email), or line up a quick chat with the team about the food side?"
         )
 
-    if any(phrase in clean for phrase in ["privacy", "private data", "my data", "personal details", "personal info", "personal information", "contact details", "keep my details", "store my details", "use my number", "spam me", "marketing emails", "who can see", "what i've typed", "what ive typed", "what i typed", "what i type"]):
+    if any(phrase in clean for phrase in [
+        "privacy", "private data", "my data", "personal details", "personal info", "personal information",
+        "contact details", "keep my details", "store my details", "use my number", "spam me", "marketing emails",
+        "who can see", "what i've typed", "what ive typed", "what i typed", "what i type",
+        # Privacy intent often arrives as a "where do my details end up?" wording.
+        # Keep this ahead of location routing so "where" / "end up" never hijacks
+        # the answer into a venue-address block (Nicholas round-7 Q14, 2026-06-16).
+        "where do my details", "where does my data", "where does my info", "where does my information",
+        "where do my details end up", "details end up", "data end up", "info end up",
+        "what happens to my details", "what happens to my data", "what happens to my info",
+        "where do you put my details", "where do you put my data", "where do you put my info",
+    ]):
         return (
             "Fair thing to ask, so here's the straight version: chats here are logged so the team can follow up properly. Only Humanoid-Nick, Lyn and the Outdoor Squad team can read them — nothing gets sold, shared, or used for anything beyond getting you sorted.\n\n"
             "If you leave a name, mobile or email, it goes to the team for follow-up, and your contact details are masked in the stored logs. No shadowy data empire under Camperdown Oval.\n\n"
@@ -1894,10 +1910,24 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
         terms = named_injury_terms(clean)
         specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
+        third_party = any(word in clean for word in ["brother", "sister", "partner", "wife", "husband", "mate", "friend", "mum", "dad"])
+        busy_or_schedule = any(phrase in clean for phrase in ["flat out", "busy", "schedule", "time", "hours", "availability", "work", "business"])
+        if terms and (third_party or busy_or_schedule):
+            extra = []
+            if third_party:
+                extra.append("who it’s for")
+            if busy_or_schedule:
+                extra.append("the schedule/business constraint")
+            context_note = " and ".join(extra)
+            return (
+                f"{name_open}that’s a human-coach chat, not a chat-widget prescription.\n\n"
+                f"The team should look at the {specific_issue} and {context_note} together, then work out whether a modified free trial, SPT, or a quick call is the sensible first move. Every injury is individual, and rehab/acute stuff should stay lined up with their health practitioner too.\n\n"
+                "If you want, send a name + mobile and I’ll flag it for Humanoid-Nick or Lyn to handle properly."
+            )
         return (
             f"{name_open}Every injury is individual, so the useful first move is making sure Humanoid-Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
             f"I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the {specific_issue} and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
-            "What’s the issue: old injury, current pain, or mostly a confidence thing?"
+            "If you want, send a name + mobile and I’ll flag it for Humanoid-Nick or Lyn to handle properly."
         )
 
     # "What's a session like / what do beginners start with" are info questions,
@@ -2258,10 +2288,24 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
         terms = named_injury_terms(clean)
         specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
+        third_party = any(word in clean for word in ["brother", "sister", "partner", "wife", "husband", "mate", "friend", "mum", "dad"])
+        busy_or_schedule = any(phrase in clean for phrase in ["flat out", "busy", "schedule", "time", "hours", "availability", "work", "business"])
+        if terms and (third_party or busy_or_schedule):
+            extra = []
+            if third_party:
+                extra.append("who it’s for")
+            if busy_or_schedule:
+                extra.append("the schedule/business constraint")
+            context_note = " and ".join(extra)
+            return (
+                f"{name_open}that’s a human-coach chat, not a chat-widget prescription.\n\n"
+                f"The team should look at the {specific_issue} and {context_note} together, then work out whether a modified free trial, SPT, or a quick call is the sensible first move. Every injury is individual, and rehab/acute stuff should stay lined up with their health practitioner too.\n\n"
+                "If you want, send a name + mobile and I’ll flag it for Humanoid-Nick or Lyn to handle properly."
+            )
         return (
             f"{name_open}Every injury is individual, so the useful first move is making sure Humanoid-Nick or Lyn actually hears what you just said before anyone points you at a session.\n\n"
             f"I won’t pretend to be a physio or decide modifications from a chat box. The team can look at the {specific_issue} and work out whether a modified free trial, SPT, or a coach call is the sensible path. For serious, acute, rehab-related, pregnancy/postnatal, or uncertain stuff, keep your health practitioner’s guidance in the loop too.\n\n"
-            "What’s the issue: old injury, current pain, or mostly a confidence thing?"
+            "If you want, send a name + mobile and I’ll flag it for Humanoid-Nick or Lyn to handle properly."
         )
     # "I'll decide next month / get back to you later" — NEVER park the follow-up
     # at the prospect's stated delay (Nicholas's standing rule: intent decays;
@@ -2356,6 +2400,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "Yep — there’s proper member proof, and it sounds like real training rather than glossy transformation nonsense.\n\n"
             "The headline number: 250+ five-star reviews across our two Google profiles. A few in members' own words: Pip called it \"always different\" with a friendly, welcoming group; Helen said Nick pushes people while keeping technique front and centre; Carla said the Squad helped rebuild strength and confidence; and Julia called it a welcoming community flexible enough for bringing a baby in the pram.\n\n"
+            "Receipts: Camperdown https://share.google/Fy2fcWRWx9uxeXx0f · Redfern https://share.google/z6uRDTUZAw82nOqTo\n\n"
             "Best test is still simple: come to a free trial, meet the coach, feel the pace, and decide from the actual session."
         )
     # "What do I get / what's included with SPT" — must spell out that unlimited
