@@ -199,6 +199,14 @@ def test_third_party_injury_does_not_reask_answered_issue_or_drop_context():
     assert "what's the issue" not in lowered
 
 
+def test_flat_out_idiom_is_not_extracted_as_a_name():
+    # "I'm flat out" must not become the name "Flat" (Righto Flat) — same
+    # name-collision class as "Torn"/"Pretty" (Nicholas round-7 Q7, 2026-06-16).
+    assert app.extract_contact_name("I'm flat out with my business") is None
+    text = reply("I'm flat out with my business but my brother has a torn calf he's rehabbing, can he train?")
+    assert "righto flat" not in text.lower()
+
+
 def test_review_answers_include_google_review_links():
     text = reply("Do you have reviews or testimonials?")
 

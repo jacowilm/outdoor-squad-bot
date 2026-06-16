@@ -3621,6 +3621,10 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
             "nice", "sure", "yeah", "yep", "yes", "nope", "no", "thanks", "hi", "hey", "hello",
             "mate", "sorry", "actually", "probably", "maybe", "free", "busy", "back", "into",
             "about", "after", "from", "curious", "unsure", "definitely", "absolutely", "torn",
+            # Idiomatic fillers that follow "I'm ..." but are never names — same
+            # name-collision class as "Torn"/"Pretty" ("I'm flat out" -> "Flat",
+            # Nicholas round-7 Q7 retest, 2026-06-16).
+            "flat", "out", "slammed", "swamped", "stuck", "keen", "down", "up",
         }
         captured = [
             part for part in explicit_name.groups()
