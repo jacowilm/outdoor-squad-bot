@@ -277,3 +277,29 @@ def test_injury_handoff_keeps_multi_person_and_schedule_context():
     assert "schedule" in lowered or "work" in lowered
     assert "what’s the issue" not in lowered
     assert "what's the issue" not in lowered
+
+
+def test_injury_handoff_does_not_bleed_phantom_schedule_or_third_party():
+    # Nicholas round-8 Q6 (2026-06-17): bare-substring matching let unrelated
+    # wording inject phantom context into the injury handoff. None of these
+    # mention a third party or a schedule, so neither note may appear.
+    for message in [
+        "I had a knee reconstruction last year, can I still work out with you guys?",
+        "My knee is dodgy after surgery — what is the ultimate plan for me?",
+        "I have a bad knee, will it work for me sometimes?",
+        "My shoulder is sore, will your classes work for someone like me?",
+    ]:
+        text = reply(message)
+        lowered = text.lower()
+        assert "schedule/business constraint" not in lowered, message
+        assert "who it’s for" not in lowered and "who it's for" not in lowered, message
+
+
+def test_injury_handoff_still_catches_real_schedule_and_third_party():
+    # The boundary fix must not over-correct: genuine job/schedule and
+    # third-party mentions alongside an injury still earn the combined note.
+    schedule = reply("I have a dodgy knee and I am flat out with work hours, can you help?").lower()
+    assert "schedule/business constraint" in schedule
+
+    third_party = reply("Torn ligament, my partner wants to come too").lower()
+    assert "who it’s for" in third_party or "who it's for" in third_party

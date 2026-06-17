@@ -1921,8 +1921,21 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
         terms = named_injury_terms(clean)
         specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
-        third_party = any(word in clean for word in ["brother", "sister", "partner", "wife", "husband", "mate", "friend", "mum", "dad"])
-        busy_or_schedule = any(phrase in clean for phrase in ["flat out", "busy", "schedule", "time", "hours", "availability", "work", "business"])
+        # Word-boundary matching only — bare substrings let unrelated wording bleed
+        # phantom context into the injury handoff (Nicholas round-8 Q6, 2026-06-17):
+        # "ultimate" tripped "mate" (→ who it's for) and "work out"/"sometimes"
+        # tripped "work"/"time" (→ schedule/business constraint) when the visitor
+        # never mentioned a third party or a schedule at all.
+        third_party = bool(re.search(r"\b(?:brother|sister|partner|wife|husband|mate|friend|mum|dad|son|daughter)\b", clean))
+        # "work" only counts as a schedule constraint in its job sense (with work,
+        # work hours, shift work…) — never the function sense ("will it work for
+        # me") or the exercise sense ("work out"), both of which used to bleed.
+        busy_or_schedule = bool(re.search(
+            r"\b(?:flat out|busy|slammed|schedule|availability|hours?|times?|business|"
+            r"with work|at work|for work|from work|after work|work commitments?|"
+            r"work schedule|work hours?|shift work|day job|fifo)\b",
+            clean,
+        ))
         if terms and (third_party or busy_or_schedule):
             extra = []
             if third_party:
@@ -2302,8 +2315,21 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
         terms = named_injury_terms(clean)
         specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
-        third_party = any(word in clean for word in ["brother", "sister", "partner", "wife", "husband", "mate", "friend", "mum", "dad"])
-        busy_or_schedule = any(phrase in clean for phrase in ["flat out", "busy", "schedule", "time", "hours", "availability", "work", "business"])
+        # Word-boundary matching only — bare substrings let unrelated wording bleed
+        # phantom context into the injury handoff (Nicholas round-8 Q6, 2026-06-17):
+        # "ultimate" tripped "mate" (→ who it's for) and "work out"/"sometimes"
+        # tripped "work"/"time" (→ schedule/business constraint) when the visitor
+        # never mentioned a third party or a schedule at all.
+        third_party = bool(re.search(r"\b(?:brother|sister|partner|wife|husband|mate|friend|mum|dad|son|daughter)\b", clean))
+        # "work" only counts as a schedule constraint in its job sense (with work,
+        # work hours, shift work…) — never the function sense ("will it work for
+        # me") or the exercise sense ("work out"), both of which used to bleed.
+        busy_or_schedule = bool(re.search(
+            r"\b(?:flat out|busy|slammed|schedule|availability|hours?|times?|business|"
+            r"with work|at work|for work|from work|after work|work commitments?|"
+            r"work schedule|work hours?|shift work|day job|fifo)\b",
+            clean,
+        ))
         if terms and (third_party or busy_or_schedule):
             extra = []
             if third_party:
