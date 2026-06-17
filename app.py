@@ -14,6 +14,7 @@ import random
 import re
 import secrets
 import smtplib
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -2743,7 +2744,7 @@ async def chat(request: Request):
             save_lead(lead_info)
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
             if has_contact_details(message):
-                notify_lead_summary(lead_info, reason="local_tone_handler_contact_capture")
+                notify_lead_summary_async(lead_info, reason="local_tone_handler_contact_capture")
 
         log_event("local_tone_handler_used", session_id=session_id)
         log_bot_reply(session_id, reply, fallback=False)
@@ -2767,7 +2768,7 @@ async def chat(request: Request):
             save_lead(lead_info)
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
             if has_contact_details(message):
-                notify_lead_summary(lead_info, reason="ai_contact_capture")
+                notify_lead_summary_async(lead_info, reason="ai_contact_capture")
 
         reply_delay_ms = random.randint(MIN_REPLY_DELAY_MS, MAX_REPLY_DELAY_MS)
         log_bot_reply(session_id, reply, fallback=False)
@@ -2799,7 +2800,7 @@ async def chat(request: Request):
             save_lead(lead_info)
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
             if has_contact_details(message):
-                notify_lead_summary(lead_info, reason="fallback_contact_capture")
+                notify_lead_summary_async(lead_info, reason="fallback_contact_capture")
 
         using_demo_fallback = (
             os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1"
@@ -3886,6 +3887,23 @@ def notify_lead_summary(lead_info: dict, *, reason: str) -> None:
             error="; ".join(failures)[:240],
             reason=reason,
         )
+
+
+def notify_lead_summary_async(lead_info: dict, *, reason: str) -> None:
+    """Fire-and-forget owner notification.
+
+    The actual send (SMTP email + webhook) runs in a daemon thread so a slow or
+    unreachable delivery endpoint can never add latency to the visitor's chat
+    reply. This matters because some hosts (e.g. Render) block outbound SMTP
+    ports, which made the inline send hang for the full socket timeout. Failures
+    are logged inside notify_lead_summary and never surfaced to the visitor.
+    """
+    threading.Thread(
+        target=notify_lead_summary,
+        args=(lead_info,),
+        kwargs={"reason": reason},
+        daemon=True,
+    ).start()
 
 
 def safe_rate(numerator: int, denominator: int) -> float:
