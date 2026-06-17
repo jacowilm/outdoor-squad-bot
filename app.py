@@ -171,6 +171,7 @@ DEFAULT_TRIAL_LINK = "https://momence.com/The-Outdoor-Squad-/membership/Squad-In
 TRIAL_LINK = os.environ.get("OUTDOOR_SQUAD_TRIAL_LINK", DEFAULT_TRIAL_LINK)
 HUMAN_EMAIL = os.environ.get("OUTDOOR_SQUAD_HUMAN_EMAIL", "innerwest@outdoorsquad.com.au")
 HUMAN_PHONE = os.environ.get("OUTDOOR_SQUAD_HUMAN_PHONE", "0402 439 361")
+GOOGLE_REVIEW_LINE = "Google reviews: Camperdown https://share.google/Fy2fcWRWx9uxeXx0f · Redfern https://share.google/z6uRDTUZAw82nOqTo"
 LEAD_SUMMARY_EMAIL_TO = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_EMAIL_TO", HUMAN_EMAIL).strip()
 LEAD_SUMMARY_PHONE_TO = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_PHONE_TO", "+61402439361").strip()
 LEAD_SUMMARY_WEBHOOK_URL = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_URL", "").strip()
@@ -1620,7 +1621,7 @@ def timetable_reply(text: str, session_id: str) -> str:
         return (
             "From the current timetable:\n"
             + "\n".join(lines)
-            + "\n\nFor live availability, use the timetable/free-trial booking view — I won’t invent spots from here."
+            + f"\n\nFor live availability, use the timetable/free-trial booking view: {TRIAL_LINK} — I won’t invent spots from here."
         )
 
     if had_filter and not filtered:
@@ -1640,7 +1641,7 @@ def timetable_reply(text: str, session_id: str) -> str:
                 parts.append(f"What {day_word} actually has:\n{alt_lines}")
         else:
             parts.append("That exact combination isn't in the current timetable, so I won't guess at it.")
-        parts.append("For live availability, the booking view is the source of truth — or the team can confirm directly.")
+        parts.append(f"For live availability, the booking view is the source of truth: {TRIAL_LINK} — or the team can confirm directly.")
         return "\n\n".join(parts)
 
     return (
@@ -1808,6 +1809,16 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "The free lead magnet is a 5-Day High-Protein Australian Meal Plan, so it’s a general template rather than a vegan/gluten-free/specific-diet one.\n\n"
             "If you eat a particular way, Nick or Lyn can point you at what actually fits rather than me guessing — and on the SPT side there’s proper nutrition support that can be tailored.\n\n"
             "Want me to flag the meal plan to send through (just drop an email), or line up a quick chat with the team about the food side?"
+        )
+
+    if any(phrase in clean for phrase in [
+        "who reads these messages", "who reads my messages", "who reads this message", "who sees these messages",
+        "does anyone read these", "will someone read this", "if i leave my mobile", "if i leave my number",
+    ]):
+        return (
+            "Yep — if you drop your name and mobile here, the team picks it up and follows up, usually same day.\n\n"
+            "Robo-Nick can handle the easy stuff in the chat, but Humanoid-Nick, Lyn or the team take the actual human follow-up from there.\n\n"
+            "If you'd rather not leave details here, email innerwest@outdoorsquad.com.au directly."
         )
 
     if any(phrase in clean for phrase in [
@@ -1986,7 +1997,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "- Facebook: https://www.facebook.com/outdoorsquadinnerwest\n"
             "- YouTube: https://www.youtube.com/@theoutdoorsquad\n"
             "- WhatsApp: https://api.whatsapp.com/send/?phone=61402439361\n"
-            "- Google reviews: Camperdown https://share.google/Fy2fcWRWx9uxeXx0f · Redfern https://share.google/z6uRDTUZAw82nOqTo\n\n"
+            f"- {GOOGLE_REVIEW_LINE}\n\n"
             "If you want the receipts before training: 250+ five-star reviews across both Google profiles. The fastest first step is still the free trial, but the socials give you a feel for the vibe."
         )
     if any(phrase in clean for phrase in ["over 50", "over fifty", "in my 50s", "in my fifties", "late forties", "in my 40s", "in my forties", "peter attia", "functional into my seventies", "functional into my 70s", "into my seventies", "into my 70s", "in my 60s", "in my sixties", "too old", "am i too old"]):
@@ -1999,11 +2010,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # "Is this basically just CrossFit / like F45?" is a positioning question, not
     # a serious-lifter signal — answer the comparison instead of pitching SPT.
     if any(w in clean for w in ["crossfit", "f45", "f-45", "hyrox", "bootcamp", "orangetheory", "orange theory", "anytime", "plus fitness", "snap fitness"]) and any(
-        p in clean for p in ["is this", "is it", "are you just", "basically", "just like", "like a", "similar to", "same as", "difference", "vs ", "versus", "compared to", "over f45", "than f45", "cheaper", "steep", "steeper", "costs less", "less than", "down the road", "why would i pay", "why pay", "why would i choose", "why choose", "a week", "why bother with you", "what's the point"]
+        p in clean for p in ["is this", "is it", "are you just", "basically", "just like", "like a", "similar to", "same as", "difference", "different", "vs ", "versus", "compared to", "over f45", "than f45", "cheaper", "steep", "steeper", "costs less", "less than", "down the road", "why would i pay", "why pay", "why would i choose", "why choose", "a week", "why bother with you", "what's the point"]
     ):
         return (
             "There’s some overlap, but it’s its own thing rather than a branded-format clone.\n\n"
             "Outdoor Squad is coached outdoor group training in Inner West parks — strength, conditioning and real variety across the week, in small enough groups that the coach actually knows your name. Less treadmill-and-mirrors, more fresh air, proper coaching, and a crew that notices when you don’t show up.\n\n"
+            f"If you want receipts while you’re comparing: {GOOGLE_REVIEW_LINE}.\n\n"
             "Easiest way to feel the difference is a free trial. Camperdown or Redfern?"
         )
     if any(phrase in clean for phrase in ["what makes you different", "why are you different", "what sets you apart", "what's different about", "whats different about", "why choose you", "why outdoor squad", "why should i choose"]) or (
@@ -2012,6 +2024,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "Main difference: it’s coached training, not just access to equipment and your own disappearing motivation.\n\n"
             "The group sessions still get cues, modifications and attention, and the Squad structure makes consistency easier because people actually know when you vanish. SPT adds bespoke programming and assessments if you want the higher-touch lane.\n\n"
+            f"If you want receipts while you’re weighing it up: {GOOGLE_REVIEW_LINE}.\n\n"
             "Best test is the free trial — the session tells you more than another comparison page."
         )
     if "hyrox" in clean and any(w in clean for w in ["outdoor", "class", "classes", "session", "sessions", "when", "timetable", "schedule", "run", "running"]):
@@ -2080,6 +2093,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "$125/wk is SPT 2x + Group — the semi-private lane, not the 28-Day Kickstarter.\n\n"
             "You get two SPT sessions per week in a four-person max setup, plus group classes, bespoke programming, regular assessments, nutrition support and closer coach attention.\n\n"
+            f"And if you want social proof while you’re weighing the value: {GOOGLE_REVIEW_LINE}.\n\n"
             "If you haven’t tried the setup yet, the lower-commitment test is the 28-Day Kickstarter at $397 total."
         )
 

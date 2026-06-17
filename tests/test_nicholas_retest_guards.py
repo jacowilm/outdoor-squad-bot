@@ -225,3 +225,55 @@ def test_social_whatsapp_placeholder_is_resolved():
     assert "phone=" in lowered
     assert "phone=61402439361" in lowered
 
+
+
+def test_who_reads_messages_uses_same_day_pickup_without_latency_warning():
+    text = reply("Who reads these messages if I leave my mobile?")
+
+    lowered = text.lower()
+    assert "drop your name" in lowered
+    assert "mobile" in lowered
+    assert "usually" in lowered and "same day" in lowered
+    assert "day or two" not in lowered
+    assert "don't automatically ping" not in lowered
+    assert "no one" not in lowered and "nobody" not in lowered
+
+
+def test_timetable_reply_includes_booking_link_not_just_source_of_truth():
+    text = reply("What classes are on Thursday at Redfern?")
+
+    lowered = text.lower()
+    assert "flow'n'flex" in lowered
+    assert "booking" in lowered or "timetable" in lowered
+    assert app.TRIAL_LINK.lower() in lowered
+
+
+def test_value_question_includes_google_reviews_at_evaluation_moment():
+    text = reply("What do I actually get for $125 a week?")
+
+    lowered = text.lower()
+    assert "$125/wk" in lowered
+    assert "google" in lowered
+    assert "https://share.google/fy2fcwrwx9uxexx0f" in lowered
+    assert "https://share.google/z6urdtuzaw82noqto" in lowered
+
+
+def test_difference_answer_includes_social_proof_links():
+    text = reply("What makes you different from F45?")
+
+    lowered = text.lower()
+    assert "f45" in lowered or "branded-format" in lowered
+    assert "google" in lowered
+    assert "https://share.google/fy2fcwrwx9uxexx0f" in lowered
+    assert "https://share.google/z6urdtuzaw82noqto" in lowered
+
+
+def test_injury_handoff_keeps_multi_person_and_schedule_context():
+    text = reply("My brother has a torn calf and we're both slammed with work — can we both come?")
+
+    lowered = text.lower()
+    assert "calf" in lowered or "tear" in lowered or "rehab" in lowered
+    assert "both" in lowered or "who it’s for" in lowered or "who it's for" in lowered
+    assert "schedule" in lowered or "work" in lowered
+    assert "what’s the issue" not in lowered
+    assert "what's the issue" not in lowered
