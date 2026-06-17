@@ -1,0 +1,70 @@
+{
+  "name": "Outdoor Squad — Lead notifications (email + SMS)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "outdoor-squad-lead",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {}
+      },
+      "id": "webhook_node",
+      "name": "Lead webhook (from Robo-Nick)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [260, 300],
+      "webhookId": "outdoor-squad-lead"
+    },
+    {
+      "parameters": {
+        "fromEmail": "robo-nick@CHANGE-ME.com",
+        "toEmail": "innerwest@outdoorsquad.com.au",
+        "subject": "=New Outdoor Squad lead: {{ $json.body.lead.name || \"website enquiry\" }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body.summary_text }}",
+        "options": {}
+      },
+      "id": "email_node",
+      "name": "Email Nick",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [560, 180],
+      "credentials": {
+        "smtp": { "name": "Nick SMTP (set this in n8n)" }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "sms",
+        "operation": "send",
+        "from": "+61-YOUR-TWILIO-NUMBER",
+        "to": "={{ $json.body.destination_phone }}",
+        "message": "=New Outdoor Squad lead: {{ $json.body.lead.name || \"website enquiry\" }} ({{ $json.body.lead.phone || \"no phone\" }}) — {{ $json.body.lead.route || \"enquiry\" }}. Check email for the full summary."
+      },
+      "id": "sms_node",
+      "name": "SMS Nick",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [560, 420],
+      "credentials": {
+        "twilioApi": { "name": "Twilio (set this in n8n)" }
+      }
+    }
+  ],
+  "connections": {
+    "Lead webhook (from Robo-Nick)": {
+      "main": [
+        [
+          { "node": "Email Nick", "type": "main", "index": 0 },
+          { "node": "SMS Nick", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "meta": {
+    "description": "Receives Robo-Nick lead summaries and notifies Nick by email + SMS. Incoming POST body: { event, destination_phone, summary_text, lead: { name, email, phone, route, location_preference, time_preference, concerns, handoff_summary, session_id, timestamp } }. Field paths use {{ $json.body.* }}. Before going live: (1) set SMTP credentials on 'Email Nick' and a real fromEmail; (2) set Twilio credentials + your Twilio number on 'SMS Nick'; (3) Activate the workflow and copy the Production webhook URL into the bot's OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_URL; (4) optional: add Header Auth to the webhook and set OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_SECRET to match the X-Outdoor-Squad-Secret header."
+  }
+}

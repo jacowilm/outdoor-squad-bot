@@ -9,8 +9,9 @@ an embedded widget, so its URL is just a backend endpoint).
 is present to create accounts and enter his card. Nothing here needs a developer
 afterward except occasional knowledge-base edits.
 
-**Cost to Nicholas (~$15–40/mo):** Render Starter ~$7 + Anthropic (Haiku, a few $ at
-low volume) + (optional) OpenAI + Supabase (free tier is fine to start).
+**Cost to Nicholas (~$15–40/mo):** Render Starter ~$7 + Anthropic (Claude Sonnet 4.6;
+~$5–10 at low volume — the deterministic layer answers most chats for free, the AI
+only handles the long tail) + (optional) OpenAI + Supabase (free tier is fine to start).
 
 ---
 
@@ -65,8 +66,16 @@ git push -u origin main
    - `OUTDOOR_SQUAD_ANTHROPIC_API_KEY` = his Anthropic key *(secret)*
    - `OUTDOOR_SQUAD_ADMIN_PASSWORD` = the password from step 0 *(secret)*
    - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` = from step 3 *(secret)*
-   - lead delivery: either the SMTP block **or** the webhook URL (needed for
-     `handoff_ready: true`)
+   - lead delivery (needed for `handoff_ready: true`): **use the webhook path**
+     (`OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_URL` → n8n; import
+     `handoff/Outdoor-Squad-n8n-workflow.json`, then email+SMS go out from n8n).
+     **Do NOT use Gmail/Outlook SMTP** — Render blocks outbound SMTP ports
+     25/465/587, so the send hangs ~12s and silently delivers nothing (yet
+     `handoff_ready` still flips green). If you insist on direct SMTP, only a
+     transactional provider on a non-blocked port works (Resend `:2587`,
+     SendGrid `:2525`) with a verified sender. The send now runs in a background
+     thread, so a slow endpoint won't delay chat replies — but a blocked one
+     still won't deliver.
    - the non-secret ones (`DEPLOYMENT_MODE=handoff`, models, trial link, human
      email/phone) are already in `render.yaml` — just confirm.
 4. Deploy. Note the assigned URL (e.g. `https://robo-nick-xxxx.onrender.com`).
