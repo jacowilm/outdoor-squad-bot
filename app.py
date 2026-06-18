@@ -149,7 +149,7 @@ BRAND_VOICE_REFERENCE = """Required brand voice reference:
 - Prefer capability language over aesthetics: strong, build, consistency, carrying groceries at 75; avoid shred, summer body, transformation-photo hype, hustle-culture or LinkedIn-ish phrasing.
 - SPT always means Semi-Private Personal Training. Never expand it as Specific Program Training.
 - Pricing guardrail: the 28-Day Kickstarter is $397 total for 28 days. $125/wk is SPT 2x + Group, not the Kickstarter price. Never conflate them in pricing, discount, or budget answers.
-- Youth Training Program is the public name. Do not call it Young'N'Strong in visitor-facing replies.
+- Youth Training Program / Young'N'Strong are the current youth-program names. Prefer Youth Training Program on first mention, and use Young'N'Strong only as a parenthetical/alternate name when useful.
 - Flow'N'Flex is the current umbrella class name for the old Yoga Squad plus the yoga, Pilates and mobility-style sessions. Do not offer Power'N'Pilates as a separate current class unless Nicholas/Lyn reintroduce it.
 - References are seasoning: Crom/Conan, Tolkien, Princess Bride, RPG/dungeon jokes, sci-fi, Inner West specifics. Use only when they fit the visitor and never for nervous, medical, or sensitive first-contact moments.
 - Crom is an insider running gag for confident/training-savvy moments: "By Crom", "Crom approves", "Crom does not look kindly on skipped warm-ups". Do not turn every answer into a Crom bit.
@@ -165,7 +165,7 @@ OPERATING_FACTS_REFERENCE = """Required operating facts:
 - Redfern: Redfern Park, Redfern St, Redfern NSW 2016. Meeting point: near the Park Cafe at the Sports Oval end; wet-weather fallback is undercover behind the cafe. Serves Redfern, Waterloo, and Surry Hills. Historic site that is the home of the South Sydney Rabbitohs; has the Park Cafe and public toilets on site. Parking on Chalmers St and underground at Woolworths; Redfern Station is about 700m away; buses 310, 343, and 395 serve the area.
 - If asked what locations there are, answer directly with Camperdown and Redfern before asking which is closer. Never say exact locations or suburb names are unavailable.
 - Timetable guardrail: only use the exact timetable in the source context / master timetable. Do not invent class times. If uncertain or if the visitor needs the live booking view, point them to the timetable/free-trial link.
-- Current master timetable: Mon 6am Buff'N'Puff Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Tue 6am Buff'N'Puff Redfern, 6am Flow'N'Flex Camperdown, 6:30pm HiiT'N'Run Camperdown; Wed 6am Strength'N'Tone Camperdown/Redfern, 9:30am Strength'N'Tone Camperdown, 6:30pm Strength'N'Tone Camperdown; Thu 6am HiiT'N'Run Camperdown, 6am Flow'N'Flex Redfern; Fri 6am Core'N'Sore Camperdown, 6am Strength'N'Tone Redfern, 9:30am Strength'N'Tone Camperdown; Sat 8am Strength'N'Tone Camperdown/Redfern, 9:15am Youth Training Program Camperdown. No Sunday sessions.
+- Current master timetable: Mon 6am Strength'N'Stamina Camperdown/Redfern, 9:30am Strength'N'Stamina Camperdown, 6:30pm Strength'N'Stamina Camperdown; Tue 6am Strength'N'Stamina Redfern, 6am Flow'N'Flex Camperdown, 6:30pm HiiT'N'Run Camperdown; Wed 6am Strength'N'Stamina Camperdown/Redfern, 9:30am Strength'N'Stamina Camperdown, 6:30pm Strength'N'Stamina Camperdown; Thu 6am HiiT'N'Run Camperdown, 6am Flow'N'Flex Redfern; Fri 6am Core'N'Sore Camperdown, 6am Strength'N'Stamina Redfern, 9:30am Strength'N'Stamina Camperdown; Sat 8am Strength'N'Stamina Camperdown/Redfern, 9:15am Youth Training Program / Young'N'Strong Camperdown. No Sunday sessions.
 """
 
 DEFAULT_TRIAL_LINK = "https://momence.com/The-Outdoor-Squad-/membership/Squad-Intro-Class/263360"
@@ -643,7 +643,7 @@ Conversation rules:
 - If a visitor writes in another language, reply in English (a one-word greeting in their language is fine). Never claim Nick, Lyn, or the team speak that language — you don't know. Offer email (innerwest@outdoorsquad.com.au) so they can sort language directly.
 - There are NO referral bonuses, guest promos, or discounts to "keep an eye out for" — never hint that any exist. Guests and friends use the free 1-Day Trial Pass. Families or groups training together may get value-stacked bonuses (extra sessions, movement screens) after a chat with the team — never money off.
 - If you are not confident about ANY answer, do not improvise — hand off to Humanoid-Nick with a light line ("that one's outside what Robo-Nick can reliably do — Humanoid-Nick kept the improv rights for himself") and ask for a first name + mobile, or give innerwest@outdoorsquad.com.au. A wrong answer is worse than a handoff.
-- NEVER offer to follow up at the prospect's stated delay ("I'll decide next month" → do NOT say "the team can reach out next month"). Intent decays. Capture the contact now and say the team will say g'day within a day or two; the decision can take as long as it likes.
+- NEVER offer to follow up at the prospect's stated delay ("I'll decide next month" → do NOT say "the team can reach out next month"). Intent decays. Capture the contact now and say the team will usually follow up the same day; the decision can take as long as it likes.
 - If someone mentions a doctor-flagged condition or says they're scared/worried about their health: acknowledge the feeling plainly, drop ALL jokes and pop-culture references for that reply, reassure briefly, and offer a human chat with Humanoid-Nick or Lyn.
 - If a question involves several people (partner + kids, a whole family), answer for ALL of them — each person's right product and price — not just the last person mentioned.
 - This app does not send meal plans, SMS reminders, booking confirmations, or notifications by itself. When relevant, say the team can follow up or that you can point the user in the right direction.
@@ -1523,37 +1523,34 @@ def trial_close(session_id: str) -> str:
 
 
 TIMETABLE_ENTRIES = [
-    ("monday", "6:00am", "Buff'N'Puff", "Camperdown"),
-    ("monday", "6:00am", "Strength'N'Tone", "Redfern"),
-    ("monday", "9:30am", "Strength'N'Tone", "Camperdown"),
-    ("monday", "6:30pm", "Strength'N'Tone", "Camperdown"),
-    ("tuesday", "6:00am", "Buff'N'Puff", "Redfern"),
+    ("monday", "6:00am", "Strength'N'Stamina", "Camperdown"),
+    ("monday", "6:00am", "Strength'N'Stamina", "Redfern"),
+    ("monday", "9:30am", "Strength'N'Stamina", "Camperdown"),
+    ("monday", "6:30pm", "Strength'N'Stamina", "Camperdown"),
+    ("tuesday", "6:00am", "Strength'N'Stamina", "Redfern"),
     ("tuesday", "6:00am", "Flow'N'Flex", "Camperdown"),
     ("tuesday", "6:30pm", "HiiT'N'Run", "Camperdown"),
-    ("wednesday", "6:00am", "Strength'N'Tone", "Camperdown"),
-    ("wednesday", "6:00am", "Strength'N'Tone", "Redfern"),
-    ("wednesday", "9:30am", "Strength'N'Tone", "Camperdown"),
-    ("wednesday", "6:30pm", "Strength'N'Tone", "Camperdown"),
+    ("wednesday", "6:00am", "Strength'N'Stamina", "Camperdown"),
+    ("wednesday", "6:00am", "Strength'N'Stamina", "Redfern"),
+    ("wednesday", "9:30am", "Strength'N'Stamina", "Camperdown"),
+    ("wednesday", "6:30pm", "Strength'N'Stamina", "Camperdown"),
     ("thursday", "6:00am", "HiiT'N'Run", "Camperdown"),
     ("thursday", "6:00am", "Flow'N'Flex", "Redfern"),
     ("friday", "6:00am", "Core'N'Sore", "Camperdown"),
-    ("friday", "6:00am", "Strength'N'Tone", "Redfern"),
-    ("friday", "9:30am", "Strength'N'Tone", "Camperdown"),
-    ("saturday", "8:00am", "Strength'N'Tone", "Camperdown"),
-    ("saturday", "8:00am", "Strength'N'Tone", "Redfern"),
+    ("friday", "6:00am", "Strength'N'Stamina", "Redfern"),
+    ("friday", "9:30am", "Strength'N'Stamina", "Camperdown"),
+    ("saturday", "8:00am", "Strength'N'Stamina", "Camperdown"),
+    ("saturday", "8:00am", "Strength'N'Stamina", "Redfern"),
     ("saturday", "9:15am", "Youth Training Program", "Camperdown"),
 ]
 
-
 CLASS_ALIAS_GROUPS = {
-    "Strength'N'Tone": ["strength'n'tone", "strength n tone", "strength", "weights", "resistance"],
+    "Strength'N'Stamina": ["strength'n'stamina", "strength n stamina", "strength'n'tone", "strength n tone", "buff'n'puff", "buff n puff", "strength", "stamina", "weights", "resistance", "hybrid"],
     "HiiT'N'Run": ["hiit'n'run", "hiit n run", "hiit", "run", "running", "conditioning"],
     "Flow'N'Flex": ["flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "pilates", "mobility", "flex"],
-    "Buff'N'Puff": ["buff'n'puff", "buff n puff", "hybrid"],
     "Core'N'Sore": ["core'n'sore", "core n sore", "core"],
-    "Youth Training Program": ["youth", "ytp", "kid", "kids", "teen", "teenager"],
+    "Youth Training Program": ["youth", "ytp", "young'n'strong", "young n strong", "kid", "kids", "teen", "teenager"],
 }
-
 
 def is_timetable_question(text: str) -> bool:
     # ANY day-of-week mention routes to the grounded timetable handler. Nicholas's
@@ -1590,7 +1587,7 @@ def timetable_reply(text: str, session_id: str) -> str:
     if asks_sunday and not mentioned_days:
         return (
             "No Sunday sessions in the current timetable — Saturday is the weekend option.\n\n"
-            "Saturday has 8:00am Strength'N'Tone at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown."
+            "Saturday has 8:00am Strength'N'Stamina at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown."
         )
 
     mentioned_locations = [loc for loc in ["camperdown", "redfern"] if loc in text]
@@ -1649,9 +1646,9 @@ def timetable_reply(text: str, session_id: str) -> str:
         "Quick version of the current week:\n\n"
         "- Mornings: 6am most weekdays, plus 9:30am Mon/Wed/Fri at Camperdown.\n"
         "- Evenings: 6:30pm at Camperdown on Mon/Tue/Wed.\n"
-        "- Saturday: 8am Strength'N'Tone at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown.\n"
+        "- Saturday: 8am Strength'N'Stamina at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown.\n"
         "- Sunday: no sessions.\n\n"
-        "Class types rotate across the week: Strength'N'Tone, HiiT'N'Run, Buff'N'Puff, Core'N'Sore and Flow'N'Flex (the yoga/Pilates/mobility umbrella).\n\n"
+        "Class types rotate across the week: Strength'N'Stamina, HiiT'N'Run, Core'N'Sore and Flow'N'Flex (the yoga/Pilates/mobility umbrella).\n\n"
         "Exact live spots can change in the booking view. " + trial_close(session_id)
     )
 
@@ -2044,7 +2041,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if "hyrox" in clean and any(w in clean for w in ["outdoor", "class", "classes", "session", "sessions", "when", "timetable", "schedule", "run", "running"]):
         return (
             "Hyrox-style work is in the training wheelhouse — running, conditioning and strength under fatigue — but there isn’t a fixed Outdoor Hyrox slot in the current timetable.\n\n"
-            "The team can tell you when that format next pops up; meanwhile HiiT'N'Run, Buff'N'Puff and Strength'N'Tone are the closest regular ingredients. Since you ask, it would be remiss of me not to mention the free trial.\n\n"
+            "The team can tell you when that format next pops up; meanwhile HiiT'N'Run and Strength'N'Stamina are the closest regular ingredients. Since you ask, it would be remiss of me not to mention the free trial.\n\n"
             "Want Camperdown or Redfern?"
         )
 
@@ -2213,13 +2210,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # because RAG didn't surface it). Outdoor Hyrox is intentionally left to the
     # serious-programming branch above.
     class_blurbs = (
-        (("flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "power'n'pilates", "power n pilates", "pilates", "mobility"), "Flow'N'Flex is now the umbrella class for the yoga, Pilates and mobility-style sessions — breathwork, mindful movement, posture/core control, mobility, balance and flexibility, with enough strength to keep it useful. Easy on the joints; not a punishment circuit."),
-        (("buff'n'puff", "buff n puff", "buffnpuff"), "Buff'N'Puff is the hybrid, Hyrox-style class — resistance plus cardio in one hit, so you get strength and conditioning together."),
+        (("flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "power'n'pilates", "power n pilates", "pilates", "mobility"), "Flow'N'Flex blends yoga strength and flexibility, Pilates-style core control, and restorative mobility — handy for desk tightness, post-training stiffness and feeling less like a rusty gate."),
+        (("strength'n'stamina", "strength n stamina", "strength'n'tone", "strength n tone", "buff'n'puff", "buff n puff", "buffnpuff", "hybrid"), "Strength'N'Stamina is the current hybrid strength-and-conditioning class: resistance work plus conditioning, using power bags, kettlebells, dumbbells, barbells, TRX and deadballs across push, pull, squat, hinge, lunge, carry, rotate and gait."),
         (("core'n'sore", "core n sore"), "Core'N'Sore is core stability and endurance — weighted and bodyweight work, a high-heart-rate finisher and some animal flow. Exactly as friendly as the name suggests."),
         (("hiit'n'run", "hiit n run", "hiit"), "HiiT'N'Run is high-intensity intervals for heart and lung capacity — circuits, sprints, speed and agility, plus hill and stair work."),
-        (("strength'n'tone", "strength n tone"), "Strength'N'Tone is progressive resistance training for functional strength and power, using power bags, kettlebells, dumbbells, TRX, medicine balls and bodyweight."),
     )
-    class_question = any(p in clean for p in ["class", "session", "tell me about", "what's", "whats", "what is", "explain", "sounds", "do you do", "do you have", "interested in"])
+    class_question = any(p in clean for p in ["class", "session", "tell me about", "what's", "whats", "what is", "explain", "sounds", "do you do", "do you have", "do you still have", "still have", "interested in"])
     for aliases, blurb in class_blurbs:
         if aliases[0] in clean or (class_question and any(a in clean for a in aliases)):
             return blurb + "\n\nThey rotate through the week, so the easiest way to try one is the free trial. " + trial_close(session_id)
@@ -2279,7 +2275,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if mentions_youth(clean) and any(phrase in clean for phrase in ["same time", "at the same time", "can i train", "can we train", "nearby", "while they", "while he", "while she", "while my kid", "while the kids", "while i train", "while i'm training", "while im training", "train while", "train together", "same session", "join me", "alongside", "adult class"]):
         return (
             "Yes — you can train nearby rather than just doing parent-waiting-room purgatory.\n\n"
-            "The Youth Training Program is Saturday 9:15am at Camperdown. Adult Strength'N'Tone runs at Camperdown at 8:00am that same morning, so it can work as a family routine around the same park. Since you ask, it would be remiss of me not to mention the free trial for you too.\n\n"
+            "The Youth Training Program is Saturday 9:15am at Camperdown. Adult Strength'N'Stamina runs at Camperdown at 8:00am that same morning, so it can work as a family routine around the same park. Since you ask, it would be remiss of me not to mention the free trial for you too.\n\n"
             "Want the team to flag both: YTP for them and a free trial for you?"
         )
 
@@ -2360,7 +2356,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
         return (
             opener
-            + "One thing I won't do is park this for next month — that's where good intentions go to die. Easiest move: drop your first name + mobile now and the team will say g'day in the next day or two while it's fresh. The decision itself can take as long as it likes.\n\n"
+            + "One thing I won't do is park this for next month — that's where good intentions go to die. Easiest move: drop your first name + mobile now and the team will usually say g'day the same day while it's fresh. The decision itself can take as long as it likes.\n\n"
             + "Or just grab the free trial whenever suits and let the session make the case."
         )
     if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but", "not ready to commit", "researching", "just researching", "looking at options", "looking at my options", "checking options", "window-shopping", "window shopping", "comparing options", "comparing a few", "comparing my options", "weighing up", "weighing it up", "shopping around", "tossing up", "torn between", "deciding between", "choosing between", "between you and", "a couple of others", "few other places", "other gyms too"]):

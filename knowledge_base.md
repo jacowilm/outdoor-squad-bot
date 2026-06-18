@@ -66,8 +66,8 @@
 - $150/session.
 - Available but not actively promoted. Usually redirect toward SPT unless they genuinely need 1:1.
 
-### YTP / Youth Training Program
-- Youth Training Program for kids aged 10–17, launching May 2026.
+### YTP / Youth Training Program / Young'N'Strong
+- Youth Training Program / Young'N'Strong for kids aged 10–17, launching May 2026.
 - $25/wk.
 - Saturday 9:15am Camperdown; Wednesday 4pm may follow with demand.
 - Coached by qualified, WWCC-checked trainers.
@@ -122,21 +122,21 @@
 
 ## Timetable
 ### Monday
-- 6:00 AM Buff'N'Puff — Camperdown
-- 6:00 AM Strength'N'Tone — Redfern
-- 9:30 AM Strength'N'Tone — Camperdown
-- 6:30 PM Strength'N'Tone — Camperdown
+- 6:00 AM Strength'N'Stamina — Camperdown
+- 6:00 AM Strength'N'Stamina — Redfern
+- 9:30 AM Strength'N'Stamina — Camperdown
+- 6:30 PM Strength'N'Stamina — Camperdown
 
 ### Tuesday
-- 6:00 AM Buff'N'Puff — Redfern
+- 6:00 AM Strength'N'Stamina — Redfern
 - 6:00 AM Flow'N'Flex — Camperdown
 - 6:30 PM HiiT'N'Run — Camperdown
 
 ### Wednesday
-- 6:00 AM Strength'N'Tone — Camperdown
-- 6:00 AM Strength'N'Tone — Redfern
-- 9:30 AM Strength'N'Tone — Camperdown
-- 6:30 PM Strength'N'Tone — Camperdown
+- 6:00 AM Strength'N'Stamina — Camperdown
+- 6:00 AM Strength'N'Stamina — Redfern
+- 9:30 AM Strength'N'Stamina — Camperdown
+- 6:30 PM Strength'N'Stamina — Camperdown
 
 ### Thursday
 - 6:00 AM HiiT'N'Run — Camperdown
@@ -144,12 +144,12 @@
 
 ### Friday
 - 6:00 AM Core'N'Sore — Camperdown
-- 6:00 AM Strength'N'Tone — Redfern
-- 9:30 AM Strength'N'Tone — Camperdown
+- 6:00 AM Strength'N'Stamina — Redfern
+- 9:30 AM Strength'N'Stamina — Camperdown
 
 ### Saturday
-- 8:00 AM Strength'N'Tone — Camperdown
-- 8:00 AM Strength'N'Tone — Redfern
+- 8:00 AM Strength'N'Stamina — Camperdown
+- 8:00 AM Strength'N'Stamina — Redfern
 - 9:15 AM Youth Training Program — Camperdown
 
 ### SPT rollout timetable
@@ -159,12 +159,11 @@
 ## Class types
 Styles: kettlebell training, strongman/odd-object work (sandbags, sleds, deadballs, trap bars), CrossFit-style high-intensity work, and bodyweight/animal flow. All classes are scalable and suitable for all ages and fitness levels.
 
-- Strength'N'Tone: progressive resistance training for functional strength and power; power bags, kettlebells, dumbbells, TRX, bodyweight, medicine balls, deadballs.
+- Strength'N'Stamina: current hybrid strength-and-conditioning class; resistance work plus conditioning to build strength, power and endurance. Uses power bags, kettlebells, dumbbells, barbells, TRX, deadballs and the eight core movement patterns: push, pull, squat, hinge, lunge, carry, rotate and gait.
 - HiiT'N'Run: high-intensity interval training for heart/lung capacity using circuits, sprints, speed/agility, hill/stair training, animal movement.
 - Core'N'Sore: stabilise, endure and strengthen the core; weighted and bodyweight movement plus high-heart-rate finishers. Primary home for animal flow work.
-- Flow'N'Flex: hybrid recovery/move-better session; blends the strength and flexibility of yoga with the precise core control of pilates plus targeted restorative mobility work; flowing sequences and strengthening, then stretching to release desk tightness and post-training stiffness. The single umbrella class — it absorbed the old Yoga Squad and Power'N'Pilates.
-- Outdoor Hyrox: inspired by the Hyrox race; short running intervals plus eight functional stations (push, pull, squat, hinge, lunge, carry, rotate, gait); sleds, power bags, kettlebells.
-- Buff'N'Puff: hybrid/Hyrox-style resistance + cardiovascular class, time-optimised.
+- Flow'N'Flex: hybrid recovery/move-better session; blends yoga strength and flexibility, Pilates-style core control and targeted restorative mobility; flowing sequences and strengthening, then stretching to release desk tightness and post-training stiffness. The single umbrella class — it absorbed the old Yoga Squad and Power'N'Pilates.
+- Outdoor Hyrox: inspired by the Hyrox race; there is no fixed Outdoor Hyrox timetable slot currently. Closest regular ingredients are HiiT'N'Run and Strength'N'Stamina.
 
 NOTE: There is NO separate Power'N'Pilates class and NO Yoga Squad — Flow'N'Flex is the single umbrella class that absorbed both. Standalone Nutrition Coaching was retired May 2026; nutrition is now bundled into SPT and the 28-Day Kickstarter only (no fad diets); the free 5-Day High-Protein Australian Meal Plan email lead magnet remains.
 
@@ -234,3 +233,5 @@ When natural, collect:
 - Do not sell 1:1 unless it genuinely fits.
 - Do not use transformation/shred/summer-body language.
 - **Never offer or negotiate a discount.** Per Nick (2026-06-04): "If in doubt, always value stack. Never discount. But check if possible." Per Lyn (2026-06-04), for family enquiries specifically, do **not** suggest reduced membership prices, percentage discounts, or "$X off" offers. If a visitor pushes for a deal, lower price, family discount, or special rate, decline politely and value-stack: lead with the free trial, the 28-Day Kickstarter as the low-commitment way to test the format, what's included, the variety of class types, the coaching depth, the community, and for families training together say they may add bonuses such as extra sessions, movement screens, or helpful add-ons after a chat. **The only existing discount is the documented 5% annual SPT prepayment** — that's a structural benefit, not a bargaining lever; mention it only when a visitor is already committing to SPT and asks about payment options. If a visitor proposes a specific deal you're not sure about, hand off to Nick/Lyn — don't improvise pricing.
+## Lead follow-up expectation
+- Nicholas confirmed 2026-06-18 that lead follow-ups are 99.9% same day. When asking a prospect to leave a name/mobile, frame team pickup as usually same-day, not 'within a day or two'.

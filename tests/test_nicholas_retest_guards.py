@@ -61,6 +61,7 @@ def test_redfern_thursday_uses_exact_timetable_not_generic_fallback():
     lowered = text.lower()
     assert "thursday 6:00am" in lowered
     assert "flow'n'flex" in lowered
+    assert "strength'n'stamina" not in lowered
     assert "power'n'pilates" not in lowered
     assert "redfern" in lowered
     assert "6:30pm" not in lowered
@@ -145,6 +146,7 @@ def test_ytp_parent_can_train_nearby_and_gets_trial_lure():
     assert "yes" in lowered
     assert "youth training program" in lowered
     assert "8:00am" in lowered
+    assert "strength'n'stamina" in lowered
     assert "free trial" in lowered
 
 
@@ -154,6 +156,8 @@ def test_outdoor_hyrox_does_not_pivot_to_powerlifter_spt():
     lowered = text.lower()
     assert "hyrox" in lowered
     assert "fixed" in lowered and "current timetable" in lowered
+    assert "strength'n'stamina" in lowered
+    assert "buff'n'puff" not in lowered
     assert "serious-programming lane" not in lowered
     assert "powerlifting" not in lowered
 
@@ -303,3 +307,20 @@ def test_injury_handoff_still_catches_real_schedule_and_third_party():
 
     third_party = reply("Torn ligament, my partner wants to come too").lower()
     assert "who it’s for" in third_party or "who it's for" in third_party
+
+def test_new_mkb_timetable_uses_strength_n_stamina_not_retired_names():
+    text = reply("What's on Monday morning?")
+
+    lowered = text.lower()
+    assert "strength'n'stamina" in lowered
+    assert "strength'n'tone" not in lowered
+    assert "buff'n'puff" not in lowered
+
+
+def test_new_mkb_class_blurb_maps_old_strength_and_buff_names_to_current_class():
+    for message in ["What's Strength'N'Stamina?", "Do you still have Buff'N'Puff?"]:
+        text = reply(message)
+        lowered = text.lower()
+        assert "strength'n'stamina" in lowered
+        assert "push" in lowered and "pull" in lowered
+        assert "strength'n'tone" not in lowered

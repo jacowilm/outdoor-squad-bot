@@ -5,35 +5,36 @@ The Outdoor Squad — Master Brand Knowledge Base
 
 Last updated: May 2026
 
-This is the canonical reference document for The Outdoor Squad. It contains the foundational
-facts about the business — what we are, what we do, where we operate, and who we serve. For
-strategic positioning of products, see(offer-architecture.md}. For brand voice, see(brand-
-voice-guide.md). For customer detail, see (customer-avatars.md),
+This is the canonical reference document for The Outdoor Squad. It contains the
+foundational facts about the business — what we are, what we do, where we operate, and
+who we serve. For strategic positioning of products, see (offer-architecture.md). For brand
+voice, see (brand-voice-guide.md). For customer detail, see (customer-avatars.md).
 
 1. Brand Identity & Business Overview
 
-Business Name: The Outdoor Squad Website: https://www.outdoorsquad.com.au Contact: 0402
-439 361 | innerwest@outdoorsquad.com.au Established: 2015 Owner: Nick
+Business Name: The Outdoor Squad Website: https://www.outdoorsquad.com.au Contact:
+0402 439 361 | innerwest@outdoorsquad.com.au Established: 2015 Owner: Nick
 
 Mission: To cultivate a thriving, interconnected fitness community across the Inner West,
-establish a flagship facility, and expand to six vibrant outdoor training locations. We provide
-high-quality, community-driven outdoor fitness training that builds real-world strength and
-endurance.
+establish a flagship facility, and expand to six vibrant outdoor training locations. We
+provide high-quality, community-driven outdoor fitness training that builds real-world
+strength and endurance.
 
 Vision: Building a community where everyday people thrive through fitness, find genuine
 connection, and embrace a lifestyle of well-being.
 
-Values: Continuous Growth, Individual Empowerment, Passionate Participation, and Direct &
-Supportive Coaching.
+Values: Continuous Growth, Individual Empowerment, Passionate Participation, and
+Direct & Supportive Coaching.
 
-Brand Tone of Voice: Motivating, community-focused, authoritative yet approachable, distinctly
-Australian, and funny in a specifically nerdy way. (Full detail in (brand-voice-guide.md).)
+Brand Tone of Voice: Motivating, community-focused, authoritative yet approachable,
+distinctly Australian, and funny in a specifically nerdy way. (Full detail in (brand-voice-
+guide.md .)
 
 2. Core Services & Benefits
 
-Group Training (Outdoor Boot Camps): Brings fitness into the open air, combining strength,
-endurance, and movement for real-life results. High-energy boot camps providing a full-body
-workout, suitable for all levels.
+Group Training (Outdoor Boot Camps): Brings fitness into the open air, combining
+strength, endurance, and movement for real-life results. High-energy boot camps providing
+a full-body workout, suitable for all levels.
 
 Semi-Private Personal Training (SPT): Small group personal training (4-person max)
 launching June 2026. Goal-specific programming, regular assessments, nutrition plans, and
@@ -42,142 +43,142 @@ progression tracking. Includes unlimited group classes.
 Personal Training (1:1): One-on-one sessions for cases that genuinely require personalised
 attention. Available but not actively promoted — most prospects redirect to SPT.
 
-Youth Training Program (YTP / Youth Training Program): Program for kids aged 10-17 launching May
-2026. Teaches kids to train safely and effectively, builds athletic foundation, physical literacy, and
-
 
 --- PAGE 2 ---
-confidence. Coached by qualified, WWCC-checked trainers.
+Youth Training Program (YTP / Young'N'Strong): Program for kids aged 10-17 launching
+May 2026. Teaches kids to train safely and effectively, builds athletic foundation, physical
+literacy, and confidence. Coached by qualified, WWCC-checked trainers.
 
-Nutrition Coaching: Bundled into SPT and the 28-Day Kickstarter. Real-world nutrition advice
-and personalised meal plans, no fad diets. (Standalone nutrition product retired May 2026.)
-Accountability: Regular check-ins, app tracking, and progress updates ensure members stay
-committed to their goals between sessions.
+Nutrition Coaching: Bundled into SPT and the 28-Day Kickstarter. Real-world nutrition
+advice and personalised meal plans, no fad diets. (Standalone nutrition product retired May
+2026.)
+
+Accountability: Regular check-ins, app tracking, and progress updates ensure members
+stay committed to their goals between sessions.
 
 Key Benefits: Boost energy, reduce stress, build functional strength, learn new skills
 progressively, and connect with a supportive community.
 
-Equipment Used: Kettlebells, dumbbells, barbells, deadballs, sandbags/power bags, sleds, trap
-bars, TRX, medicine balls, powerbands, skipping ropes, plus bodyweight and natural
+Equipment Used: Kettlebells, dumbbells, barbells, deadballs, sandbags/power bags, sleds,
+trap bars, TRX, medicine balls, powerbands, skipping ropes, plus bodyweight and natural
 environment (hills, stairs, oval).
 
 3. Training Modalities & Class Types
 
-We utilise a mixture of functional fitness styles, including kettlebell training, strongman/odd
-object work (sandbags, sleds, deadballs, trap bars), CrossFit-style high-intensity work, and
-bodyweight/animal flow.
+We utilise a mixture of functional fitness styles, including kettlebell training,
+strongman/odd object work (sandbags, sleds, deadballs, trap bars), CrossFit-style high-
+intensity work, and bodyweight/animal flow.
 
-All Outdoor Squad classes are designed to be scalable and suitable for all ages and fitness levels.
-Strength'N'Tone: Progressive resistance training system to improve functional strength and
-power. Utilises power bags, kettlebells, dumbbells, TRX, bodyweight, medicine balls, and
-deadballs.
+All Outdoor Squad classes are designed to be scalable and suitable for all ages and fitness
+levels.
 
-HiiT'N'Run: High-intensity interval training to improve heart and lung capacity using circuits,
-sprints, speed/agility drills, hill/stair training, and animal movement.
+Strength'N'Stamina: Our hybrid strength and conditioning class, built to make you strong,
+capable and healthy. It pairs resistance training with conditioning to build strength, power
+and endurance, in a progressive system that gets you fitter without eating your whole week.
+Inspired by hybrid training, strongman and high-intensity conditioning, sessions blend
+heavy strength work with fast, varied movement. Using the full toolkit — power bags,
+kettlebells, dumbbells, barbells, TRX and deadballs — we program across all eight core
+movement patterns (push, pull, squat, hinge, lunge, carry, rotate and gait) to build a strong,
+balanced body that holds up in the real world. Trainers coach your technique and scale
+every movement, so it lands for everyone from first-timers to seasoned lifters.
 
-Flow'N'Flex now covers the yoga, Pilates and mobility-style sessions: dynamic and mindful movement, breathwork, posture/core control, mobility, strength, balance and flexibility.
-
-Core'N'Sore: Focuses on stabilising, enduring, and strengthening core muscles using both
-weighted and bodyweight movements, plus high-heart-rate finishers. Primary home for animal
-flow work.
-
-Flow'N'Flex: Energising sessions blending breathwork, mobility, and mindful movement
-(flowing sequences and held postures) for strength, balance, and flexibility.
-
-Outdoor Hyrox: Inspired by the functional fitness race. Alternates short running intervals with
-eight core functional movement stations (push, pull, squat, hinge, lunge, carry, rotate, gait) using
-sleds, power bags, and kettlebells.
-
-Buff'N'Puff: A hybrid and Hyrox-style class seamlessly integrating resistance training and
-cardiovascular exercises for a comprehensive, time-optimised workout.
+HiiT'N'Run: High-intensity interval training to improve heart and lung capacity using
+circuits, sprints, speed/agility drills, hill/stair training, and animal movement.
+Flow'N'Flex: Recover and move better with our hybrid Flow'N'Flex session. It blends the
+strength and flexibility of yoga with the precise core control of pilates, topped off with
+targeted restorative mobility work. We'll guide you through flowing sequences and
+strengthening movements to build balance and posture, followed by specific stretching to
 
 
 --- PAGE 3 ---
-Youth Training Program (YTP / Youth Training Program): Designed to teach the young ones how to
-train safely and effectively from an early age. Builds physical literacy, athletic foundation, and
-confidence. With a bit of fun thrown in.
+release desk tightness and post-training stiffness. Whether you're looking to sharpen your
+core, find deeper mobility, or simply hit the reset button after a tough week, this session is
+designed to leave you feeling stronger, taller, and grounded.
+Core'N'Sore: Focuses on stabilising, enduring, and strengthening core muscles using both
+weighted and bodyweight movements, plus high-heart-rate finishers. Primary home for
+animal flow work.
+Youth Training Program (YTP / Young'N'Strong): Designed to teach the young ones how
+to train safely and effectively from an early age. Builds physical literacy, athletic
+foundation, and confidence. With a bit of fun thrown in.
 Semi-Private Personal Training (SPT): Small group personal training, 4-person max.
-Personalised programming on 6-week cycles, 12-week assessment cadence, includes unlimited
-group classes.
+Personalised programming on 6-week cycles, 12-week assessment cadence, includes
+unlimited group classes.
 4. Master Timetable
 Monday
 
-¢ 6:00 AM — Buff'N'Puff (Camperdown)
+« 6:00 AM — Strength'N'Stamina (Camperdown)
 
-« 6:00 AM — Strength'N'Tone (Redfern)
+e« 6:00 AM — Strength'N'Stamina (Redfern)
 
-« 9:30 AM — Strength'N'Tone (Camperdown)
+e 9:30 AM — Strength'N'Stamina (Camperdown)
 
-* 6:30PM — Strength'N'Tone (Camperdown)
+e 6:30PM — Strength'N'Stamina (Camperdown)
 Tuesday
 
-* 6:00 AM — Buff'N'Puff (Redfern)
+e« 6:00 AM — Strength'N'Stamina (Redfern)
 
-« 6:00 AM — Flow'N'Flex (Camperdown)
+e 6:00 AM — Flow'N'Flex (Camperdown)
 
-¢ 6:30 PM — HiiT'N'Run (Camperdown)
+e 6:30 PM — HiiT'N'Run (Camperdown)
 Wednesday
 
-« 6:00 AM — Strength'N'Tone (Camperdown)
+« 6:00 AM — Strength'N'Stamina (Camperdown)
 
-« 6:00 AM — Strength'N'Tone (Redfern)
+e 6:00 AM — Strength'N'Stamina (Redfern)
 
-« 9:30 AM — Strength'N'Tone (Camperdown)
+e 9:30 AM — Strength'N'Stamina (Camperdown)
 
-¢ 6:30PM — Strength'N'Tone (Camperdown)
+e 6:30PM — Strength'N'Stamina (Camperdown)
 Thursday
 
-« 6:00 AM — HiiT'N'Run (Camperdown)
+e 6:00 AM — HiiT'N'Run (Camperdown)
 
-* 6:00 AM — Flow'N'Flex (Redfern)
-Friday
-
-« 6:00 AM —Core'N'Sore (Camperdown)
-
-« 6:00 AM — Strength'N'Tone (Redfern)
-
-« 9:30 AM — Strength'N'Tone (Camperdown)
+¢ 6:00 AM — Flow'N'Flex (Redfern)
 
 
 --- PAGE 4 ---
+Friday
+¢ 6:00 AM — Core'N'Sore (Camperdown)
+e« 6:00 AM — Strength'N'Stamina (Redfern)
+e 9:30 AM — Strength'N'Stamina (Camperdown)
 Saturday
-« 8:00AM — Strength'N'Tone (Camperdown)
-« 8:00 AM — Strength'N'Tone (Redfern)
-« 9:15 AM — Youth Training Program (Camperdown)
+e 8:00 AM — Strength'N'Stamina (Camperdown)
+e« 8:00 AM — Strength'N'Stamina (Redfern)
+e 9:15 AM — Youth Training Program (Camperdown)
 SPT timetable (rolling out June 2026):
-¢ 7:00-8:00 AM Mon/Wed/Fri (initial rollout)
-* 6:00-7:00 AM Tue/Thu (added as demand requires)
+e 7:00-8:00 AM Mon/Wed/Fri (initial rollout)
+¢ 6:00-7:00 AM Tue/Thu (added as demand requires)
 Regular social events, outings, and challenges run alongside standard classes.
 5. Training Locations
-Operations are primarily located near Camperdown Oval and Redfern Park. Training happens
-year-round, utilising large undercover areas in times of wet weather.
+Operations are primarily located near Camperdown Oval and Redfern Park. Training
+happens year-round, utilising large undercover areas in times of wet weather.
 The Barracks @ Camperdown Tennis & Oval
-Serves Camperdown, Newtown, Stanmore, and nearby Inner West suburbs. Features upgraded
-public facilities, an outdoor gym, and access to Camperdown Oval.
+Serves Camperdown, Newtown, Stanmore, and nearby Inner West suburbs. Features
+upgraded public facilities, an outdoor gym, and access to Camperdown Oval.
 ¢ Meeting point: Camperdown Tennis
-¢ Parking: Ample on Australia St and Mallet St
+e Parking: Ample on Australia St and Mallet St
 ¢ Public transport: 900m from Newtown Station; buses 413, 440, 480, 483 stop on
 Parramatta Rd 25m away
 Redfern Park
-Serves Redfern, Waterloo, and Surry Hills. Historic site that hosts the South Sydney Rabbitohs,
-Park Café, and public toilets.
-* Meeting point: Near the Park Café at the Sports Oval end, or undercover behind the café
-during wet weather
-¢ Parking: Ample on Chalmers St and underground at Woolworths
+Serves Redfern, Waterloo, and Surry Hills. Historic site that hosts the South Sydney
+Rabbitohs, Park Café, and public toilets.
+¢ Meeting point: Near the Park Café at the Sports Oval end, or undercover behind the
+café during wet weather
+e Parking: Ample on Chalmers St and underground at Woolworths
 e Public transport: 700m from Redfern Station; serviced by 310, 343, 395 buses
-6. Pricing & Memberships (AUD)
 
 
 --- PAGE 5 ---
+6. Pricing & Memberships (AUD)
 Product Price Notes
 1-Day Free Trial Pass Free Single class, valid 14 days
-5-Day High-Protein Australian Meal Free Email lead magnet
-Plan
+5-Day High-Protein Australian Free Email lead magnet
+Meal Plan
 Drop-in / Casual Session $37 Single session
 Squad Student $25/wk Unlimited group, students only (verified)
-YTP (Youth Training Program) $25/wk Kids 10-17, Saturday Camperdown class (Wed 4pm
-to follow)
-Squad Ascent $S1/wk Unlimited group classes
+YTP (Young'N'Strong) $25/wk Kids 10-17, Saturday Camperdown class (Wed
+4pm to follow)
+Squad Ascent $51/wk Unlimited group classes
 SPT 2x + Group $125/wk 2x SPT sessions/wk + unlimited group
 SPT 3x + Group $175/wk 3x SPT sessions/wk + unlimited group
 28-Day Kickstarter $397 SPT trial: 28 days SPT + nutrition plan +
@@ -185,25 +186,27 @@ assessment
 1:1 Personal Training $150/session Available, not actively promoted
 Annual SPT prepayment: 5% discount for annual upfront payment (SPT only).
 Membership terms:
-« Squad Ascent / Squad Student / YTP: weekly rolling, 1 week's notice to cancel
-¢ SPT:12-week minimum term, then fortnight-to-fortnight rolling
-e Drop-in/ 1:1 PT: per session
-Pause policy: Up to 8 weeks per calendar year, minimum 1-week blocks, requested in advance.
-SPT cancellation policy: 24 hours' notice required; 1 makeup session per month allowed (use it
-or lose it); no makeups for no-shows.
-(Full offer detail and strategic positioning in(offer-architecture.md).)
-7. Target Audience Profiles
-Primary Demographic: Professionals aged 30-49 living in the Inner City and Inner West,
+e Squad Ascent / Squad Student / YTP: weekly rolling, 1 week's notice to cancel
+e SPT:12-week minimum term, then fortnight-to-fortnight rolling
+¢ Drop-in/ 1:1 PT: per session
+Pause policy: Up to 8 weeks per calendar year, minimum 1-week blocks, requested in
+advance.
+SPT cancellation policy: 24 hours' notice required; 1 makeup session per month allowed
+(use it or lose it); no makeups for no-shows.
+(Full offer detail and strategic positioning in (offer-architecture.md).)
 
 
 --- PAGE 6 ---
+7. Target Audience Profiles
+Primary Demographic: Professionals aged 30-49 living in the Inner City and Inner West,
 interested in health, fitness, kettlebells, and functional strength.
-Five customer avatars are detailed in
+Five customer avatars are detailed in (customer-avatars.md):
 1. The Desk-Bound Professional (32-45) — corporate/tech workers fixing desk-induced
 damage
 2. The Unconventional Strength Seeker (28-42) — ex-CrossFitters and serious lifters
 wanting strength without bro-gym energy
-3. The Social & Holistic Mover (35-55) — longevity-focused, community-driven members
+3. The Social & Holistic Mover (35-55) — longevity-focused, community-driven
+members
 4. The SPT Prospect (mixed ages) — three sub-types: upgrading members, PT-curious
 newcomers, and buddy/pair sign-ups
 5. The YTP Parent-Buyer (38-52) — parents of 10-17-year-olds, parent buys, kid uses
@@ -211,76 +214,62 @@ newcomers, and buddy/pair sign-ups
 Primary Calls to Action: "Claim your trial pass"
 Lead Magnets: The Free 5-Day High-Protein Australian Meal Plan
 Major Yearly Events: The Winter Warrior Fitness Challenge
-SPT Launch Campaign (June 2026): "Mates + Weights = Meights" — leading angle for first 60
-days; "Strongest Dad in the Room" and "Badass Mum" campaigns held for later quarters.
+SPT Launch Campaign (June 2026): "Mates + Weights = Meights" — leading angle for
+first 60 days; "Strongest Dad in the Room" and "Badass Mum" campaigns held for later
+quarters.
 Tech Stack:
 e Website hosted on Squarespace
-¢ Marketing, sales automation, lead nurturing, session running, class bookings, and
+e« Marketing, sales automation, lead nurturing, session running, class bookings, and
 attendance managed through Momence
-« Alchatbot in development with external developer (Phase 1 pilot, Phase 2 multi-channel +
-CRM integration planned) — branded as Robo-Nick
-Team Structure: Owner (Nick) plus 4 trainers and a Virtual Assistant (Philippines-based) for
-administrative tasks, AI workflow implementation, and digital marketing execution.
-Strategic priorities for next 12 months (full detail in (big-three-bets.md)):
-1. Successfully launch and consolidate SPT and YTP as profitable, repeatable products (SPT
-priority)
-2. Build the business so it doesn't depend on Nick teaching every class
+e Alchatbot in development with external developer (Phase 1 pilot, Phase 2 multi-
+channel + CRM integration planned) — branded as Robo-Nick
+Team Structure: Owner (Nick) plus 4 trainers and a Virtual Assistant (Philippines-based)
+for administrative tasks, AI workflow implementation, and digital marketing execution.
+Strategic priorities for next 12 months (full detail in (6ig-three-bets.md)):
 
 
 --- PAGE 7 ---
-3. Establish dominance in one organic acquisition channel — Google Business Profile + local
-SEO
-
+1. Successfully launch and consolidate SPT and YTP as profitable, repeatable products
+(SPT priority)
+2. Build the business so it doesn't depend on Nick teaching every class
+3. Establish dominance in one organic acquisition channel — Google Business Profile +
+local SEO
 9. Social Handles & Online Presence
-
 Platform URL
-
-Website https://www.outdoorsquad.com.au,
-
+Website https://www.outdoorsquad.com.au/
 Facebook https://www.facebook.com/outdoorsquadinnerwest
-
-Pinterest https://au.pinterest.com/innerwest0284.
-
+Pinterest https://au.pinterest.com/innerwest0284/
 Instagram https://www.instagram.com/theoutdoorsquadinnerwest
-
 YouTube https://www.youtube.com/@theoutdoorsquad
-
-Twitter/X https://x.com/TheOutdoorSquad.
-
-WhatsApp https://api.whatsapp.com/send/?phone=61402439361
-
-GBP Camperdown https://share.google/Fy2feWRWx9uxeXxOf
-
-GBP Redfern https://share.google/z6uRDTUZAW82nOqTo
-
+Twitter/X https://x.com/TheOutdoorSquad
+WhatsApp https://api. whatsapp.com/send/?phone=61402439361
+GBP Camperdown _https://share.google/Fy2fcWRWx9uxeXxOf
+GBP Redfern https://share.google/z6uRDTUZAw82nOqTo
 LocalSearch https://www.localsearch.com.au/profile/the-outdoor-squad-
-
-Camperdown camperdown/cmdgqxvgv9000108If6pdzcxpo
-
+Camperdown camperdown/cmdgxvgv9000108lf6pdzcxpo
 LocalSearch https://www.localsearch.com.au/profile/the-outdoor-squad-
-
-Redfern redfern/cm13sp19n000b08kzhriv4dtp
-
-Yelp Camperdown https://www.yelp.com/biz/the-outdoor-squad-camperdown-camperdown-2
-
+Redfern redfern/cm13sp19n000bO08kzhriv4dtp
+Yelp Camperdown _https://www.yelp.com/biz/the-outdoor-squad-camperdown-camperdown-2
 Yelp Redfern https://www.yelp.com/biz/the-outdoor-squad-redfern-redfern-3
-Combined GBP reviews: 250+ five-star reviews across both location profiles (as of May 2026).
+Combined GBP reviews: 250+ five-star reviews across both location profiles (as of May
+2026).
+
+
+--- PAGE 8 ---
 10. How to Maintain This Document
 Update this knowledge base when:
 
 e Aclass type is added, renamed, or retired
 
-
---- PAGE 8 ---
 ¢ Pricing changes
 
-¢ Locations change
+e Locations change
 
 e The team changes
 
-« Anew social channel is added or an old one retired
+e Anew social channel is added or an old one retired
 
-« Amajor operational policy changes
-Quarterly review at minimum. When updating, also check whether (offer-architecture.md)
+e Amajor operational policy changes
+Quarterly review at minimum. When updating, also check whether
 and the Project knowledge files need corresponding updates.
 This is the foundational reference. Other documents build on it.
