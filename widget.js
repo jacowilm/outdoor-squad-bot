@@ -248,16 +248,6 @@
         .os-send-btn:active { transform: scale(.96); }
         .os-send-btn svg { width: 16px; height: 16px; }
 
-        .os-footer {
-            text-align: center;
-            font-size: .66rem;
-            color: #8a8a8a;
-            padding: 6px 0 9px;
-            background: #ffffff;
-            letter-spacing: .02em;
-        }
-        .os-footer strong { color: #2a2a2a; font-weight: 600; }
-
         .os-typing {
             display: inline-flex; align-items: center; gap: 4px;
             padding: 12px 16px !important;
@@ -319,7 +309,6 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
                 </button>
             </div>
-            <div class="os-footer">Powered by <strong>Robo-Nick</strong> · The Outdoor Squad</div>
         </div>
         <button id="os-chat-bubble" type="button" aria-label="Open chat with Robo-Nick">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
