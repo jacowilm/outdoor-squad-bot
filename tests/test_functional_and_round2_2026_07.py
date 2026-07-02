@@ -187,6 +187,20 @@ def test_equipment_answer_grounded():
         assert "trap bar" not in r and "barbell" not in r and "trx" not in r  # no invented inventory
 
 
+# ── clean_agent_reply: no orphan dash after a "great question" opener ──────────
+def test_no_orphan_dash_after_question_opener():
+    # "Great question — they're..." must not ship as "— they're..." (the "random
+    # dash before the response" class). Reply must start with a capital letter.
+    for src in [
+        "Great question — they're built for different things. Group classes coached.",
+        "Good question - here's the deal, and here is more text to keep it long enough.",
+        "Great question! Here's the full picture of what you need to know about it all.",
+    ]:
+        out = app.clean_agent_reply(src)
+        assert not out.startswith(("-", "—", "–", ".", ","))
+        assert out[0].isupper()
+
+
 # ── F: name capture past a leading filler ─────────────────────────────────────
 def test_name_capture_past_leading_filler():
     assert app.extract_contact_name("I'm keen, I'm Sarah, 0412 345 678") == "Sarah"

@@ -1034,7 +1034,15 @@ def clean_agent_reply(reply: str | None) -> str:
         first_token = text.split(None, 1)[0]
         if "@" not in first_token and "://" not in first_token and not first_token.lower().startswith("www."):
             text = text[0].upper() + text[1:]
-    text = re.sub(r"^(great|good) question[!.,]?\s*", "", text, flags=re.IGNORECASE)
+    # Consume any trailing punctuation/dash after the opener too, so "Great
+    # question — they're..." doesn't ship as "— they're..." (an orphan dash — the
+    # "random dash before the response" class Nicholas flagged, seen again in the
+    # 2026-07-02 SPT-vs-group QA). Then re-capitalise the now-leading word.
+    text = re.sub(r"^(?:great|good) question\s*[!.,;:\-–—]*\s*", "", text, flags=re.IGNORECASE)
+    if text and text[0].islower():
+        first_token = text.split(None, 1)[0]
+        if "@" not in first_token and "://" not in first_token and not first_token.lower().startswith("www."):
+            text = text[0].upper() + text[1:]
     text = text.replace("•", "\n- ")
     # Normalise standalone "*" or "-" bullet markers to "- ", but DO NOT touch
     # paired "**bold**" markers at the start of a line — they're meaningful.
