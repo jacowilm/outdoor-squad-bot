@@ -412,19 +412,35 @@ def supabase_request(
     json_body=None,
     prefer: str | None = None,
 ):
+    # Retry transient READ failures (free-tier cold starts + transatlantic latency
+    # can trip the timeout). Without this, a single slow read silently fell back
+    # to the EMPTY ephemeral local file and the owner's dashboard looked wiped —
+    # the "leads/stats disappeared on reload" report (Nicholas 2026-07-02).
+    # Writes are NOT retried: they sit on the visitor's chat-response path, so a
+    # retry would double the worst-case latency during a Supabase hang; they still
+    # fall back to local on failure as before.
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-    response = httpx.request(
-        method,
-        url,
-        headers=supabase_headers(prefer=prefer),
-        params=params,
-        json=json_body,
-        timeout=SUPABASE_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
-    if not response.text.strip():
-        return None
-    return response.json()
+    attempts = 3 if method.upper() == "GET" else 1
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            response = httpx.request(
+                method,
+                url,
+                headers=supabase_headers(prefer=prefer),
+                params=params,
+                json=json_body,
+                timeout=SUPABASE_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            if not response.text.strip():
+                return None
+            return response.json()
+        except Exception as exc:
+            last_exc = exc
+            if attempt + 1 < attempts:
+                time.sleep(0.6 * (attempt + 1))
+    raise last_exc
 
 
 def sort_rows_by_timestamp(rows: list[dict], key: str = "timestamp") -> list[dict]:
@@ -1947,9 +1963,50 @@ def is_prompt_injection(text: str) -> bool:
     return bool(INJECTION_RE.search(text))
 
 
+def contact_preference_from_reply(clean: str) -> str | None:
+    """Map a reply to 'SMS or a call?' to a normalised preference phrase, or None
+    if it isn't actually answering that question."""
+    said_text = any(w in clean for w in ["sms", "text", "txt", "message", "msg", "whatsapp", "whats app"])
+    said_call = any(w in clean for w in ["call", "ring", "phone"])
+    if said_text and not said_call:
+        return "a text"
+    if said_call and not said_text:
+        return "a call"
+    if any(w in clean for w in ["email", "e-mail", "e mail"]):
+        return "an email"
+    if any(w in clean for w in ["either", "whatever", "whichever", "both", "any is fine", "anything",
+                                "don't mind", "dont mind", "no preference", "no pref", "you choose", "up to you", "surprise me"]):
+        return "whichever's easiest"
+    return None
+
+
+def last_known_name(session_id: str) -> str | None:
+    """The visitor's captured first name from earlier in the session, if any."""
+    try:
+        return extract_contact_name("", session_id=session_id)
+    except Exception:
+        return None
+
+
 def contextual_short_reply(message: str, session_id: str) -> str | None:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
+
+    # Answer to "would you prefer a quick SMS or a call?" — this is the LAST step
+    # of the lead-capture flow, so it must be handled cleanly. Without this, "sms"
+    # fell to the vague-message handler and the visitor got "still in the fog"
+    # right after handing over their details (Nicholas end-to-end test 2026-07-02).
+    if any(p in previous for p in ["sms or a call", "sms or call", "quick sms", "prefer a text or a call", "text or a call", "text or call"]):
+        pref = contact_preference_from_reply(clean)
+        if pref:
+            first = ""
+            nm = last_known_name(session_id)
+            if nm:
+                first = f", {nm.split()[0]}"
+            return (
+                f"Perfect — {pref} it is{first}. The team will reach out shortly to sort your free trial or the best next step.\n\n"
+                "Anything else you want to know while you're here, or are you good to go?"
+            )
 
     # Prompt-injection / instruction-extraction — checked first so it can't be
     # swallowed by an unrelated keyword branch (e.g. "system prompt" -> "pt").
@@ -3579,7 +3636,12 @@ def is_vague_message(text: str) -> bool:
         "idk", "i dont know", "i don't know", "dunno", "not sure", "unsure",
         "maybe", "no idea", "hmm", "uh", "umm", "whatever", "?", "help",
     }
-    short_but_meaningful = {"spt", "pt", "no", "nope", "nah", "yes", "yep"}
+    # Short but meaningful — e.g. the reply to "SMS or a call?" is often just
+    # "sms"/"call". Without these, is_vague_message flagged them and the visitor
+    # got a nonsensical "still in the fog" after handing over their details
+    # (Nicholas's own end-to-end test, 2026-07-02).
+    short_but_meaningful = {"spt", "pt", "no", "nope", "nah", "yes", "yep",
+                            "sms", "text", "call", "ring", "dm", "email", "app"}
     return text in vague or (len(text) <= 3 and text not in short_but_meaningful)
 
 
@@ -4065,6 +4127,43 @@ def contact_capture_reply(message: str, session_id: str) -> str:
     )
 
 
+# Inner West suburbs → the closest Outdoor Squad venue. Camperdown serves
+# Camperdown/Newtown/Stanmore & nearby; Redfern serves Redfern/Waterloo/Surry
+# Hills. Used so a lead's location isn't logged as "unknown" when the visitor
+# named their suburb rather than the venue ("im in ultimo" → Camperdown, which
+# is exactly what the bot itself told them — Nicholas lead-summary bug 2026-07-02).
+SUBURB_TO_VENUE = {
+    "Camperdown": ["camperdown", "newtown", "stanmore", "ultimo", "annandale", "forest lodge",
+                   "glebe", "enmore", "petersham", "lewisham", "leichhardt", "marrickville", "st peters"],
+    "Redfern": ["redfern", "waterloo", "surry hills", "alexandria", "eveleigh", "chippendale",
+                "darlington", "zetland", "moore park", "erskineville"],
+}
+
+
+def infer_lead_location(messages: list, user_lower: str) -> str:
+    # 1. The venue named in the visitor's OWN words wins.
+    if "camperdown" in user_lower:
+        return "Camperdown"
+    if "redfern" in user_lower:
+        return "Redfern"
+    # 2. A suburb the visitor named → its closest venue.
+    for venue, suburbs in SUBURB_TO_VENUE.items():
+        if any(re.search(r"\b" + re.escape(s) + r"\b", user_lower) for s in suburbs):
+            return venue
+    # 3. The single venue Robo-Nick recommended for them (e.g. "Camperdown would
+    #    be your closest") — read the most recent assistant turn that named just one.
+    for m in reversed(messages):
+        if m.get("role") != "assistant":
+            continue
+        a = (m.get("content") or "").lower()
+        has_c, has_r = "camperdown" in a, "redfern" in a
+        if has_c and not has_r:
+            return "Camperdown"
+        if has_r and not has_c:
+            return "Redfern"
+    return "unknown"
+
+
 def build_lead_summary(session_id: str, latest_message: str = "") -> dict:
     """Create a simple handoff summary for Nick/Lyn from the chat so far."""
     messages = load_conversation(session_id)
@@ -4073,7 +4172,7 @@ def build_lead_summary(session_id: str, latest_message: str = "") -> dict:
     lower = joined.lower()
 
     route = classify_route(lower)
-    location = "Camperdown" if "camperdown" in lower else "Redfern" if "redfern" in lower else "unknown"
+    location = infer_lead_location(messages, lower)
     time_pref = "evening" if any(x in lower for x in ["evening", "after work", " pm", "6:30"] ) else "morning" if any(x in lower for x in ["morning", "6am", "6:00", "9:30"]) or re.search(r"\b\d{1,2}\s?am\b", lower) else "unknown"
 
     concerns = []

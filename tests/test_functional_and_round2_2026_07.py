@@ -31,6 +31,10 @@ for _k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_KEY",
 
 import app  # noqa: E402
 importlib.reload(app)
+# app's load_local_env_files() re-reads ~/.openclaw/.env on import and can put
+# SUPABASE_URL back; force the local-file backend so tests are hermetic and fast.
+app.SUPABASE_URL = ""
+app.SUPABASE_KEY = None
 from fastapi.testclient import TestClient  # noqa: E402
 
 _TMP = Path(tempfile.mkdtemp(prefix="os-func-test-"))
@@ -199,6 +203,51 @@ def test_no_orphan_dash_after_question_opener():
         out = app.clean_agent_reply(src)
         assert not out.startswith(("-", "—", "–", ".", ","))
         assert out[0].isupper()
+
+
+# ── contact-preference answer ("SMS or a call?" -> "sms") ─────────────────────
+def test_sms_answer_after_preference_question():
+    sid = "pref-sms"
+    app.conversations[sid] = [{"role": "assistant", "content": "would you prefer a quick SMS or a call?"}]
+    for reply, expect in [("sms", "a text"), ("call", "a call"), ("text me", "a text"),
+                          ("give me a ring", "a call"), ("either is fine", "whichever")]:
+        out = app.contextual_short_reply(reply, sid)
+        assert out and "still in the fog" not in out.lower()
+        assert expect in out.lower()
+
+
+def test_sms_not_treated_as_vague():
+    for w in ("sms", "call", "text", "ring"):
+        assert not app.is_vague_message(w)
+
+
+# ── lead location inference (suburb / bot recommendation) ─────────────────────
+def test_location_inferred_from_suburb():
+    sid = "loc-suburb"
+    app.conversations[sid] = [
+        {"role": "user", "content": "im in ultimo, whats closest"},
+        {"role": "assistant", "content": "Camperdown would be your closest — The Barracks on Mallett St."},
+        {"role": "user", "content": "my name is Jacob, 0412 345 678"},
+    ]
+    summary = app.build_lead_summary(sid, "my name is Jacob, 0412 345 678")
+    assert summary["location_preference"] == "Camperdown"
+
+
+def test_location_inferred_from_bot_recommendation():
+    sid = "loc-bot"
+    app.conversations[sid] = [
+        {"role": "user", "content": "where should I go, I'm near central"},
+        {"role": "assistant", "content": "Redfern Park would suit you best."},
+        {"role": "user", "content": "cool, call me on 0412 345 678"},
+    ]
+    summary = app.build_lead_summary(sid, "cool, call me on 0412 345 678")
+    assert summary["location_preference"] == "Redfern"
+
+
+def test_explicit_location_still_wins():
+    sid = "loc-explicit"
+    app.conversations[sid] = [{"role": "user", "content": "I want to train at Camperdown, 0412 345 678"}]
+    assert app.build_lead_summary(sid, "I want to train at Camperdown, 0412 345 678")["location_preference"] == "Camperdown"
 
 
 # ── F: name capture past a leading filler ─────────────────────────────────────
