@@ -324,3 +324,26 @@ def test_new_mkb_class_blurb_maps_old_strength_and_buff_names_to_current_class()
         assert "strength'n'stamina" in lowered
         assert "push" in lowered and "pull" in lowered
         assert "strength'n'tone" not in lowered
+
+
+def test_contact_details_get_lead_ack_not_a_topical_answer():
+    # Nicholas 2026-07-02: he handed over name + mobile and the bot answered with
+    # the longevity pitch, because the phone number contained "52" and hit the
+    # bare-substring longevity trigger. A shared phone/email must ALWAYS be
+    # acknowledged as a lead capture, never routed to a topical keyword branch.
+    for phone in ["0412 345 652", "0452 000 000", "0475 197 397", "0428 152 000"]:
+        text = reply(f"my name is Jacobo and phone number is {phone}").lower()
+        assert "contact details" in text, text
+        assert "groceries" not in text and "long game" not in text, text
+
+
+def test_email_only_gets_lead_ack():
+    text = reply("hi, my email is jacobo@example.com").lower()
+    assert "contact details" in text, text
+
+
+def test_real_age_still_reaches_longevity_answer():
+    # The fix must not over-correct: a genuine age in an ageing context still earns
+    # the longevity reply.
+    text = reply("I'm 52 and want to stay strong as I age").lower()
+    assert "long game" in text or "longevity" in text or "groceries" in text

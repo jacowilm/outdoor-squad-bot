@@ -1809,6 +1809,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Want me to flag the meal plan to send through (just drop an email), or line up a quick chat with the team about the food side?"
         )
 
+    # A shared phone/email means the visitor is handing over a lead — acknowledge
+    # it here, BEFORE any topical keyword branch, so contact digits can never fall
+    # through to an unrelated answer (e.g. a mobile containing "52" hitting the
+    # longevity branch — Nicholas's own test, 2026-07-02). Meal-plan-with-email is
+    # handled just above, so this doesn't swallow that path.
+    if has_contact_details(message):
+        return contact_capture_reply(message, session_id)
+
     if any(phrase in clean for phrase in [
         "who reads these messages", "who reads my messages", "who reads this message", "who sees these messages",
         "does anyone read these", "will someone read this", "if i leave my mobile", "if i leave my number",
@@ -2219,7 +2227,17 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     for aliases, blurb in class_blurbs:
         if aliases[0] in clean or (class_question and any(a in clean for a in aliases)):
             return blurb + "\n\nThey rotate through the week, so the easiest way to try one is the free trial. " + trial_close(session_id)
-    if any(phrase in clean for phrase in ["52", "stay strong as i age", "strong as i age", "ageing", "aging", "longevity", "as i age"]):
+    if (
+        # Age only counts as a real age with an age indicator (e.g. "I'm 52",
+        # "aged 58", "62 years old") — never a bare "52" that also lives inside a
+        # phone number, price or postcode. Nicholas 2026-07-02.
+        re.search(r"\b(?:i'?m|im|i am|age|aged|turning|nearly|almost|now|i’m)\s+(?:4[5-9]|[5-9]\d)\b", clean)
+        or re.search(r"\b(?:4[5-9]|[5-9]\d)\s*(?:yo|y/?o|years?\s*old)\b", clean)
+        or any(phrase in clean for phrase in [
+            "stay strong as i age", "strong as i age", "ageing", "aging", "longevity",
+            "as i age", "as we age", "getting older", "in my 50s", "in my 60s", "in my 70s",
+        ])
+    ):
         return (
             "Yep. That’s a very Outdoor Squad reason to train.\n\n"
             "The focus is real-world strength, mobility, balance, and still carrying your own groceries when you’re 75. Plenty of members train with that long-game mindset, not a quick before-and-after thing.\n\n"
@@ -3418,18 +3436,8 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             "Are you asking because group training sounds intimidating, or just checking the danger level?"
         )
 
-    if re.search(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', message) or re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', message):
-        name = extract_contact_name(message, session_id=session_id)
-        intro = f"I’ve got those contact details, {name.split()[0]}." if name else "I’ve got those contact details."
-        if name:
-            follow_up = "The team can use that to follow up about the best free trial, SPT, or coach-call option for you."
-        else:
-            follow_up = "If you haven’t already, add your first name too so Nick or Lyn know who they’re replying to."
-        return (
-            f"{intro}\n\n"
-            f"{follow_up}\n\n"
-            "Last useful choice: would you prefer a quick SMS or a call?"
-        )
+    if has_contact_details(message):
+        return contact_capture_reply(message, session_id)
 
     if is_location_question(normalise_chat_text(message)):
         if "redfern" in text:
@@ -3672,6 +3680,27 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
             return None
         return " ".join(captured).title()
     return None
+
+
+def contact_capture_reply(message: str, session_id: str) -> str:
+    """Single source of truth for acknowledging a shared phone/email as a lead.
+
+    Called at the top of contextual_short_reply (before ANY topical keyword
+    branch) so contact digits can never fall through to an unrelated answer —
+    e.g. a mobile containing "52" hitting the longevity branch, which is exactly
+    what happened to Nicholas's own test on 2026-07-02."""
+    name = extract_contact_name(message, session_id=session_id)
+    if name:
+        intro = f"I’ve got those contact details, {name.split()[0]} — thanks."
+        follow_up = "The team will pick it up and follow up, usually the same day, about the best free trial, SPT, or a coach call — whatever suits you."
+    else:
+        intro = "I’ve got those contact details — thanks."
+        follow_up = "If you haven’t already, pop your first name in too so Nick or Lyn know who they’re replying to. They usually follow up the same day."
+    return (
+        f"{intro}\n\n"
+        f"{follow_up}\n\n"
+        "Last useful thing: would you prefer a quick SMS or a call?"
+    )
 
 
 def build_lead_summary(session_id: str, latest_message: str = "") -> dict:
