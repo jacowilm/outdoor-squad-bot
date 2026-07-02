@@ -2023,23 +2023,33 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 "Anything else you want to know while you're here, or are you good to go?"
             )
 
-    # Closing acknowledgements ("no I'm good", "thanks", "all done") — sign off
-    # warmly instead of dropping to the uncertain handoff terminal, and never
-    # re-ask for contact details already captured (Nicholas end-to-end test
-    # 2026-07-02: "no im good" after the close got "drop your name + mobile").
-    _closing_acks = {
-        "no im good", "no i'm good", "im good", "i'm good", "all good", "im all good",
-        "nah im good", "no thanks", "no thank you", "nope thanks", "that's all", "thats all",
-        "that's it", "thats it", "im done", "i'm done", "all done", "nothing else",
-        "nothing thanks", "good to go", "im good to go", "im good thanks", "good thanks",
-        "cheers", "thanks", "thank you", "thankyou", "ty", "thx", "ta", "cool thanks",
-        "great thanks", "awesome thanks", "perfect thanks", "no im good thanks", "nah thanks",
+    # Closing acknowledgements ("no I'm good", "thanks", "nah all good cheers") —
+    # sign off warmly instead of dropping to the uncertain handoff terminal, and
+    # never re-ask for contact details already captured (Nicholas end-to-end test
+    # 2026-07-02). Token-based, not an exact-match list, so natural variations are
+    # caught; a message counts as a close only if EVERY word is a closing word.
+    _closing_vocab = {
+        "no", "nope", "nah", "na", "not", "im", "i'm", "all", "good", "goods", "thanks",
+        "thank", "thankyou", "you", "cheers", "done", "ta", "ty", "thx", "nothing", "else",
+        "thats", "that's", "that", "its", "it's", "it", "cool", "great", "awesome", "perfect",
+        "fine", "sweet", "sorted", "set", "legend", "mate", "appreciate", "appreciated",
+        "bye", "cya", "later", "much", "for", "now", "to", "go", "is", "worries", "worry",
     }
+    _positive_close = {
+        "good", "thanks", "thank", "thankyou", "cheers", "done", "nothing", "cool", "great",
+        "awesome", "perfect", "sweet", "sorted", "set", "legend", "ta", "ty", "thx",
+        "appreciate", "appreciated", "bye", "cya", "later",
+    }
+    _tokens = [t.strip(",.!?;:") for t in clean.split()]
+    _tokens = [t for t in _tokens if t]
+    all_closing = bool(_tokens) and all(t in _closing_vocab for t in _tokens)
+    has_positive = any(t in _positive_close for t in _tokens)
     winding_down = any(p in previous for p in ["anything else", "good to go", "while you're here", "while youre here"])
     captured = contact_already_captured(session_id)
     emoji_only = bool(clean) and not re.search(r"[a-z0-9]", clean)
-    ambiguous_close = clean in {"no", "nope", "nah", "na"} or emoji_only
-    if clean in _closing_acks or (ambiguous_close and (winding_down or captured)):
+    definite_close = all_closing and has_positive
+    ambiguous_close = (all_closing and not has_positive) or emoji_only
+    if definite_close or (ambiguous_close and (winding_down or captured)):
         if captured:
             nm = last_known_name(session_id)
             tail = f", {nm.split()[0]}" if nm else ""
