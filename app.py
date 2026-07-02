@@ -243,6 +243,11 @@ if DEPLOYMENT_MODE not in {"review", "handoff"}:
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
 SUPABASE_TIMEOUT_SECONDS = 12.0
+# Health/visibility: track whether the last Supabase op actually worked, so the
+# dashboard/health can show storage is DEGRADED instead of silently falling back
+# to the ephemeral local file (the project paused once and nothing surfaced it).
+_supabase_last_ok: bool | None = None
+_supabase_last_error: str | None = None
 CONVERSATION_CACHE_MAX_SESSIONS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_MAX", "200"))
 CONVERSATION_CACHE_TTL_SECONDS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_TTL_SECONDS", "3600"))
 CONVERSATION_STATE_MAX_MESSAGES = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_STATE_MAX_MESSAGES", "60"))
@@ -434,6 +439,7 @@ def supabase_request(
     # Writes are NOT retried: they sit on the visitor's chat-response path, so a
     # retry would double the worst-case latency during a Supabase hang; they still
     # fall back to local on failure as before.
+    global _supabase_last_ok, _supabase_last_error
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     attempts = 3 if method.upper() == "GET" else 1
     last_exc: Exception | None = None
@@ -448,6 +454,7 @@ def supabase_request(
                 timeout=SUPABASE_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
+            _supabase_last_ok, _supabase_last_error = True, None
             if not response.text.strip():
                 return None
             return response.json()
@@ -455,6 +462,11 @@ def supabase_request(
             last_exc = exc
             if attempt + 1 < attempts:
                 time.sleep(0.6 * (attempt + 1))
+    # Every attempt failed — record it so /api/health surfaces that Supabase is
+    # unreachable (it silently paused once and the dashboard looked wiped while
+    # health still said "supabase" — Nicholas 2026-07-02).
+    _supabase_last_ok = False
+    _supabase_last_error = f"{type(last_exc).__name__}: {str(last_exc)[:160]}"
     raise last_exc
 
 
@@ -3427,10 +3439,11 @@ async def get_metrics(_: str = Depends(require_admin)):
     return JSONResponse(build_metrics_payload())
 
 
-@app.get("/api/_storage_diag")
+@app.get("/api/storage-health")
 async def storage_diag(_: str = Depends(require_admin)):
-    """TEMP diagnostic: does the LIVE Supabase read/write actually work, or is
-    everything silently falling back to the ephemeral local file? Admin-only."""
+    """Admin storage-health check: does the LIVE Supabase read/write actually
+    work, or is everything falling back to the ephemeral local file? Added after
+    the project silently paused and leads stopped persisting (2026-07-02)."""
     out = {
         "supabase_enabled": supabase_enabled(),
         "supabase_url_host": (SUPABASE_URL.split("//")[-1][:40] if SUPABASE_URL else None),
@@ -3602,8 +3615,15 @@ async def health():
         "review_hosted_by_ai_sprints": review_hosted,
         "review_ready": review_ready,
         "handoff_ready": handoff_ready,
-        "storage_backend": "supabase" if supabase_enabled() else "local_files",
+        "storage_backend": (
+            "local_files" if not supabase_enabled()
+            else ("supabase" if _supabase_last_ok is not False else "supabase_unreachable_using_ephemeral_local")
+        ),
         "supabase_configured": supabase_enabled(),
+        # True/False once an op has run; null before the first op. False here means
+        # leads/events are NOT persisting durably — the owner should see it.
+        "supabase_reachable": _supabase_last_ok,
+        "supabase_last_error": _supabase_last_error,
         "ai_configured": bool(providers),
         "admin_configured": admin_configured,
         "trial_link_configured": trial_link_configured,
