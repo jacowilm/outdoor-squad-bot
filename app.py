@@ -2036,8 +2036,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         "great thanks", "awesome thanks", "perfect thanks", "no im good thanks", "nah thanks",
     }
     winding_down = any(p in previous for p in ["anything else", "good to go", "while you're here", "while youre here"])
-    if clean in _closing_acks or (clean in {"no", "nope", "nah", "na"} and winding_down):
-        if contact_already_captured(session_id):
+    captured = contact_already_captured(session_id)
+    emoji_only = bool(clean) and not re.search(r"[a-z0-9]", clean)
+    ambiguous_close = clean in {"no", "nope", "nah", "na"} or emoji_only
+    if clean in _closing_acks or (ambiguous_close and (winding_down or captured)):
+        if captured:
             nm = last_known_name(session_id)
             tail = f", {nm.split()[0]}" if nm else ""
             return (

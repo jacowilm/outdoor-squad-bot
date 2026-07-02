@@ -221,6 +221,52 @@ def test_sms_not_treated_as_vague():
         assert not app.is_vague_message(w)
 
 
+# ── closing acknowledgements (don't drop to the handoff terminal) ─────────────
+def _seed_captured(sid):
+    app.conversations[sid] = [
+        {"role": "user", "content": "I'm Kai, 0412 333 444"},
+        {"role": "assistant", "content": "I've got those contact details, Kai — thanks. would you prefer a quick SMS or a call?"},
+        {"role": "user", "content": "sms"},
+        {"role": "assistant", "content": "Perfect — a text it is, Kai. Anything else you want to know while you're here, or are you good to go?"},
+    ]
+
+
+def test_closing_ack_signs_off_not_terminal():
+    for ack in ["no im good", "thanks", "all done", "nah all good", "no thanks"]:
+        sid = f"close-{hash(ack)}"
+        _seed_captured(sid)
+        out = app.demo_fallback_reply(ack, session_id=sid)
+        low = out.lower()
+        assert "outside what robo-nick can reliably" not in low  # not the terminal
+        assert "drop your" not in low and "pop your first name" not in low  # not re-asking contact
+        assert "all set" in low or "in touch" in low
+
+
+def test_emoji_only_after_close_signs_off():
+    sid = "close-emoji"
+    _seed_captured(sid)
+    out = app.demo_fallback_reply("👍", session_id=sid).lower()
+    assert "easiest place to start" not in out  # not a qualification restart
+    assert "all set" in out or "in touch" in out
+
+
+def test_fresh_emoji_does_not_close():
+    sid = "fresh-emoji"
+    app.conversations.pop(sid, None)
+    out = app.demo_fallback_reply("💪", session_id=sid).lower()
+    assert "all set" not in out  # no prior context -> must not sign off
+
+
+def test_no_in_injury_context_not_a_close():
+    sid = "no-injury"
+    app.conversations[sid] = [
+        {"role": "user", "content": "I've got a dodgy knee"},
+        {"role": "assistant", "content": "What kind of injury are you working around?"},
+    ]
+    out = app.demo_fallback_reply("no", session_id=sid).lower()
+    assert "no injuries" in out and "all set" not in out
+
+
 # ── lead location inference (suburb / bot recommendation) ─────────────────────
 def test_location_inferred_from_suburb():
     sid = "loc-suburb"
