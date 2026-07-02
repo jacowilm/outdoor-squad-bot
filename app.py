@@ -938,6 +938,13 @@ def generate_ai_reply(message: str, session_id: str) -> tuple[str, str]:
 def clean_agent_reply(reply: str | None) -> str:
     """Keep chat output readable inside a small website bubble."""
     text = (reply or "").strip()
+    # Hard length cap before any regex work. Real replies are bounded by the
+    # model's max_tokens (~520-1200 tokens ≈ a few thousand chars); this only
+    # ever trips on a pathological input and bounds the worst-case cost of the
+    # downstream text-cleaning regexes (defence-in-depth against ReDoS-style
+    # backtracking blowups on a single-worker deployment).
+    if len(text) > 8000:
+        text = text[:8000]
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
     # Strip stray single `*` artefacts but keep paired `**bold**` so the widget
@@ -1051,13 +1058,21 @@ def guard_operational_claims(text: str) -> str:
     # something out for your shoulder" or "programming is flexible" must survive
     # (the guard was over-firing and volunteering "we don't haggle" unprompted,
     # Nicholas round-3).
-    text = re.sub(r"[^.!?\n]*\b(?:pricing|prices?|cost|fees?|rates?|budget|\$\s?\d)\b[^.!?\n]*\b(?:flexib\w+|work something out)\b[^.!?\n]*[.!?]",
+    # NOTE on the {0,300} bounds: these sentence-scrub patterns sandwich a keyword
+    # between greedy [^.!?\n] runs terminated by [.!?]. Unbounded (`*`) runs cause
+    # O(n^2)+ catastrophic backtracking on long punctuation-free text — a real DoS
+    # lever on the single-worker host (a crafted long reply stalled the worker for
+    # seconds). Bounding each run to 300 chars makes the match linear while still
+    # covering any realistic sentence (verified behaviour-equivalent to the
+    # unbounded form over 4000 randomised inputs; a >300-char single clause between
+    # two price keywords does not occur in a ≤1200-token reply).
+    text = re.sub(r"[^.!?\n]{0,300}\b(?:pricing|prices?|cost|fees?|rates?|budget|\$\s?\d)\b[^.!?\n]{0,300}\b(?:flexib\w+|work something out)\b[^.!?\n]{0,300}[.!?]",
                   " There are different membership levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
-    text = re.sub(r"[^.!?\n]*\b(?:flexib\w+|work something out)\b[^.!?\n]*\b(?:pricing|prices?|cost|fees?|rates?|budget|\$\s?\d)\b[^.!?\n]*[.!?]",
+    text = re.sub(r"[^.!?\n]{0,300}\b(?:flexib\w+|work something out)\b[^.!?\n]{0,300}\b(?:pricing|prices?|cost|fees?|rates?|budget|\$\s?\d)\b[^.!?\n]{0,300}[.!?]",
                   " There are different membership levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
-    text = re.sub(r"[^.!?\n]*\b(?:negotiat\w*|wiggle room|cut you a deal|do you a deal|knock (?:something|a bit) off)\b[^.!?\n]*[.!?]",
+    text = re.sub(r"[^.!?\n]{0,300}\b(?:negotiat\w*|wiggle room|cut you a deal|do you a deal|knock (?:something|a bit) off)\b[^.!?\n]{0,300}[.!?]",
                   " We don’t haggle on price, but there are different levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
-    text = re.sub(r"[^.!?\n]*depending on (?:your|the) budget[^.!?\n]*[.!?]",
+    text = re.sub(r"[^.!?\n]{0,300}depending on (?:your|the) budget[^.!?\n]{0,300}[.!?]",
                   " There are different levels depending on how much coaching you want.", text, flags=re.IGNORECASE)
     text = re.sub(r"[ \t]{2,}", " ", text).replace(" .", ".")
     lowered = text.lower()
@@ -2723,7 +2738,18 @@ async def chat(request: Request):
     except Exception:
         return JSONResponse({"error": "Invalid request body"}, status_code=400)
     message = str(body.get("message", "")).strip()
-    session_id = sanitize_session_id(body.get("session_id", "default"))
+    # Never collapse a missing/blank session_id into a single shared "default"
+    # conversation bucket: two unrelated callers that both omit session_id would
+    # otherwise share one history, and the model could echo one visitor's PII
+    # (name/phone/email) into another's reply. Mint a fresh unguessable id when
+    # the client supplies nothing usable; the widget always sends its own random
+    # id, so real embeds are unaffected. Also stops "default"-keyed lead dedup
+    # from merging two different people. See sanitize_session_id().
+    raw_session_id = body.get("session_id")
+    if raw_session_id is None or not str(raw_session_id).strip():
+        session_id = "s-" + secrets.token_urlsafe(18)
+    else:
+        session_id = sanitize_session_id(raw_session_id)
 
     if not message:
         return JSONResponse({"error": "No message provided"}, status_code=400)
@@ -2945,6 +2971,23 @@ def _capture_trial_click(session_id: str, url: str) -> None:
     log_event("lead_captured", session_id=session_id, route="trial-link-clicked", url=url[:200])
 
 
+# Event types a PUBLIC caller (/api/event) is allowed to set — exactly the
+# signals widget.js emits, plus the trial-link derivation the product treats as
+# intent. Any other value is relabelled to a generic so a forged POST can't
+# inject SERVER-only outcome events (lead_captured, booking_link_shown,
+# human_handoff_suggested, conversation_started, ...). build_metrics_payload()
+# counts those as conversions/completions, so without this a public caller could
+# arbitrarily inflate the owner's weekly numbers.
+CLIENT_EVENT_TYPES = {
+    "widget_opened",
+    "widget_closed",
+    "link_clicked",
+    "trial_link_clicked",
+    "quick_reply_clicked",
+    "message_sent",
+}
+
+
 @app.post("/api/event")
 async def track_event(request: Request):
     """Lightweight widget analytics for Nicholas/Lyn's weekly review."""
@@ -2954,10 +2997,18 @@ async def track_event(request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid request body"}, status_code=400)
-    event_type = str(body.get("event_type", "widget_event"))[:80]
+    raw_event_type = str(body.get("event_type", "widget_event"))[:80]
     session_id = sanitize_session_id(body.get("session_id", "unknown"))
     metadata = sanitize_event_metadata(body.get("metadata"))
-    log_event(event_type, session_id=session_id, **metadata)
+    if raw_event_type in CLIENT_EVENT_TYPES:
+        event_type = raw_event_type
+        log_event(event_type, session_id=session_id, **metadata)
+    else:
+        # Untrusted / unknown type from a public caller: record it (for analytics
+        # visibility) under a generic name that can never collide with a server
+        # outcome-metric key or the completion set.
+        event_type = "widget_event_other"
+        log_event(event_type, session_id=session_id, original_event_type=raw_event_type[:60], **metadata)
     # Trial-link clicks count as a captured lead even without contact details
     # (per Nicholas, 2026-06-03): a click is intent, and intent is what Robo-Nick
     # is here to surface. We act on either an explicit trial_link_clicked event
@@ -3670,6 +3721,23 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
             # name-collision class as "Torn"/"Pretty" ("I'm flat out" -> "Flat",
             # Nicholas round-7 Q7 retest, 2026-06-16).
             "flat", "out", "slammed", "swamped", "stuck", "keen", "down", "up",
+            # Scheduling/time words after "call me ..." ("call me tomorrow on
+            # 0412..." -> "Tomorrow On"), prepositions, and common adjectives/verbs
+            # after "this is ..."/"i'm ..." ("this is ridiculous" -> "Ridiculous",
+            # "i'm working on..." -> "Working On"). Deliberately excludes words that
+            # are real given names (months, Dawn, Summer, etc.).
+            "tomorrow", "today", "tonight", "later", "soon", "now", "asap",
+            "anytime", "sometime", "whenever", "monday", "tuesday", "wednesday",
+            "thursday", "friday", "saturday", "sunday", "morning", "afternoon",
+            "evening", "arvo", "weekend", "next", "this", "week",
+            "on", "at", "in", "by", "when", "around", "before", "please", "for",
+            "with", "if", "of", "to",
+            "ridiculous", "crazy", "annoying", "frustrating", "important", "urgent",
+            "weird", "confusing", "difficult", "silly", "stupid", "exciting",
+            "amazing", "awesome", "interesting", "hard", "tough",
+            "working", "starting", "thinking", "struggling", "considering",
+            "wondering", "planning", "feeling", "getting", "coming", "signing",
+            "asking", "calling", "texting", "emailing", "reaching",
         }
         captured = [
             part for part in explicit_name.groups()
@@ -3943,6 +4011,16 @@ def safe_rate(numerator: int, denominator: int) -> float:
 # the stored transcripts.
 REDACT_LANDLINE_RE = re.compile(r"\b(?:\+?61[\s-]?|0)[2378][\s-]?\d{4}[\s-]?\d{4}\b")
 
+# Redaction-only broad matcher: catches phone numbers the strict AU-mobile
+# PHONE_RE misses — international (+44/+1/+353…), dotted (0412.345.678), and
+# extra-spaced forms — before they land in stored transcripts. Kept separate
+# from PHONE_RE (which governs lead EXTRACTION) so broadening redaction can't
+# change which messages count as "contact shared". The {6,14} bound is not a
+# ReDoS risk (each step requires a digit); the >=8-digit floor in the callback
+# is what prevents over-redacting prices ($397), postcodes (2050), bus numbers
+# (413/440), times (6:30), and short ID/date runs.
+REDACT_PHONE_BROAD_RE = re.compile(r"(?<![\w])(?:\+|00)?\d(?:[\s.\-()]?\d){6,14}(?![\w])")
+
 
 def redact_contact(text: str) -> str:
     # Redact VISITOR-shared contact details from stored logs, but keep the
@@ -3951,9 +4029,19 @@ def redact_contact(text: str) -> str:
     # transcript and reads like a placeholder leak (Nicholas's reviewer flagged
     # exactly that in the pregnancy reply, 2026-06-10).
     biz_phone = re.sub(r"\D", "", HUMAN_PHONE or "")
+
+    def redact_broad_phone(match: "re.Match") -> str:
+        digits = re.sub(r"\D", "", match.group(0))
+        if len(digits) < 8 or len(digits) > 15:
+            return match.group(0)  # too short/long to be a phone — leave it
+        if biz_phone and (digits.endswith(biz_phone) or biz_phone.endswith(digits)):
+            return match.group(0)  # business's own number stays visible
+        return "[phone]"
+
     text = EMAIL_RE.sub(lambda m: m.group(0) if m.group(0).lower() == (HUMAN_EMAIL or "").lower() else "[email]", text)
     text = PHONE_RE.sub(lambda m: m.group(0) if biz_phone and re.sub(r"\D", "", m.group(0)) == biz_phone else "[phone]", text)
     text = REDACT_LANDLINE_RE.sub("[phone]", text)
+    text = REDACT_PHONE_BROAD_RE.sub(redact_broad_phone, text)
     return text
 
 
@@ -3995,10 +4083,14 @@ def merge_lead(existing: dict, incoming: dict) -> dict:
             "raw_message",
         }:
             merged[key] = value
-        elif key == "name" and existing.get("session_id") != incoming.get("session_id"):
-            merged[key] = value
         elif not merged.get(key):
             merged[key] = value
+    # NOTE: `name` is intentionally fill-only (handled by the `not merged.get`
+    # branch), never overwritten. save_lead dedups on session_id OR email OR
+    # phone, so two DIFFERENT people who share a contact detail (e.g. a family
+    # email) can match the same lead; the previous cross-session name-overwrite
+    # let the second person's name clobber the first's, silently corrupting the
+    # lead. Keeping the first captured name avoids that cross-contamination.
     merged["timestamp"] = incoming.get("timestamp") or now_iso()
     return merged
 
@@ -4074,7 +4166,11 @@ def save_lead(lead_info: dict):
         leads.append(normalized)
     else:
         leads[match_index] = merge_lead(leads[match_index], normalized)
-    LEADS_FILE.write_text(json.dumps(leads, indent=2))
+    # Bound the local fallback store (parallels /api/booking's cap) so a public
+    # trial-click loop during a Supabase outage can't grow the file without
+    # limit. Real lead volume for this client is far below the cap, so no genuine
+    # lead is ever dropped; kept generous to be safe.
+    LEADS_FILE.write_text(json.dumps(leads[-5000:], indent=2))
 
 
 ADMIN_HTML = """
