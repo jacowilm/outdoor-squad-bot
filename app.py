@@ -70,6 +70,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Owner/admin surfaces that render inlined leads PII + transcripts and must not
+# be framed or MIME-sniffed. The embeddable widget is script-injected (never
+# framed), so frame-protection here doesn't affect it.
+_ADMIN_PATH_PREFIXES = ("/admin", "/api/leads", "/api/metrics", "/api/conversation")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Defence-in-depth response headers. nosniff + Referrer-Policy everywhere;
+    anti-clickjacking on the owner/admin surfaces only (2026-07-02 audit)."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if any(request.url.path.startswith(p) for p in _ADMIN_PATH_PREFIXES):
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+    return response
+
 # Load knowledge/source base. The bot should answer from Nicholas's material,
 # not from hard-coded branch scripts.
 KB_PATH = Path(__file__).parent / "knowledge_base.md"
@@ -77,6 +95,25 @@ KNOWLEDGE_BASE = KB_PATH.read_text() if KB_PATH.exists() else ""
 SOURCE_DOC_DIR = Path(__file__).parent / "source-docs" / "ocr-text"
 PRIVATE_FAQ_DIR = Path(__file__).parent / "source-docs" / "private-faq"
 SOURCE_ROOT_DIR = Path(__file__).parent / "source-docs"
+
+# The retrieval corpus is fed verbatim into the visitor-facing LLM context, so
+# internal correspondence must NEVER be ingested. The top-level source-docs/
+# folder mixes real KB content with build correspondence (e.g. an onboarding
+# email containing private doc links, developer identity, and payment details);
+# skip any top-level file whose name looks like correspondence/commercial/internal
+# material. Content belongs in ocr-text/ or private-faq/ (both are visitor-safe
+# KB) or the curated knowledge_base.md. 2026-07-02 audit finding #6.
+SENSITIVE_SOURCE_RE = re.compile(
+    r"email|onboard|invoice|payment|payid|contract|agreement|proposal|quote|"
+    r"\bnda\b|internal|correspond|handoff|scope|receipt|bank",
+    re.IGNORECASE,
+)
+
+
+def _is_visitor_safe_source(path: Path) -> bool:
+    return not SENSITIVE_SOURCE_RE.search(path.stem)
+
+
 SOURCE_DOCS = []
 if SOURCE_DOC_DIR.exists():
     for source_path in sorted(SOURCE_DOC_DIR.glob("*.txt")):
@@ -88,6 +125,8 @@ if PRIVATE_FAQ_DIR.exists():
         SOURCE_DOCS.append({"title": source_path.stem, "text": source_path.read_text(errors="ignore")})
 if SOURCE_ROOT_DIR.exists():
     for source_path in sorted(SOURCE_ROOT_DIR.glob("*.txt")):
+        if not _is_visitor_safe_source(source_path):
+            continue  # skip internal correspondence — never goes to the LLM
         SOURCE_DOCS.append({"title": source_path.stem, "text": source_path.read_text(errors="ignore")})
     readme_path = SOURCE_ROOT_DIR / "README.md"
     if readme_path.exists():
@@ -645,6 +684,7 @@ Conversation rules:
 - If you are not confident about ANY answer, do not improvise — hand off to Humanoid-Nick with a light line ("that one's outside what Robo-Nick can reliably do — Humanoid-Nick kept the improv rights for himself") and ask for a first name + mobile, or give innerwest@outdoorsquad.com.au. A wrong answer is worse than a handoff.
 - NEVER offer to follow up at the prospect's stated delay ("I'll decide next month" → do NOT say "the team can reach out next month"). Intent decays. Capture the contact now and say the team will usually follow up the same day; the decision can take as long as it likes.
 - If someone mentions a doctor-flagged condition or says they're scared/worried about their health: acknowledge the feeling plainly, drop ALL jokes and pop-culture references for that reply, reassure briefly, and offer a human chat with Humanoid-Nick or Lyn.
+- If anyone mentions an eating disorder, disordered eating, anorexia, bulimia, purging, starving, or a child who has stopped eating: this is NOT a sign-up, weight-loss, or meal-plan moment. Do NOT pitch classes, pricing, the meal plan, or weight-loss framing. Warmly acknowledge it, no jokes, and hand off to a caring human (Humanoid-Nick or Lyn) alongside their GP/health professional; you can mention the Butterfly Foundation helpline (1800 33 4673). Offer to take a mobile or give innerwest@outdoorsquad.com.au.
 - If a question involves several people (partner + kids, a whole family), answer for ALL of them — each person's right product and price — not just the last person mentioned.
 - This app does not send meal plans, SMS reminders, booking confirmations, or notifications by itself. When relevant, say the team can follow up or that you can point the user in the right direction.
 - Make replies easy to scan on a phone
@@ -935,9 +975,31 @@ def generate_ai_reply(message: str, session_id: str) -> tuple[str, str]:
     raise RuntimeError("; ".join(errors) or "AI API key not configured")
 
 
+# Distinctive phrases that only appear in Robo-Nick's own system prompt / source
+# scaffolding. If the model regurgitates one, it is leaking its instructions
+# (input keyword filters like INJECTION_RE are inherently bypassable, so this
+# output-side guard is the real control — it catches single- AND multi-turn
+# extraction regardless of how the prompt was worded). 2026-07-02 audit finding #5.
+PROMPT_LEAK_RE = re.compile(
+    r"required brand voice reference|required operating facts|"
+    r"anti-repeat rule|latest-message primacy|"
+    r"relevant outdoor squad source context|recent assistant phrasing to avoid|"
+    r"you are robo-nick, the chat assistant|brand voice reference:|operating facts reference",
+    flags=re.IGNORECASE,
+)
+
+
 def clean_agent_reply(reply: str | None) -> str:
     """Keep chat output readable inside a small website bubble."""
     text = (reply or "").strip()
+    # Output-side prompt-leak guard: if the model echoed its own internal
+    # instructions/scaffolding, don't ship it — return a clean refusal instead.
+    if PROMPT_LEAK_RE.search(text):
+        return (
+            "Nice try — Robo-Nick keeps its internal setup behind the curtain.\n\n"
+            "Happy to help with the actual Outdoor Squad stuff though: trials, prices, "
+            "SPT, YTP, injuries, locations, or getting a human to follow up."
+        )
     # Hard length cap before any regex work. Real replies are bounded by the
     # model's max_tokens (~520-1200 tokens ≈ a few thousand chars); this only
     # ever trips on a pathological input and bounds the worst-case cost of the
@@ -1258,10 +1320,18 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             "Still not happening — Robo-Nick doesn’t reveal its internal instructions or system prompt.\n\n"
             "Happy to help with the real stuff though: trials, prices, SPT, YTP, locations, or getting a human to follow up."
         )
+    # Keep the eating-disorder handoff reachable on repeat turns too, rather than
+    # falling to the generic "drop your mobile" terminal (2026-07-02 safety fix).
+    if mentions_eating_disorder(clean):
+        return eating_disorder_handoff_reply()
     if is_location_choice_reply(clean, session_id):
         location = "Redfern" if "redfern" in clean else "Camperdown"
         return location_choice_followup(location, session_id)
     if is_location_question(clean):
+        # A parking/transport DETAIL question gets the real logistics answer, not
+        # a "which suburb?" pivot — even when rerouted here by the repeat detector.
+        if asks_location_detail(clean):
+            return location_detail_reply(clean)
         if "redfern" in clean:
             return (
                 "Yep, that’s Redfern.\n\n"
@@ -1382,6 +1452,21 @@ def non_repeating_followup(message: str, session_id: str) -> str:
         return (
             "Got it. I won’t re-list the menu again.\n\n"
             "The next useful split is coaching level: group classes for routine, or SPT/Kickstarter if you want more hands-on technique and progression."
+        )
+    # Nervous/beginner follow-ups ("will really fit people make me feel bad?")
+    # deserve continued reassurance, not the generic handoff terminal — the
+    # repeat-detector reroutes the 2nd nervous turn here (2026-07-02 QA). Fresh
+    # wording so it doesn't itself re-trip the repeat detector.
+    if any(phrase in clean for phrase in [
+        "fit people", "judge", "judged", "judging", "feel bad", "embarrassed",
+        "embarrassing", "everyone else", "everyones fit", "everyone's fit",
+        "unfit", "out of shape", "nervous", "anxious", "intimidat",
+        "self-conscious", "self conscious", "keep up", "slow everyone", "hold everyone",
+    ]):
+        return (
+            "Genuinely, no — it's not a room full of show-offs waiting to judge you.\n\n"
+            "It's a mixed crew, everyone's mid-effort and focused on their own session, and the coach quietly scales things to where you're at. Most first-session nerves are gone by the warm-up.\n\n"
+            "Easiest way to prove it to yourself is a quiet free trial — want me to line one up at Camperdown or Redfern?"
         )
     return (
         "Honest answer: that one's outside what Robo-Nick can reliably do — Humanoid-Nick kept the improv rights for himself.\n\n"
@@ -1561,9 +1646,13 @@ TIMETABLE_ENTRIES = [
 
 CLASS_ALIAS_GROUPS = {
     "Strength'N'Stamina": ["strength'n'stamina", "strength n stamina", "strength'n'tone", "strength n tone", "buff'n'puff", "buff n puff", "strength", "stamina", "weights", "resistance", "hybrid"],
-    "HiiT'N'Run": ["hiit'n'run", "hiit n run", "hiit", "run", "running", "conditioning"],
-    "Flow'N'Flex": ["flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "pilates", "mobility", "flex"],
-    "Core'N'Sore": ["core'n'sore", "core n sore", "core"],
+    # NOTE: bare "run"/"running" are NOT aliases — they are generic timetable
+    # verbs ("what days do you RUN sessions", "what's RUNNING Thursday") and
+    # collided with this class, filtering a whole-week question down to just
+    # HiiT'N'Run (2026-07-02 QA). Keep specific class signals only.
+    "HiiT'N'Run": ["hiit'n'run", "hiit n run", "hiit", "conditioning"],
+    "Flow'N'Flex": ["flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "pilates", "mobility"],
+    "Core'N'Sore": ["core'n'sore", "core n sore"],
     "Youth Training Program": ["youth", "ytp", "young'n'strong", "young n strong", "kid", "kids", "teen", "teenager"],
 }
 
@@ -1609,7 +1698,9 @@ def timetable_reply(text: str, session_id: str) -> str:
     mentioned_classes = [
         class_name
         for class_name, aliases in CLASS_ALIAS_GROUPS.items()
-        if any(alias in text for alias in aliases)
+        # Word-boundary match so a short alias can't collide inside a longer word
+        # (e.g. "core" in "of course", "flex" in "flexible", "hiit" in a URL).
+        if any(re.search(r"\b" + re.escape(alias) + r"\b", text) for alias in aliases)
     ]
     wants_evening = bool(re.search(r"\bevening|\btonight\b|\bafter work\b|\b6:30\b|\b630\b|\bpm\b|\barvo\b|\bafternoon", text))
     wants_morning = bool(re.search(r"\bmorning|\b6am\b|\b6 am\b|\b9:30\b|\bearly\b|\bbefore work\b", text))
@@ -1731,6 +1822,53 @@ def named_injury_terms(text: str) -> list[str]:
     return found
 
 
+# Eating-disorder / disordered-eating detector. This is a duty-of-care guard:
+# without it, an ED disclosure ("my daughter has an eating disorder", "I'm
+# bulimic and want to tone up", "recovering from anorexia") fell through to the
+# cheerful youth / weight-loss / nervous-beginner branches and got a sign-up
+# pitch or a meal-plan push (2026-07-02 audit). Tuned so clinical terms always
+# fire while benign food talk ("stopped eating meat", "kid won't eat veggies",
+# "binge watch") does NOT — verified against a must-catch/must-not-catch battery.
+EATING_DISORDER_RE = re.compile(
+    r"(?:"
+    r"\banorexi\w*|\bbulimi\w*|\borthorexi\w*|"
+    r"\beating disorder|\bdisordered eating|"
+    r"\bbody dysmorph\w*|"
+    r"\bbinge[\s-]?eat\w*|\bbinge and purge|\bpurg(?:e|es|ing)\b|"
+    r"\bmakes? (?:my|her|him|them)self sick|\bmaking (?:my|her|him|them)self sick|\bmade (?:my|her|him|them)self sick|"
+    r"\bthrow(?:ing)? up after (?:eat\w*|meals?|food)|"
+    r"\blaxativ\w*|"
+    r"\bstarv(?:e|es|ing) (?:my|her|him|them)self|"
+    r"\brestrict\w* (?:my |her |his |their )?(?:food|eating|calories|intake|meals?)|"
+    r"\bstopped eating(?!\s+(?:meat|gluten|dairy|sugar|sugars|carbs?|bread|junk|red meat|pork|beef|chicken|fish|wheat|cheese|eggs?|fast food|processed|takeaway|take away|snacks?|chocolate|lollies|sweets|fried|greasy|out|late|before|breakfast|lunch|dinner))|"
+    r"\bnot eating (?:much|enough|properly|anything|at all)|\bbarely eat\w*|\bhardly eat\w*|"
+    r"\brecovering from (?:an )?(?:eating disorder|anorexia|bulimia)"
+    r")",
+    flags=re.IGNORECASE,
+)
+
+
+def mentions_eating_disorder(text: str) -> bool:
+    return bool(EATING_DISORDER_RE.search(text))
+
+
+def eating_disorder_handoff_reply() -> str:
+    """Warm, no-jokes, no-pricing, no-meal-plan human handoff for any eating-
+    disorder / disordered-eating disclosure. Person-agnostic so it reads right
+    whether the visitor or their child is the one affected."""
+    return (
+        "Thanks for telling me that — genuinely, that takes trust.\n\n"
+        "Anything around eating, food, or recovery is really individual and important, "
+        "and it’s not something Robo-Nick should try to coach through a chat box. The right "
+        "next step is a proper, caring human conversation — Humanoid-Nick or Lyn can talk it "
+        "through gently and work out what’s safe and supportive, alongside whatever GP or "
+        "health professional is involved. If things ever feel urgent, the Butterfly Foundation’s "
+        "National Helpline (1800 33 4673) is there for eating-disorder support any day.\n\n"
+        "Want to share a mobile so the team can give you a quiet call, or would you rather "
+        "email innerwest@outdoorsquad.com.au?"
+    )
+
+
 # Youth / parent detector. Word-boundary safe so "boys"/"girls" don't collide
 # with "cowboys" (NRL) or other words, and the parent phrasings Nicholas tested
 # ("got two boys, 11 and 15") route to Youth Training Program instead of a generic
@@ -1744,6 +1882,29 @@ YOUTH_RE = re.compile(
 
 def mentions_youth(text: str) -> bool:
     return bool(YOUTH_RE.search(text))
+
+
+# Third-person / child references used to carry youth context forward across a
+# turn: "how much is it for him?" after "my son is 13" must still get youth
+# pricing, not the adult ladder (2026-07-02 QA). Word-boundary safe.
+YOUTH_REF_RE = re.compile(
+    r"\b(?:him|her|them|his|their|theirs|for him|for her|for them|"
+    r"the kid|the child|my (?:son|daughter|kid|child|boy|girl|teen))\b"
+)
+
+
+def youth_context(text: str, session_id: str) -> bool:
+    """True if THIS message is about youth, or it refers back ('for him') to a
+    youth topic already established earlier in the same conversation."""
+    if mentions_youth(text):
+        return True
+    if YOUTH_REF_RE.search(text):
+        return any(
+            mentions_youth(normalise_chat_text(m.get("content", "")))
+            for m in load_conversation(session_id)
+            if m.get("role") == "user"
+        )
+    return False
 
 
 # Prompt-injection / system-prompt-extraction detector. Checked FIRST in the
@@ -1789,6 +1950,13 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "I can help with the actual Outdoor Squad stuff though: trials, prices, SPT, YTP, injuries, locations, or getting a human to follow up.\n\n"
             "What brought you here?"
         )
+
+    # Eating-disorder / disordered-eating disclosure — checked BEFORE youth,
+    # weight-loss, nutrition, meal-plan and nervous-beginner branches so it can
+    # never fall through to a sign-up pitch or a meal-plan push. Duty of care:
+    # warm, no jokes, no pricing, human handoff (2026-07-02 safety fix).
+    if mentions_eating_disorder(clean):
+        return eating_disorder_handoff_reply()
 
     # Meal-plan ask — handles "send me the free 5-day meal plan", with or without an
     # email in the same message. The previous default flow let the contact-details regex
@@ -2116,6 +2284,22 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Best move is to use the free trial to work out whether the coaching is worth it for you."
         )
 
+    # Casual / visiting / drop-in — a traveller or someone who doesn't want a
+    # membership should get the $37 casual-drop-in answer, not the uncertain
+    # handoff terminal (2026-07-02 QA). Phrasal triggers to avoid over-firing.
+    if any(phrase in clean for phrase in [
+        "drop in", "drop-in", "dropin", "casual drop", "casual class", "casual session",
+        "one-off", "one off", "just visiting", "visiting sydney", "visiting for",
+        "in town", "in sydney for", "here for a week", "here for two weeks", "here for a few",
+        "passing through", "a few classes while", "without a membership", "without committing",
+        "don't want a membership", "dont want a membership", "no membership",
+    ]):
+        return (
+            "Yep — you don’t have to commit to a membership to train with us.\n\n"
+            "Casual drop-ins are $37 a session, so you can just come to whichever classes suit while you’re around — and your first class can be the free trial, so the very first one’s on us.\n\n"
+            "Camperdown or Redfern easier for you? I can point you at the timetable to pick your sessions."
+        )
+
     if any(phrase in clean for phrase in ["pricing flexible", "price flexible", "flexible pricing"]):
         return (
             "Pricing itself isn’t a haggle path, but there are different levels depending on how much coaching you want.\n\n"
@@ -2140,7 +2324,9 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(phrase in clean for phrase in ["roughly what", "set me back", "what will it set me back", "how much", "cost", "price", "pricing"]):
         # A cost question about the kids should get YTP pricing, not the adult
         # ladder (Nicholas-style miss: "two kids, 11 and 13 — cost for both?").
-        if mentions_youth(clean):
+        # Also catches "how much is it for him?" carrying youth context forward
+        # from an earlier turn (2026-07-02 QA).
+        if youth_context(clean, session_id):
             return (
                 "For the kids it's the Youth Training Program: $25/wk per kid, ages 10–17, Saturday 9:15am at Camperdown with qualified WWCC-checked coaches.\n\n"
                 "No sibling discounts (so two kids is $50/wk all up), but for families training together the team can sometimes value-stack extras after a quick chat.\n\n"
@@ -2555,7 +2741,10 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if is_location_choice_reply(clean, session_id):
         location = "Redfern" if "redfern" in clean else "Camperdown"
         return location_choice_followup(location, session_id)
-    if is_location_question(clean):
+    # A parking/transport DETAIL question ("is there parking at Camperdown?")
+    # must NOT be read as the visitor picking a location — let it fall through to
+    # the full per-location answer (which includes parking/transport facts).
+    if is_location_question(clean) and not asks_location_detail(clean):
         if "redfern" in clean and any(phrase in previous for phrase in ["redfern park", "redfern st", "redfern station"]):
             return location_choice_followup("Redfern", session_id)
         if "camperdown" in clean and any(phrase in previous for phrase in ["camperdown tennis", "mallett st", "newtown station"]):
@@ -2659,7 +2848,7 @@ def should_use_outage_fallback(message: str) -> bool:
     text = message.lower()
     # Sensitive health topics must stay reachable even if the AI backend is
     # down, so the careful handoff answer is served instead of a generic error.
-    if mentions_injury(text) or mentions_pregnancy(text):
+    if mentions_injury(text) or mentions_pregnancy(text) or mentions_eating_disorder(text):
         return True
     keyword_groups = [
         ["free intro", "trial", "free class", "intro class"],
@@ -2971,6 +3160,16 @@ def _capture_trial_click(session_id: str, url: str) -> None:
     log_event("lead_captured", session_id=session_id, route="trial-link-clicked", url=url[:200])
 
 
+def _session_has_server_history(session_id: str) -> bool:
+    """True only if this session_id has real chat history the SERVER logged (via
+    /api/chat). Used to gate the public /api/event trial-click lead-minting: a
+    forged event from a session that never chatted here is not a real lead."""
+    try:
+        return bool(load_conversation(session_id))
+    except Exception:
+        return bool(conversations.get(session_id))
+
+
 # Event types a PUBLIC caller (/api/event) is allowed to set — exactly the
 # signals widget.js emits, plus the trial-link derivation the product treats as
 # intent. Any other value is relabelled to a generic so a forged POST can't
@@ -3000,24 +3199,30 @@ async def track_event(request: Request):
     raw_event_type = str(body.get("event_type", "widget_event"))[:80]
     session_id = sanitize_session_id(body.get("session_id", "unknown"))
     metadata = sanitize_event_metadata(body.get("metadata"))
-    if raw_event_type in CLIENT_EVENT_TYPES:
-        event_type = raw_event_type
-        log_event(event_type, session_id=session_id, **metadata)
-    else:
+    url = str(metadata.get("url", ""))[:240]
+    is_trial_click = raw_event_type == "trial_link_clicked" or (
+        raw_event_type == "link_clicked" and _is_trial_link(url)
+    )
+
+    if raw_event_type not in CLIENT_EVENT_TYPES:
         # Untrusted / unknown type from a public caller: record it (for analytics
         # visibility) under a generic name that can never collide with a server
         # outcome-metric key or the completion set.
-        event_type = "widget_event_other"
-        log_event(event_type, session_id=session_id, original_event_type=raw_event_type[:60], **metadata)
-    # Trial-link clicks count as a captured lead even without contact details
-    # (per Nicholas, 2026-06-03): a click is intent, and intent is what Robo-Nick
-    # is here to surface. We act on either an explicit trial_link_clicked event
-    # or a generic link_clicked whose URL matches the trial provider.
-    if event_type == "trial_link_clicked" or (
-        event_type == "link_clicked" and _is_trial_link(str(metadata.get("url", "")))
-    ):
-        url = str(metadata.get("url", ""))[:240]
-        if event_type == "link_clicked" and _is_trial_link(url):
+        log_event("widget_event_other", session_id=session_id, original_event_type=raw_event_type[:60], **metadata)
+        return JSONResponse({"ok": True})
+
+    # A trial click only counts (as a completion outcome + a synthetic lead) when
+    # it comes from a session that actually chatted here — otherwise a public
+    # caller could POST trial_link_clicked with rotating session_ids to mint
+    # unlimited fake leads and inflate completion_rate. Unverifiable clicks are
+    # logged as a non-outcome event only. 2026-07-02 audit finding #3-followup.
+    if is_trial_click and not _session_has_server_history(session_id):
+        log_event("trial_link_clicked_unverified", session_id=session_id, url=url)
+        return JSONResponse({"ok": True})
+
+    log_event(raw_event_type, session_id=session_id, **metadata)
+    if is_trial_click:
+        if raw_event_type == "link_clicked":
             log_event("trial_link_clicked", session_id=session_id, url=url)
         _capture_trial_click(session_id, url)
     return JSONResponse({"ok": True})
@@ -3281,6 +3486,8 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         return True
     if mentions_youth(text):
         return True
+    if mentions_eating_disorder(text):
+        return True
     if mentions_injury(text) or mentions_pregnancy(text) or is_prompt_injection(text):
         return True
     if any(word in text for word in [
@@ -3347,6 +3554,43 @@ LOCATION_INTENT_RE = re.compile(
     r"parking|public transport|transport|bus|buses|train station|closest|near me"
     r")\b"
 )
+
+# A specific logistics DETAIL question (parking/transport) — as opposed to a bare
+# "which location" choice. "is there parking at Camperdown?" must be answered
+# with the actual parking facts, not treated as the visitor picking Camperdown
+# (2026-07-02 QA).
+LOCATION_DETAIL_RE = re.compile(
+    r"\b(?:parking|park (?:my |the )?car|public transport|transport|bus|buses|"
+    r"train|station|how (?:do i|to) get (?:there|to)|getting there)\b"
+)
+
+
+def asks_location_detail(text: str) -> bool:
+    return bool(LOCATION_DETAIL_RE.search(text))
+
+
+def location_detail_reply(text: str) -> str:
+    """Per-venue logistics answer (address + parking + transport). Shared so a
+    parking/transport question is answered the same whether it lands in the main
+    flow or gets rerouted through the repeat-detector (2026-07-02 QA)."""
+    if "redfern" in text:
+        return (
+            "Redfern sessions are at Redfern Park, Redfern St, Redfern NSW 2016.\n\n"
+            "There’s parking on Chalmers St and underground at Woolworths, buses 310, 343 and 395 serve the area, and Redfern Station is about 700m away. The meeting point is near the Park Cafe at the Sports Oval end.\n\n"
+            "Are you thinking mornings or Saturday?"
+        )
+    if "camperdown" in text:
+        return (
+            "Camperdown sessions are at The Barracks at Camperdown Tennis & Oval, Mallett St, Camperdown NSW 2050.\n\n"
+            "Parking is usually around Australia St and Mallet St, buses 413, 440, 480 and 483 stop on Parramatta Rd very close by, and Newtown Station is about 900m away.\n\n"
+            "Are you thinking mornings, evenings, or Saturday?"
+        )
+    return (
+        "Both spots are easy to reach:\n\n"
+        "- Camperdown (Mallett St): parking around Australia St and Mallet St, buses on Parramatta Rd, Newtown Station about 900m.\n"
+        "- Redfern (Redfern Park): parking on Chalmers St and under Woolworths, Redfern Station about 700m.\n\n"
+        "Which one’s closer for you?"
+    )
 
 
 def is_location_question(text: str) -> bool:
@@ -3700,53 +3944,63 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
     explicit_source = "\n".join(part for part in [message, history_with_contact] if part).strip()
     contact_stripped = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', explicit_source)
     contact_stripped = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', contact_stripped)
-    explicit_name = re.search(
+    # Reject common non-name words so "I'm pretty unfit" doesn't become the
+    # name "Pretty Unfit", and "Sure, it's a@b.com" doesn't become "Sure"
+    # (Nicholas 2026-06-09 + the earlier "Pretty" report).
+    non_names = {
+        "and", "but", "a", "an", "the", "not", "very", "really", "super", "pretty",
+        "quite", "so", "too", "unfit", "fit", "keen", "nervous", "scared", "intimidated",
+        "interested", "new", "here", "just", "still", "also", "gonna", "trying", "looking",
+        "hoping", "wanting", "ready", "done", "good", "great", "fine", "ok", "okay", "cool",
+        "nice", "sure", "yeah", "yep", "yes", "nope", "no", "thanks", "hi", "hey", "hello",
+        "mate", "sorry", "actually", "probably", "maybe", "free", "busy", "back", "into",
+        "about", "after", "from", "curious", "unsure", "definitely", "absolutely", "torn",
+        # Idiomatic fillers that follow "I'm ..." but are never names — same
+        # name-collision class as "Torn"/"Pretty" ("I'm flat out" -> "Flat",
+        # Nicholas round-7 Q7 retest, 2026-06-16).
+        "flat", "out", "slammed", "swamped", "stuck", "keen", "down", "up",
+        # Scheduling/time words after "call me ..." ("call me tomorrow on
+        # 0412..." -> "Tomorrow On"), prepositions, and common adjectives/verbs
+        # after "this is ..."/"i'm ..." ("this is ridiculous" -> "Ridiculous",
+        # "i'm working on..." -> "Working On"). Deliberately excludes words that
+        # are real given names (months, Dawn, Summer, etc.).
+        "tomorrow", "today", "tonight", "later", "soon", "now", "asap",
+        "anytime", "sometime", "whenever", "monday", "tuesday", "wednesday",
+        "thursday", "friday", "saturday", "sunday", "morning", "afternoon",
+        "evening", "arvo", "weekend", "next", "this", "week",
+        "on", "at", "in", "by", "when", "around", "before", "please", "for",
+        "with", "if", "of", "to",
+        "ridiculous", "crazy", "annoying", "frustrating", "important", "urgent",
+        "weird", "confusing", "difficult", "silly", "stupid", "exciting",
+        "amazing", "awesome", "interesting", "hard", "tough",
+        "working", "starting", "thinking", "struggling", "considering",
+        "wondering", "planning", "feeling", "getting", "coming", "signing",
+        "asking", "calling", "texting", "emailing", "reaching",
+        # Present-participle disclosure verbs after "i'm ..." that are never
+        # names ("I'm recovering from anorexia" -> "Recovering"; "I'm starving
+        # myself" -> "Starving"). 2026-07-02 audit finding #8.
+        "recovering", "suffering", "starving", "healing", "dealing", "coping",
+        "battling", "fighting", "dieting", "fasting", "bingeing", "purging",
+        "cutting", "overcoming", "managing", "grieving", "hurting", "restricting",
+    }
+    # Try EACH "i'm X" / "my name is X" trigger, not just the first — "I'm keen,
+    # I'm Sarah, 0412..." must still capture Sarah rather than aborting on the
+    # filler "keen" after the first "I'm" (2026-07-02 QA).
+    for explicit_name in re.finditer(
         r"\b(?:my name is|name is|this is|call me|i am|i'm|im|it is|it's|its)\s+([A-Za-z][A-Za-z'-]{1,})(?:\s+([A-Za-z][A-Za-z'-]{1,}))?",
         contact_stripped,
         flags=re.IGNORECASE,
-    )
-    if explicit_name:
-        # Reject common non-name words so "I'm pretty unfit" doesn't become the
-        # name "Pretty Unfit", and "Sure, it's a@b.com" doesn't become "Sure"
-        # (Nicholas 2026-06-09 + the earlier "Pretty" report).
-        non_names = {
-            "and", "but", "a", "an", "the", "not", "very", "really", "super", "pretty",
-            "quite", "so", "too", "unfit", "fit", "keen", "nervous", "scared", "intimidated",
-            "interested", "new", "here", "just", "still", "also", "gonna", "trying", "looking",
-            "hoping", "wanting", "ready", "done", "good", "great", "fine", "ok", "okay", "cool",
-            "nice", "sure", "yeah", "yep", "yes", "nope", "no", "thanks", "hi", "hey", "hello",
-            "mate", "sorry", "actually", "probably", "maybe", "free", "busy", "back", "into",
-            "about", "after", "from", "curious", "unsure", "definitely", "absolutely", "torn",
-            # Idiomatic fillers that follow "I'm ..." but are never names — same
-            # name-collision class as "Torn"/"Pretty" ("I'm flat out" -> "Flat",
-            # Nicholas round-7 Q7 retest, 2026-06-16).
-            "flat", "out", "slammed", "swamped", "stuck", "keen", "down", "up",
-            # Scheduling/time words after "call me ..." ("call me tomorrow on
-            # 0412..." -> "Tomorrow On"), prepositions, and common adjectives/verbs
-            # after "this is ..."/"i'm ..." ("this is ridiculous" -> "Ridiculous",
-            # "i'm working on..." -> "Working On"). Deliberately excludes words that
-            # are real given names (months, Dawn, Summer, etc.).
-            "tomorrow", "today", "tonight", "later", "soon", "now", "asap",
-            "anytime", "sometime", "whenever", "monday", "tuesday", "wednesday",
-            "thursday", "friday", "saturday", "sunday", "morning", "afternoon",
-            "evening", "arvo", "weekend", "next", "this", "week",
-            "on", "at", "in", "by", "when", "around", "before", "please", "for",
-            "with", "if", "of", "to",
-            "ridiculous", "crazy", "annoying", "frustrating", "important", "urgent",
-            "weird", "confusing", "difficult", "silly", "stupid", "exciting",
-            "amazing", "awesome", "interesting", "hard", "tough",
-            "working", "starting", "thinking", "struggling", "considering",
-            "wondering", "planning", "feeling", "getting", "coming", "signing",
-            "asking", "calling", "texting", "emailing", "reaching",
-        }
+    ):
+        # If the first word right after the trigger isn't a plausible name, skip
+        # this trigger and keep looking at later ones.
+        if (explicit_name.group(1) or "").lower() in non_names:
+            continue
         captured = [
             part for part in explicit_name.groups()
             if part and part.lower() not in non_names
         ]
-        # If the first word right after the trigger isn't a plausible name, don't guess.
-        if not captured or (explicit_name.group(1) or "").lower() in non_names:
-            return None
-        return " ".join(captured).title()
+        if captured:
+            return " ".join(captured).title()
     return None
 
 
@@ -4068,29 +4322,37 @@ def log_chat_message(session_id: str, role: str, content: str):
 
 
 def merge_lead(existing: dict, incoming: dict) -> dict:
-    """Preserve first contact details while refreshing the operational summary."""
+    """Preserve first contact details while refreshing the operational summary.
+
+    save_lead dedups on session_id OR email OR phone, so two DIFFERENT people who
+    share a contact detail (e.g. a family email/phone) can match the same stored
+    lead. To avoid one person's data silently clobbering the other's, the
+    operational fields are only OVERWRITTEN when this is the SAME conversation
+    (same session_id) refreshing its own lead; on a cross-session contact match
+    everything is fill-only (existing values are preserved). `name` is always
+    fill-only. 2026-07-02 audit findings #4 (name) + #4-followup (all fields).
+    """
     merged = dict(existing)
+    same_session = bool(
+        existing.get("session_id")
+        and existing.get("session_id") == incoming.get("session_id")
+    )
+    overwrite_fields = {
+        "session_id",
+        "handoff_summary",
+        "route",
+        "location_preference",
+        "time_preference",
+        "concerns",
+        "raw_message",
+    }
     for key, value in incoming.items():
         if value in (None, "", []):
             continue
-        if key in {
-            "session_id",
-            "handoff_summary",
-            "route",
-            "location_preference",
-            "time_preference",
-            "concerns",
-            "raw_message",
-        }:
+        if key in overwrite_fields and same_session:
             merged[key] = value
         elif not merged.get(key):
             merged[key] = value
-    # NOTE: `name` is intentionally fill-only (handled by the `not merged.get`
-    # branch), never overwritten. save_lead dedups on session_id OR email OR
-    # phone, so two DIFFERENT people who share a contact detail (e.g. a family
-    # email) can match the same lead; the previous cross-session name-overwrite
-    # let the second person's name clobber the first's, silently corrupting the
-    # lead. Keeping the first captured name avoids that cross-contamination.
     merged["timestamp"] = incoming.get("timestamp") or now_iso()
     return merged
 
