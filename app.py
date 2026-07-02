@@ -6,6 +6,7 @@ Scope: one practical/linkable first version that answers Outdoor Squad FAQs,
 routes prospects toward the right front door, and captures clean lead context.
 """
 import os
+import base64
 import csv
 import io
 import ipaddress
@@ -17,6 +18,7 @@ import smtplib
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -216,6 +218,19 @@ LEAD_SUMMARY_EMAIL_TO = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_EMAIL_TO", HU
 LEAD_SUMMARY_PHONE_TO = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_PHONE_TO", "+61402439361").strip()
 LEAD_SUMMARY_WEBHOOK_URL = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_URL", "").strip()
 LEAD_SUMMARY_WEBHOOK_SECRET = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_SECRET", "").strip()
+# Direct-send channels (no Make/middleman). Email goes via the Resend HTTP API,
+# which works on Render (outbound SMTP ports are blocked there); the phone alert
+# goes via Telegram (free) or Twilio SMS. Every channel is optional and purely
+# env-driven — an unconfigured channel is simply skipped.
+LEAD_SUMMARY_RESEND_API_KEY = os.environ.get("OUTDOOR_SQUAD_RESEND_API_KEY", "").strip()
+LEAD_SUMMARY_EMAIL_FROM = os.environ.get(
+    "OUTDOOR_SQUAD_LEAD_EMAIL_FROM", "Robo-Nick <robo-nick@outdoorsquad.realtiq.ai>"
+).strip()
+TELEGRAM_BOT_TOKEN = os.environ.get("OUTDOOR_SQUAD_TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.environ.get("OUTDOOR_SQUAD_TELEGRAM_CHAT_ID", "").strip()
+TWILIO_ACCOUNT_SID = os.environ.get("OUTDOOR_SQUAD_TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.environ.get("OUTDOOR_SQUAD_TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_FROM = os.environ.get("OUTDOOR_SQUAD_TWILIO_FROM", "").strip()
 SMTP_HOST = os.environ.get("OUTDOOR_SQUAD_SMTP_HOST", "").strip()
 SMTP_PORT = int(os.environ.get("OUTDOOR_SQUAD_SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("OUTDOOR_SQUAD_SMTP_USER", "").strip()
@@ -2007,6 +2022,32 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 f"Perfect — {pref} it is{first}. The team will reach out shortly to sort your free trial or the best next step.\n\n"
                 "Anything else you want to know while you're here, or are you good to go?"
             )
+
+    # Closing acknowledgements ("no I'm good", "thanks", "all done") — sign off
+    # warmly instead of dropping to the uncertain handoff terminal, and never
+    # re-ask for contact details already captured (Nicholas end-to-end test
+    # 2026-07-02: "no im good" after the close got "drop your name + mobile").
+    _closing_acks = {
+        "no im good", "no i'm good", "im good", "i'm good", "all good", "im all good",
+        "nah im good", "no thanks", "no thank you", "nope thanks", "that's all", "thats all",
+        "that's it", "thats it", "im done", "i'm done", "all done", "nothing else",
+        "nothing thanks", "good to go", "im good to go", "im good thanks", "good thanks",
+        "cheers", "thanks", "thank you", "thankyou", "ty", "thx", "ta", "cool thanks",
+        "great thanks", "awesome thanks", "perfect thanks", "no im good thanks", "nah thanks",
+    }
+    winding_down = any(p in previous for p in ["anything else", "good to go", "while you're here", "while youre here"])
+    if clean in _closing_acks or (clean in {"no", "nope", "nah", "na"} and winding_down):
+        if contact_already_captured(session_id):
+            nm = last_known_name(session_id)
+            tail = f", {nm.split()[0]}" if nm else ""
+            return (
+                f"No worries at all{tail} — you're all set. The team will be in touch soon.\n\n"
+                "Enjoy that first session, and give it a proper crack."
+            )
+        return (
+            "No worries at all. I'm here whenever you need — trials, prices, classes, or getting a human to help.\n\n"
+            "Come back any time and we'll sort you out."
+        )
 
     # Prompt-injection / instruction-extraction — checked first so it can't be
     # swallowed by an unrelated keyword branch (e.g. "system prompt" -> "pt").
@@ -4259,11 +4300,28 @@ def log_event(event_type: str, session_id: str = "unknown", **metadata):
 
 
 def lead_summary_email_configured() -> bool:
+    # Resend (HTTP, works on Render) is the primary path; SMTP is a legacy fallback.
+    if LEAD_SUMMARY_EMAIL_TO and LEAD_SUMMARY_RESEND_API_KEY and LEAD_SUMMARY_EMAIL_FROM:
+        return True
     return bool(LEAD_SUMMARY_EMAIL_TO and SMTP_HOST and SMTP_FROM)
 
 
+def lead_summary_telegram_configured() -> bool:
+    return bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+
+
+def lead_summary_twilio_configured() -> bool:
+    return bool(
+        TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM and LEAD_SUMMARY_PHONE_TO
+    )
+
+
 def lead_summary_phone_configured() -> bool:
-    return bool(LEAD_SUMMARY_PHONE_TO and LEAD_SUMMARY_WEBHOOK_URL)
+    return (
+        lead_summary_telegram_configured()
+        or lead_summary_twilio_configured()
+        or bool(LEAD_SUMMARY_PHONE_TO and LEAD_SUMMARY_WEBHOOK_URL)
+    )
 
 
 def lead_summary_delivery_configured() -> bool:
@@ -4298,8 +4356,36 @@ def send_lead_summary_email(lead_info: dict) -> bool:
     recipients = [email.strip() for email in LEAD_SUMMARY_EMAIL_TO.split(",") if email.strip()]
     if not recipients:
         return False
-    message = MIMEText(format_lead_summary(lead_info))
-    message["Subject"] = f"New Outdoor Squad lead: {lead_info.get('name') or lead_info.get('route') or 'website enquiry'}"
+    subject = f"New Outdoor Squad lead: {lead_info.get('name') or lead_info.get('route') or 'website enquiry'}"
+    body = format_lead_summary(lead_info)
+
+    # Primary path: Resend HTTP API. Works on Render, where SMTP ports are blocked.
+    if LEAD_SUMMARY_RESEND_API_KEY and LEAD_SUMMARY_EMAIL_FROM:
+        payload = {
+            "from": LEAD_SUMMARY_EMAIL_FROM,
+            "to": recipients,
+            "subject": subject,
+            "text": body,
+        }
+        # Let Nick reply straight to the prospect from the alert email.
+        if lead_info.get("email"):
+            payload["reply_to"] = lead_info["email"]
+        request = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {LEAD_SUMMARY_RESEND_API_KEY}",
+                "Content-Type": "application/json",
+                "User-Agent": "outdoor-squad-bot/1.0",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=12) as response:
+            return 200 <= response.status < 300
+
+    # Legacy fallback: direct SMTP (only if a non-blocked host is configured).
+    message = MIMEText(body)
+    message["Subject"] = subject
     message["From"] = SMTP_FROM
     message["To"] = ", ".join(recipients)
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=12) as smtp:
@@ -4336,6 +4422,62 @@ def send_lead_summary_webhook(lead_info: dict) -> bool:
         return 200 <= response.status < 300
 
 
+def send_lead_summary_telegram(lead_info: dict) -> bool:
+    if not lead_summary_telegram_configured():
+        return False
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": format_lead_summary(lead_info),
+        "disable_web_page_preview": True,
+    }
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        return 200 <= response.status < 300
+
+
+def send_lead_summary_twilio(lead_info: dict) -> bool:
+    if not lead_summary_twilio_configured():
+        return False
+    name = lead_info.get("name") or lead_info.get("route") or "website enquiry"
+    body = (
+        f"New Outdoor Squad lead: {name} "
+        f"({lead_info.get('phone') or 'no phone'}) — {lead_info.get('route') or 'enquiry'}. "
+        "Full summary in your email."
+    )
+    data = urllib.parse.urlencode(
+        {"To": LEAD_SUMMARY_PHONE_TO, "From": TWILIO_FROM, "Body": body}
+    ).encode("utf-8")
+    auth = base64.b64encode(
+        f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}".encode()
+    ).decode()
+    request = urllib.request.Request(
+        f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
+        data=data,
+        headers={
+            "Authorization": f"Basic {auth}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        return 200 <= response.status < 300
+
+
+def send_lead_summary_phone(lead_info: dict) -> bool:
+    # Prefer Telegram (free), then Twilio SMS, then the legacy webhook — whichever
+    # is configured. Nick's channel is selected purely by which env vars are set.
+    if lead_summary_telegram_configured():
+        return send_lead_summary_telegram(lead_info)
+    if lead_summary_twilio_configured():
+        return send_lead_summary_twilio(lead_info)
+    return send_lead_summary_webhook(lead_info)
+
+
 def notify_lead_summary(lead_info: dict, *, reason: str) -> None:
     """Best-effort owner notification after a real contact-detail capture."""
     if not lead_summary_delivery_configured():
@@ -4354,10 +4496,10 @@ def notify_lead_summary(lead_info: dict, *, reason: str) -> None:
     except Exception as exc:
         failures.append(f"email:{str(exc)[:120]}")
     try:
-        if send_lead_summary_webhook(lead_info):
-            sent_channels.append("phone_webhook")
+        if send_lead_summary_phone(lead_info):
+            sent_channels.append("phone")
     except Exception as exc:
-        failures.append(f"phone_webhook:{str(exc)[:120]}")
+        failures.append(f"phone:{str(exc)[:120]}")
 
     if sent_channels:
         log_event(
