@@ -172,6 +172,21 @@ def test_casual_dropin_answered():
     assert "$37" in r and "membership" in r.lower()
 
 
+# ── anti-invention: session length + equipment (LLM tail) ─────────────────────
+def test_session_length_not_invented():
+    for q in ["how long does each class go for?", "how long are the sessions?", "session length?"]:
+        r = _reply(q, f"len-{hash(q)}")
+        assert "45" not in r and "60 min" not in r  # no invented duration
+        assert "timetable" in r.lower() or "team can confirm" in r.lower()
+
+
+def test_equipment_answer_grounded():
+    for q in ["what equipment do you provide?", "do I need to bring my own gear?"]:
+        r = _reply(q, f"eq-{hash(q)}").lower()
+        assert "provided" in r and ("drink bottle" in r or "towel" in r)
+        assert "trap bar" not in r and "barbell" not in r and "trx" not in r  # no invented inventory
+
+
 # ── F: name capture past a leading filler ─────────────────────────────────────
 def test_name_capture_past_leading_filler():
     assert app.extract_contact_name("I'm keen, I'm Sarah, 0412 345 678") == "Sarah"

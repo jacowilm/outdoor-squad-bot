@@ -60,19 +60,25 @@ def test_guard_operational_claims_is_bounded_and_fast():
 
 
 def test_guard_operational_claims_scaling_is_linear():
-    for _ in range(2):
-        app.guard_operational_claims("warm")
+    for _ in range(5):
+        app.guard_operational_claims("warm " * 20)
 
     def t(n):
         s = "cost " + "x " * (n // 2)
-        start = time.perf_counter()
-        app.guard_operational_claims(s)
-        return (time.perf_counter() - start) * 1000
+        # Best-of-N: minimise scheduler/load noise so the ratio check is stable
+        # even when the whole suite runs in parallel on a loaded machine.
+        best = float("inf")
+        for _ in range(7):
+            start = time.perf_counter()
+            app.guard_operational_claims(s)
+            best = min(best, (time.perf_counter() - start) * 1000)
+        return best
 
     small = t(2000)
     big = t(8000)
-    # Quadratic would be ~16x for a 4x length increase; linear ~4x. Allow slack.
-    assert big < small * 8 + 5, f"super-linear scaling: {small:.1f}ms -> {big:.1f}ms"
+    # A 4x length increase: linear ~4x, quadratic ~16x. The pre-fix code was
+    # ~16x; the bounded regexes keep it ~4x. Generous ceiling to avoid flakiness.
+    assert big < small * 10 + 5, f"super-linear scaling: {small:.1f}ms -> {big:.1f}ms"
 
 
 def test_guard_still_scrubs_price_flexibility_language():

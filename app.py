@@ -679,6 +679,7 @@ Conversation rules:
 - Do not sign messages with "Robo-Nick". The widget already shows who is speaking.
 - Do not paste links/phone/email unless the user is ready to book, asks for contact details, or shares contact details.
 - Never claim an email, SMS, reminder, booking confirmation, meal plan delivery, or notification was sent unless this app actually did it.
+- Never invent a specific class/session duration (e.g. "45 minutes", "an hour") or a specific equipment inventory (e.g. "we have barbells, trap bars, TRX") — these are NOT in your source material. If asked how long a class runs, say the exact length is on the timetable / the team can confirm. If asked about equipment or what to bring, say all equipment is provided on site and they just bring a drink bottle, towel and mat.
 - If a visitor writes in another language, reply in English (a one-word greeting in their language is fine). Never claim Nick, Lyn, or the team speak that language — you don't know. Offer email (innerwest@outdoorsquad.com.au) so they can sort language directly.
 - There are NO referral bonuses, guest promos, or discounts to "keep an eye out for" — never hint that any exist. Guests and friends use the free 1-Day Trial Pass. Families or groups training together may get value-stacked bonuses (extra sessions, movement screens) after a chat with the team — never money off.
 - If you are not confident about ANY answer, do not improvise — hand off to Humanoid-Nick with a light line ("that one's outside what Robo-Nick can reliably do — Humanoid-Nick kept the improv rights for himself") and ask for a first name + mobile, or give innerwest@outdoorsquad.com.au. A wrong answer is worse than a handoff.
@@ -2186,6 +2187,35 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Camperdown (The Barracks at Camperdown Tennis & Oval) has upgraded public facilities on site, including public toilets and an outdoor gym, plus access to Camperdown Oval. Redfern Park has public toilets and the Park Café right by the Sports Oval end meeting point. Most people just bring a small bag and keep it beside the session — best to leave the valuables at home.\n\n"
             "If something specific matters (showers before work, pram space, that sort of thing), the team can give you the exact lay of the land — want me to flag it?"
         )
+    # Equipment / "what do I bring" — answer from the KB fact (all gear provided,
+    # bring a drink bottle/towel/mat). Deterministic so the LLM can't invent a
+    # specific equipment inventory (it listed trap bars/TRX/deadballs unprompted,
+    # 2026-07-02 QA).
+    if any(phrase in clean for phrase in [
+        "equipment", "what do i bring", "what to bring", "what should i bring",
+        "do i need my own", "bring my own", "need any gear", "need equipment",
+        "weights provided", "provide the weights", "provide equipment", "own weights",
+        "do you supply", "need to bring anything", "what should i wear and bring",
+    ]):
+        return (
+            "Good news — you don’t need to own or bring any training gear. All the equipment is provided on site at the park, set up and ready when you arrive.\n\n"
+            "You just bring a drink bottle, a towel and a mat, and wear something you can move in (sunscreen and a hat are handy since it’s outdoors).\n\n"
+            "Want me to line up a free trial so you can see a session for yourself?"
+        )
+    # Session/class length — the exact duration isn't in the source material, so
+    # answer honestly and point to the timetable rather than inventing a number
+    # (the LLM guessed "45-60 minutes" unprompted, 2026-07-02 QA).
+    if any(phrase in clean for phrase in [
+        "how long is", "how long are", "how long does", "how long do the",
+        "how long's the", "how longs the", "how long is a", "how long's a",
+        "session length", "class length", "length of the session", "length of a class",
+        "length of the class", "length of a session",
+    ]):
+        return (
+            "Fair question. Exact class length varies a bit by session type and location, so rather than give you a number that might be off, the precise block for each class is on the live timetable and the team can confirm it for the class you’re eyeing.\n\n"
+            f"You can check the schedule and grab a free trial here: {TRIAL_LINK}\n\n"
+            "Is there a particular class or time you’re looking at?"
+        )
     # Social handles / "what's your Instagram / how do I follow you / WhatsApp" —
     # the master KB lists these; sharing the public links is fine (the bot still
     # can't post/DM natively). Added 2026-06-13 from the authoritative master KB.
@@ -3508,6 +3538,8 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
         "trial twice", "trial again", "another trial", "another free", "second trial",
         "as a gift", "gift for", "gift membership", "voucher", "a present for",
         "toilet", "toilets", "bathroom", "shower", "showers", "locker", "lockers", "change room", "changing room", "leave my bag", "leave bags", "bag storage",
+        "equipment", "what do i bring", "what to bring", "do i need my own", "bring my own", "need any gear", "provide equipment", "do you supply",
+        "how long is", "how long are", "how long does", "how long do the", "session length", "class length", "length of the session", "length of a class",
         "instagram", "insta", "facebook", "socials", "social media", "follow you", "whatsapp", "youtube", "pinterest", "tiktok", "your handles", "online presence", "google reviews",
         "fifo", "fly in fly out", "on rotation", "away for work", "work away", "away every", "away 2 weeks", "away two weeks", "on swing",
         "pause membership", "cancel membership", "account question", "weather", "forecast",
