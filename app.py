@@ -248,6 +248,13 @@ SUPABASE_TIMEOUT_SECONDS = 12.0
 # to the ephemeral local file (the project paused once and nothing surfaced it).
 _supabase_last_ok: bool | None = None
 _supabase_last_error: str | None = None
+# Keep-alive: free-tier Supabase auto-pauses after ~1 week with NO database
+# activity. The Render web service is on the always-on Starter plan, so a daemon
+# thread here runs 24/7 and touches the DB periodically — that DB activity keeps
+# the project from ever idle-pausing, no paid Supabase tier needed. (On the old
+# free Render plan this wouldn't work: the instance slept when idle.) Set the
+# interval to 0 to disable. Default 6h << the 7-day pause window.
+SUPABASE_KEEPALIVE_SECONDS = int(os.environ.get("OUTDOOR_SQUAD_SUPABASE_KEEPALIVE_SECONDS", str(6 * 3600)))
 CONVERSATION_CACHE_MAX_SESSIONS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_MAX", "200"))
 CONVERSATION_CACHE_TTL_SECONDS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_CACHE_TTL_SECONDS", "3600"))
 CONVERSATION_STATE_MAX_MESSAGES = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_STATE_MAX_MESSAGES", "60"))
@@ -468,6 +475,25 @@ def supabase_request(
     _supabase_last_ok = False
     _supabase_last_error = f"{type(last_exc).__name__}: {str(last_exc)[:160]}"
     raise last_exc
+
+
+def _supabase_keepalive_loop() -> None:
+    """Periodic lightweight DB read so the free-tier Supabase project never hits
+    its ~7-day idle-pause window. Runs forever in a daemon thread (viable because
+    Render is always-on). Read-only, single row, no writes/pollution."""
+    while True:
+        try:
+            time.sleep(SUPABASE_KEEPALIVE_SECONDS)
+            if supabase_enabled():
+                supabase_request("GET", SUPABASE_TABLES["leads"], params={"select": "session_id", "limit": "1"})
+        except Exception:
+            pass  # never let the keep-alive crash the thread
+
+
+@app.on_event("startup")
+def _start_supabase_keepalive() -> None:
+    if supabase_enabled() and SUPABASE_KEEPALIVE_SECONDS > 0:
+        threading.Thread(target=_supabase_keepalive_loop, daemon=True, name="supabase-keepalive").start()
 
 
 def sort_rows_by_timestamp(rows: list[dict], key: str = "timestamp") -> list[dict]:
