@@ -3427,6 +3427,42 @@ async def get_metrics(_: str = Depends(require_admin)):
     return JSONResponse(build_metrics_payload())
 
 
+@app.get("/api/_storage_diag")
+async def storage_diag(_: str = Depends(require_admin)):
+    """TEMP diagnostic: does the LIVE Supabase read/write actually work, or is
+    everything silently falling back to the ephemeral local file? Admin-only."""
+    out = {
+        "supabase_enabled": supabase_enabled(),
+        "supabase_url_host": (SUPABASE_URL.split("//")[-1][:40] if SUPABASE_URL else None),
+        "service_key_len": len(SUPABASE_KEY) if SUPABASE_KEY else 0,
+    }
+    if not supabase_enabled():
+        out["note"] = "supabase not enabled; using local files"
+        return JSONResponse(out)
+    # 1) live READ
+    try:
+        rows = supabase_request("GET", SUPABASE_TABLES["leads"], params={"select": "session_id", "limit": "1"})
+        out["read"] = {"ok": True, "sample_count": len(rows or [])}
+    except Exception as exc:
+        out["read"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    # 2) live WRITE + read-back + delete
+    diag_sid = "storage-diag-probe"
+    try:
+        supabase_request("POST", SUPABASE_TABLES["leads"],
+                         json_body={"session_id": diag_sid, "name": "diag", "concerns": []},
+                         prefer="return=minimal")
+        back = supabase_request("GET", SUPABASE_TABLES["leads"], params={"session_id": f"eq.{diag_sid}", "select": "session_id"})
+        out["write"] = {"ok": True, "readback_found": bool(back)}
+        try:
+            supabase_request("DELETE", SUPABASE_TABLES["leads"], params={"session_id": f"eq.{diag_sid}"})
+            out["cleanup"] = "ok"
+        except Exception as exc:
+            out["cleanup"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+    except Exception as exc:
+        out["write"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    return JSONResponse(out)
+
+
 @app.get("/api/conversation-logs")
 async def get_conversation_logs(limit: int = 200, _: str = Depends(require_admin)):
     """Owner-only redacted transcript review for 30/60/90 day quality checks."""
