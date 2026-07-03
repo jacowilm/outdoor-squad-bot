@@ -20,7 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from pathlib import Path
 import httpx
@@ -231,6 +231,13 @@ TELEGRAM_CHAT_ID = os.environ.get("OUTDOOR_SQUAD_TELEGRAM_CHAT_ID", "").strip()
 TWILIO_ACCOUNT_SID = os.environ.get("OUTDOOR_SQUAD_TWILIO_ACCOUNT_SID", "").strip()
 TWILIO_AUTH_TOKEN = os.environ.get("OUTDOOR_SQUAD_TWILIO_AUTH_TOKEN", "").strip()
 TWILIO_FROM = os.environ.get("OUTDOOR_SQUAD_TWILIO_FROM", "").strip()
+# Weekly owner stats report. Emailed via the same Resend path as lead alerts;
+# a short SMS/Telegram digest rides the phone channel once it's configured.
+# Empty recipient list = scheduler disabled (so tests/local never send).
+REPORT_EMAIL_TO = os.environ.get("OUTDOOR_SQUAD_REPORT_EMAIL_TO", "").strip()
+REPORT_WEEKDAY = int(os.environ.get("OUTDOOR_SQUAD_REPORT_WEEKDAY", "0"))  # 0 = Monday
+REPORT_HOUR = int(os.environ.get("OUTDOOR_SQUAD_REPORT_HOUR", "8"))  # local Sydney hour
+REPORT_TIMEZONE = os.environ.get("OUTDOOR_SQUAD_REPORT_TIMEZONE", "Australia/Sydney")
 SMTP_HOST = os.environ.get("OUTDOOR_SQUAD_SMTP_HOST", "").strip()
 SMTP_PORT = int(os.environ.get("OUTDOOR_SQUAD_SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("OUTDOOR_SQUAD_SMTP_USER", "").strip()
@@ -3365,6 +3372,7 @@ def _session_has_server_history(session_id: str) -> bool:
 # counts those as conversions/completions, so without this a public caller could
 # arbitrarily inflate the owner's weekly numbers.
 CLIENT_EVENT_TYPES = {
+    "widget_impression",
     "widget_opened",
     "widget_closed",
     "link_clicked",
@@ -3463,6 +3471,267 @@ def build_metrics_payload() -> dict:
 async def get_metrics(_: str = Depends(require_admin)):
     """Simple success metrics for the paid first version."""
     return JSONResponse(build_metrics_payload())
+
+
+# ── Weekly owner stats report ────────────────────────────────────────────────
+# Nick's four asks: conversations started (+ % of visits that engage), the
+# conversation→lead rate, bot-attributed trial actions, and the handoff rate.
+# Everything is computed from the durable events store over a time window;
+# emailed via the same Resend path as lead alerts, with a short SMS/Telegram
+# digest once the phone channel is configured.
+
+
+def _event_ts(event: dict) -> str:
+    # Store timestamps are naive local-ISO strings (server-local = UTC on
+    # Render); trial-click leads carry a trailing "Z". Normalise for string
+    # comparison — ISO strings compare correctly lexicographically.
+    ts = str(event.get("timestamp") or "")
+    return ts[:-1] if ts.endswith("Z") else ts
+
+
+def build_report_stats(days: int = 7) -> dict:
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    # Only widget-* sessions count: every real visitor comes through the embedded
+    # widget (widget.js mints 'widget-…' ids), while internal QA/maintenance
+    # tests hit /api/chat with custom session ids — excluding them keeps Nick's
+    # numbers honest.
+    events = [
+        e
+        for e in read_events()
+        if _event_ts(e) >= cutoff and str(e.get("session_id") or "").startswith("widget-")
+    ]
+
+    def sessions(event_type: str) -> set:
+        return {e.get("session_id") for e in events if e.get("event_type") == event_type}
+
+    impressions = sum(1 for e in events if e.get("event_type") == "widget_impression")
+    opened = sessions("widget_opened")
+    conversations = sessions("conversation_started")
+    # Real contact leads (name/phone/email handed over) vs synthetic
+    # trial-click leads — split by route so the conversion rate stays honest.
+    contact_lead_sessions = {
+        e.get("session_id")
+        for e in events
+        if e.get("event_type") == "lead_captured" and e.get("route") != "trial-link-clicked"
+    }
+    trial_clicks = sessions("trial_link_clicked")
+    booking_shown = sessions("booking_link_shown")
+    handoffs = sessions("human_handoff_suggested")
+
+    lead_lines = []
+    for lead in read_leads():
+        ts = _event_ts(lead)
+        if (
+            ts >= cutoff
+            and (lead.get("route") or "") != "trial-link-clicked"
+            and str(lead.get("session_id") or "").startswith("widget-")
+        ):
+            label = lead.get("name") or "unknown name"
+            detail = lead.get("route") or "enquiry"
+            lead_lines.append(f"{label} — {detail}")
+
+    return {
+        "window_days": days,
+        "since": cutoff,
+        "widget_impressions": impressions,
+        "widget_opened_sessions": len(opened),
+        "conversations_started": len(conversations),
+        "engagement_rate": safe_rate(len(conversations), impressions),
+        "contact_leads": len(contact_lead_sessions),
+        "conversation_to_lead_rate": safe_rate(len(contact_lead_sessions), len(conversations)),
+        "trial_link_clicks": len(trial_clicks),
+        "booking_link_shown_sessions": len(booking_shown),
+        "handoffs": len(handoffs),
+        "handoff_rate": safe_rate(len(handoffs), len(conversations)),
+        "lead_lines": lead_lines[:20],
+    }
+
+
+def _pct(rate: float) -> str:
+    return f"{round(rate * 100)}%"
+
+
+def report_subject() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo(REPORT_TIMEZONE)).strftime("%d %b %Y")
+    except Exception:
+        today = datetime.now().strftime("%d %b %Y")
+    return f"Robo-Nick weekly report — {today}"
+
+
+def format_report_text(stats: dict) -> str:
+    days = stats["window_days"]
+    lines = [
+        f"Robo-Nick stats — last {days} days",
+        "",
+        "THE FUNNEL",
+        f"- Page visits where the chat bubble was seen: {stats['widget_impressions']}",
+        f"- Chats opened: {stats['widget_opened_sessions']}",
+        f"- Conversations started: {stats['conversations_started']}"
+        + (
+            f"  ({_pct(stats['engagement_rate'])} of visits)"
+            if stats["widget_impressions"]
+            else ""
+        ),
+        f"- Leads captured (name/phone/email handed over): {stats['contact_leads']}"
+        + (
+            f"  ({_pct(stats['conversation_to_lead_rate'])} of conversations)"
+            if stats["conversations_started"]
+            else ""
+        ),
+        "",
+        "TRIAL ACTIONS",
+        f"- Trial link offered in chat: {stats['booking_link_shown_sessions']} conversation(s)",
+        f"- Trial link actually clicked: {stats['trial_link_clicks']}",
+        "  (Clicks are the strongest booking signal we can see from the chat side —",
+        "   cross-check names against Momence for confirmed trials.)",
+        "",
+        "HANDOFFS",
+        f"- Passed to Nick/Lyn: {stats['handoffs']}"
+        + (
+            f"  ({_pct(stats['handoff_rate'])} of conversations)"
+            if stats["conversations_started"]
+            else ""
+        ),
+    ]
+    if stats["lead_lines"]:
+        lines += ["", "LEADS THIS PERIOD"] + [f"- {line}" for line in stats["lead_lines"]]
+    if not stats["widget_impressions"]:
+        lines += [
+            "",
+            "NOTE: visit tracking is newly live, so the visits number (and the",
+            "% of visits that engage) will be meaningful from the next report.",
+        ]
+    lines += [
+        "",
+        "Full transcripts and live numbers: https://outdoor-squad-bot.onrender.com/admin",
+        "— Robo-Nick",
+    ]
+    return "\n".join(lines)
+
+
+def format_report_sms(stats: dict) -> str:
+    return (
+        f"Robo-Nick weekly: {stats['widget_impressions']} visits, "
+        f"{stats['conversations_started']} chats, {stats['contact_leads']} leads "
+        f"({_pct(stats['conversation_to_lead_rate'])} of chats), "
+        f"{stats['trial_link_clicks']} trial clicks, {stats['handoffs']} handoffs. "
+        "Full report in your email."
+    )
+
+
+def send_email_resend(subject: str, body: str, recipients: list) -> bool:
+    """Generic Resend send for owner reports (separate from the lead-alert path)."""
+    if not (LEAD_SUMMARY_RESEND_API_KEY and LEAD_SUMMARY_EMAIL_FROM and recipients):
+        return False
+    payload = {
+        "from": LEAD_SUMMARY_EMAIL_FROM,
+        "to": recipients,
+        "subject": subject,
+        "text": body,
+    }
+    request = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {LEAD_SUMMARY_RESEND_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "outdoor-squad-bot/1.0",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        return 200 <= response.status < 300
+
+
+def send_weekly_report(days: int = 7, recipients: list | None = None, include_sms: bool = True) -> dict:
+    stats = build_report_stats(days=days)
+    body = format_report_text(stats)
+    to_list = recipients if recipients is not None else [
+        r.strip() for r in REPORT_EMAIL_TO.split(",") if r.strip()
+    ]
+    sent_email = False
+    sent_sms = False
+    errors = []
+    try:
+        sent_email = send_email_resend(report_subject(), body, to_list)
+    except Exception as exc:
+        errors.append(f"email:{str(exc)[:120]}")
+    if include_sms and (lead_summary_telegram_configured() or lead_summary_twilio_configured()):
+        try:
+            sent_sms = send_owner_phone_text(format_report_sms(stats))
+        except Exception as exc:
+            errors.append(f"phone:{str(exc)[:120]}")
+    log_event(
+        "weekly_report_sent" if (sent_email or sent_sms) else "weekly_report_error",
+        session_id="system",
+        email=str(sent_email),
+        sms=str(sent_sms),
+        error="; ".join(errors)[:240] if errors else None,
+    )
+    return {"stats": stats, "sent_email": sent_email, "sent_sms": sent_sms, "errors": errors}
+
+
+@app.get("/api/reports/weekly")
+async def weekly_report_endpoint(
+    days: int = 7,
+    send: int = 0,
+    sms: int = 0,
+    to: str = "",
+    _: str = Depends(require_admin),
+):
+    """Owner stats report. Dry-run by default; ?send=1 emails it (to= overrides
+    the configured recipients, for testing); ?sms=1 also sends the phone digest."""
+    days = max(1, min(days, 90))
+    if not send:
+        stats = build_report_stats(days=days)
+        return JSONResponse(
+            {"stats": stats, "report_text": format_report_text(stats), "sent_email": False, "sent_sms": False}
+        )
+    recipients = [r.strip() for r in to.split(",") if r.strip()] or None
+    result = send_weekly_report(days=days, recipients=recipients, include_sms=bool(sms))
+    result["report_text"] = format_report_text(result["stats"])
+    return JSONResponse(result)
+
+
+def _next_report_time(now):
+    """Next REPORT_WEEKDAY at REPORT_HOUR:00 strictly after `now` (tz-aware)."""
+    target = now.replace(hour=REPORT_HOUR, minute=0, second=0, microsecond=0)
+    target += timedelta(days=(REPORT_WEEKDAY - now.weekday()) % 7)
+    if target <= now:
+        target += timedelta(days=7)
+    return target
+
+
+def _weekly_report_loop() -> None:
+    """Runs forever in a daemon thread (viable because Render is always-on).
+
+    Sleeps in ≤1h chunks toward the next Monday 8am Sydney, then sends. The
+    strictly-future target makes restarts naturally safe: a redeploy right
+    after a send computes next week's target, so no double-send.
+    """
+    while True:
+        try:
+            from zoneinfo import ZoneInfo
+
+            tz = ZoneInfo(REPORT_TIMEZONE)
+            target = _next_report_time(datetime.now(tz))
+            while True:
+                remaining = (target - datetime.now(tz)).total_seconds()
+                if remaining <= 0:
+                    break
+                time.sleep(min(remaining, 3600))
+            send_weekly_report()
+        except Exception:
+            time.sleep(3600)
+
+
+@app.on_event("startup")
+def _start_weekly_report_scheduler() -> None:
+    if REPORT_EMAIL_TO and LEAD_SUMMARY_RESEND_API_KEY:
+        threading.Thread(target=_weekly_report_loop, daemon=True, name="weekly-report").start()
 
 
 @app.get("/api/storage-health")
@@ -4517,12 +4786,10 @@ def send_lead_summary_webhook(lead_info: dict) -> bool:
         return 200 <= response.status < 300
 
 
-def send_lead_summary_telegram(lead_info: dict) -> bool:
-    if not lead_summary_telegram_configured():
-        return False
+def _send_telegram_text(text: str) -> bool:
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": format_lead_summary(lead_info),
+        "text": text,
         "disable_web_page_preview": True,
     }
     request = urllib.request.Request(
@@ -4535,15 +4802,13 @@ def send_lead_summary_telegram(lead_info: dict) -> bool:
         return 200 <= response.status < 300
 
 
-def send_lead_summary_twilio(lead_info: dict) -> bool:
-    if not lead_summary_twilio_configured():
+def send_lead_summary_telegram(lead_info: dict) -> bool:
+    if not lead_summary_telegram_configured():
         return False
-    name = lead_info.get("name") or lead_info.get("route") or "website enquiry"
-    body = (
-        f"New Outdoor Squad lead: {name} "
-        f"({lead_info.get('phone') or 'no phone'}) — {lead_info.get('route') or 'enquiry'}. "
-        "Full summary in your email."
-    )
+    return _send_telegram_text(format_lead_summary(lead_info))
+
+
+def _send_twilio_sms(body: str) -> bool:
     data = urllib.parse.urlencode(
         {"To": LEAD_SUMMARY_PHONE_TO, "From": TWILIO_FROM, "Body": body}
     ).encode("utf-8")
@@ -4561,6 +4826,27 @@ def send_lead_summary_twilio(lead_info: dict) -> bool:
     )
     with urllib.request.urlopen(request, timeout=12) as response:
         return 200 <= response.status < 300
+
+
+def send_lead_summary_twilio(lead_info: dict) -> bool:
+    if not lead_summary_twilio_configured():
+        return False
+    name = lead_info.get("name") or lead_info.get("route") or "website enquiry"
+    body = (
+        f"New Outdoor Squad lead: {name} "
+        f"({lead_info.get('phone') or 'no phone'}) — {lead_info.get('route') or 'enquiry'}. "
+        "Full summary in your email."
+    )
+    return _send_twilio_sms(body)
+
+
+def send_owner_phone_text(text: str) -> bool:
+    """Arbitrary owner notification on the configured phone channel (reports etc.)."""
+    if lead_summary_telegram_configured():
+        return _send_telegram_text(text)
+    if lead_summary_twilio_configured():
+        return _send_twilio_sms(text)
+    return False
 
 
 def send_lead_summary_phone(lead_info: dict) -> bool:

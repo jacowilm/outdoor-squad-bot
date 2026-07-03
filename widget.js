@@ -478,4 +478,17 @@
     }
     sendBtn.onclick = () => send();
     input.onkeypress = (e) => { if (e.key === 'Enter') send(); };
+
+    // Impression ping: counts a visit where the chat bubble was visible, so the
+    // weekly report can show what % of visitors actually engage. Fired once per
+    // browser session (sessionStorage guard) so page hops/reloads don't inflate.
+    try {
+        if (!sessionStorage.getItem('os-impression')) {
+            sessionStorage.setItem('os-impression', '1');
+            track('widget_impression', { page: (location.pathname || '/').slice(0, 200) });
+        }
+    } catch (e) {
+        // Storage blocked (strict privacy mode) — still count the view.
+        track('widget_impression', { page: 'storage-unavailable' });
+    }
 })();
