@@ -3961,6 +3961,15 @@ async def widget_preview():
     return HTMLResponse("<h1>Widget preview not found</h1>", status_code=404)
 
 
+@app.get("/bubble-options", response_class=HTMLResponse)
+async def bubble_options():
+    """Client-facing gallery of chat-bubble design options (Nicholas, 2026-07)."""
+    html_path = Path(__file__).parent / "bubble_options.html"
+    if html_path.exists():
+        return HTMLResponse(html_path.read_text())
+    return HTMLResponse("<h1>Bubble options not found</h1>", status_code=404)
+
+
 def should_use_local_tone_handler(message: str, session_id: str) -> bool:
     """Catch moments that need stateful tone more than generic AI/Q&A."""
     text = normalise_chat_text(message)

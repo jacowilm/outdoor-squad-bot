@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Robo-Nick — Chat Bubble Options</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #0a0a0a;
+      --muted: #6a6a6a;
+      --line: #ececec;
+      --paper: #ffffff;
+      --canvas: #f5f4f1;
+      --orange: #f26522;
+      --orange-deep: #e0540f;
+      --green: #16a34a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--canvas);
+      color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+    header {
+      background: var(--ink);
+      color: #fff;
+      border-bottom: 3px solid var(--orange);
+      padding: 36px 24px;
+      text-align: center;
+    }
+    header .eyebrow {
+      font-size: .7rem; letter-spacing: .24em; text-transform: uppercase;
+      color: rgba(255,255,255,.55); font-weight: 700; margin-bottom: 8px;
+    }
+    header h1 { margin: 0 0 10px; font-size: 1.7rem; font-weight: 800; letter-spacing: -.02em; }
+    header p { margin: 0 auto; max-width: 560px; color: rgba(255,255,255,.75); font-size: .95rem; line-height: 1.5; }
+    header strong { color: var(--orange); }
+
+    main { max-width: 1100px; margin: 0 auto; padding: 36px 20px 80px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 22px;
+    }
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 2px 10px rgba(10,10,10,.05);
+      display: flex; flex-direction: column;
+    }
+    .stage {
+      position: relative;
+      height: 240px;
+      background:
+        linear-gradient(180deg, rgba(242,101,34,.06), transparent 40%),
+        repeating-linear-gradient(0deg, #fafaf8 0 54px, #f2f1ee 54px 55px);
+      border-bottom: 1px solid var(--line);
+      overflow: hidden;
+    }
+    .stage::before {
+      content: 'outdoorsquad.com.au';
+      position: absolute; top: 10px; left: 12px;
+      font-size: .62rem; letter-spacing: .06em; color: #b5b2ac;
+      background: #fff; border: 1px solid var(--line);
+      padding: 3px 8px; border-radius: 999px;
+    }
+    .meta { padding: 18px 18px 20px; }
+    .pick {
+      display: inline-block;
+      background: var(--orange);
+      color: #fff; font-weight: 800; font-size: .78rem;
+      width: 26px; height: 26px; line-height: 26px; text-align: center;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+    .meta h2 { display: inline; font-size: 1.05rem; font-weight: 700; letter-spacing: -.01em; }
+    .meta p { margin: 10px 0 0; color: var(--muted); font-size: .86rem; line-height: 1.5; }
+
+    /* ============ SHARED BUBBLE BASE ============ */
+    .bubble-wrap { position: absolute; right: 18px; bottom: 18px; }
+    .bub {
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      border: 0;
+      background: linear-gradient(135deg, #f26522, #e0540f);
+      color: #fff;
+      box-shadow: 0 10px 28px rgba(242,101,34,.42), 0 4px 12px rgba(10,10,10,.18);
+      transition: transform .2s ease;
+    }
+    .bub:hover { transform: translateY(-2px) scale(1.04); }
+    .bub svg { width: 26px; height: 26px; }
+    .dot {
+      position: absolute; top: 2px; right: 2px;
+      width: 12px; height: 12px;
+      background: var(--green); border-radius: 50%;
+      border: 2px solid #fff;
+      animation: pulse 2.2s ease-out infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(22,163,74,.45); }
+      70% { box-shadow: 0 0 0 10px rgba(22,163,74,0); }
+      100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }
+    }
+
+    /* A — current */
+    .bub-a { width: 60px; height: 60px; border-radius: 50%; }
+
+    /* B — G'day pill */
+    .bub-b {
+      border-radius: 999px;
+      padding: 0 22px 0 16px;
+      height: 56px;
+      gap: 10px;
+      font-family: inherit;
+      font-weight: 700;
+      font-size: .95rem;
+      white-space: nowrap;
+    }
+    .bub-b .wave { font-size: 1.25rem; animation: wave 2.4s ease-in-out infinite; transform-origin: 70% 70%; }
+    @keyframes wave {
+      0%, 60%, 100% { transform: rotate(0deg); }
+      65%, 75%, 85% { transform: rotate(16deg); }
+      70%, 80% { transform: rotate(-8deg); }
+    }
+
+    /* C — robot face */
+    .bub-c { width: 62px; height: 62px; border-radius: 20px; animation: tilt 6s ease-in-out infinite; }
+    @keyframes tilt {
+      0%, 86%, 100% { transform: rotate(0); }
+      90% { transform: rotate(-6deg); }
+      94% { transform: rotate(5deg); }
+      98% { transform: rotate(-2deg); }
+    }
+    .robot-face { position: relative; width: 34px; height: 26px; background: #fff; border-radius: 8px; }
+    .robot-face::before, .robot-face::after {
+      content: ''; position: absolute; top: 7px;
+      width: 7px; height: 9px; border-radius: 3px;
+      background: var(--orange-deep);
+      animation: blink 4.5s infinite;
+    }
+    .robot-face::before { left: 6px; }
+    .robot-face::after { right: 6px; }
+    .robot-antenna {
+      position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+      width: 3px; height: 8px; background: #fff; border-radius: 2px;
+    }
+    .robot-antenna::after {
+      content: ''; position: absolute; top: -5px; left: 50%; transform: translateX(-50%);
+      width: 7px; height: 7px; background: var(--green); border-radius: 50%;
+      animation: pulse 2.2s ease-out infinite;
+    }
+    @keyframes blink {
+      0%, 46%, 50%, 100% { transform: scaleY(1); }
+      48% { transform: scaleY(.1); }
+    }
+
+    /* D — kettlebell */
+    .bub-d { width: 62px; height: 62px; border-radius: 50%; }
+    .bub-d .kb { animation: swing 5s ease-in-out infinite; transform-origin: top center; }
+    @keyframes swing {
+      0%, 80%, 100% { transform: rotate(0); }
+      85% { transform: rotate(-10deg); }
+      90% { transform: rotate(8deg); }
+      95% { transform: rotate(-4deg); }
+    }
+
+    /* E — teaser message */
+    .teaser {
+      position: absolute; right: 0; bottom: 74px;
+      background: #fff;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 14px 14px 4px 14px;
+      box-shadow: 0 10px 26px rgba(10,10,10,.14);
+      padding: 12px 14px;
+      font-size: .84rem;
+      line-height: 1.45;
+      width: 208px;
+      opacity: 0;
+      transform: translateY(8px);
+      animation: teaserIn .5s ease 1.4s forwards;
+    }
+    .teaser strong { color: var(--orange-deep); }
+    .teaser .x {
+      position: absolute; top: -8px; left: -8px;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--ink); color: #fff;
+      font-size: .68rem; line-height: 20px; text-align: center;
+      cursor: pointer;
+    }
+    @keyframes teaserIn { to { opacity: 1; transform: translateY(0); } }
+
+    /* F — bounce + unread badge */
+    .bub-f { width: 60px; height: 60px; border-radius: 50%; animation: bounce 7s ease infinite; }
+    @keyframes bounce {
+      0%, 88%, 100% { transform: translateY(0); }
+      90% { transform: translateY(-10px); }
+      93% { transform: translateY(0); }
+      95% { transform: translateY(-5px); }
+      97% { transform: translateY(0); }
+    }
+    .badge-n {
+      position: absolute; top: -4px; right: -4px;
+      min-width: 22px; height: 22px;
+      background: #d92d20; color: #fff;
+      font-size: .72rem; font-weight: 800; line-height: 22px; text-align: center;
+      border-radius: 999px;
+      border: 2px solid #fff;
+    }
+
+    .footer-note {
+      margin-top: 40px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 24px;
+      text-align: center;
+    }
+    .footer-note h3 { margin: 0 0 8px; font-size: 1.05rem; }
+    .footer-note p { margin: 0 auto; max-width: 520px; color: var(--muted); font-size: .9rem; line-height: 1.55; }
+    .footer-note a { color: var(--orange-deep); font-weight: 700; }
+    @media (max-width: 640px) {
+      header h1 { font-size: 1.3rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">The Outdoor Squad × AI Sprints</div>
+    <h1>Pick Robo-Nick's chat bubble</h1>
+    <p>Six options, all live and animated below — exactly how each would look in the bottom-right corner of <strong>outdoorsquad.com.au</strong>. Reply to the email with the letter you want (or mix ideas: "B but with the robot face").</p>
+  </header>
+
+  <main>
+    <div class="grid">
+
+      <!-- A — Current -->
+      <div class="card">
+        <div class="stage">
+          <div class="bubble-wrap">
+            <button class="bub bub-a" type="button" aria-label="Option A">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="pick">A</span><h2>Current — clean chat icon</h2>
+          <p>What's live today. Minimal, unbranded, green online dot. The safe default.</p>
+        </div>
+      </div>
+
+      <!-- B — G'day pill -->
+      <div class="card">
+        <div class="stage">
+          <div class="bubble-wrap">
+            <button class="bub bub-b" type="button" aria-label="Option B">
+              <span class="wave">👋</span> G'day — ask Robo-Nick
+            </button>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="pick">B</span><h2>The G'day pill</h2>
+          <p>Text invitation with a waving hand. Immediately tells visitors it's a chat AND who they're talking to. Highest click-through shape on most sites.</p>
+        </div>
+      </div>
+
+      <!-- C — Robot face -->
+      <div class="card">
+        <div class="stage">
+          <div class="bubble-wrap">
+            <button class="bub bub-c" type="button" aria-label="Option C">
+              <span class="robot-antenna"></span>
+              <span class="robot-face"></span>
+            </button>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="pick">C</span><h2>Robo-Nick face</h2>
+          <p>A little robot that blinks and tilts its head every few seconds. Leans into the Robo-Nick brand — self-aware automation, visible from the first pixel.</p>
+        </div>
+      </div>
+
+      <!-- D — Kettlebell -->
+      <div class="card">
+        <div class="stage">
+          <div class="bubble-wrap">
+            <button class="bub bub-d" type="button" aria-label="Option D">
+              <svg class="kb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6.5a3 3 0 0 1 6 0"/><path d="M15 8.2A6 6 0 1 1 9 8.2"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="pick">D</span><h2>The kettlebell</h2>
+          <p>Brand-first: a kettlebell that gives a little swing every few seconds. Crom approves. Fitness-obvious before anyone reads a word.</p>
+        </div>
+      </div>
+
+      <!-- E — Teaser message -->
+      <div class="card">
+        <div class="stage">
+          <div class="bubble-wrap">
+            <div class="teaser">
+              <span class="x">✕</span>
+              <strong>Robo-Nick:</strong> Oi! Need a hand picking a class? 🏋️
+            </div>
+            <button class="bub bub-a" type="button" aria-label="Option E">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="pick">E</span><h2>The opener</h2>
+          <p>Current bubble + a message that pops up a couple of seconds after landing, in Robo-Nick voice. Dismissable, shows once per visit. The most proactive option — typically doubles open rates.</p>
+        </div>
+      </div>
+
+      <!-- F — Bounce + badge -->
+      <div class="card">
+        <div class="stage">
+          <div class="bubble-wrap">
+            <button class="bub bub-f" type="button" aria-label="Option F">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span class="badge-n">1</span>
+            </button>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="pick">F</span><h2>The nudge</h2>
+          <p>Unread-message badge plus a friendly double-bounce every few seconds. Familiar "you've got a message" pattern without any text. Subtle but hard to ignore.</p>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="footer-note">
+      <h3>How to choose</h3>
+      <p>Reply to Jacobo's email with a letter (A–F) — or combine: <em>"D, but with the G'day text from B."</em> Any of these ships in a day, and we can A/B swap later once the weekly stats show what visitors actually click. Colours stay in Squad orange unless you want otherwise.</p>
+    </div>
+  </main>
+</body>
+</html>
