@@ -9,12 +9,18 @@
     const EVENT_URL = document.currentScript.src.replace('/widget.js', '/api/event');
     const SESSION_ID = 'widget-' + Math.random().toString(36).substr(2, 9);
 
+    // Bubble design variant. Stamped on every event so Nicholas can split-test
+    // icons month by month and compare open-rate per variant. Bump this string
+    // whenever the bubble look changes (e.g. 'gday-robot' -> 'kettlebell').
+    const BUBBLE_VARIANT = 'gday-robot';
+
     function track(eventType, metadata) {
         try {
+            const meta = Object.assign({ bubble_variant: BUBBLE_VARIANT }, metadata || {});
             fetch(EVENT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ event_type: eventType, session_id: SESSION_ID, metadata: metadata || {} }),
+                body: JSON.stringify({ event_type: eventType, session_id: SESSION_ID, metadata: meta }),
                 keepalive: true
             }).catch(() => {});
         } catch (e) {}
@@ -27,35 +33,76 @@
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             color: #0a0a0a;
         }
+        /* B+robot pill: wave 👋 · "G'day — ask Robo-Nick" · robot face */
         #os-chat-bubble {
             position: relative;
-            width: 60px; height: 60px;
-            border-radius: 50%;
+            height: 56px;
+            border-radius: 999px;
+            padding: 0 16px;
+            gap: 10px;
             background: linear-gradient(135deg, #f26522 0%, #e0540f 100%);
             color: white;
             border: 0;
             cursor: pointer;
             box-shadow: 0 10px 28px rgba(242,101,34,.42), 0 4px 12px rgba(10,10,10,.18);
             display: flex; align-items: center; justify-content: center;
+            font-family: inherit;
+            font-weight: 700;
+            font-size: .95rem;
+            line-height: 1;
+            white-space: nowrap;
             transition: transform .2s ease, box-shadow .2s ease;
         }
         #os-chat-bubble:hover {
-            transform: translateY(-2px) scale(1.04);
+            transform: translateY(-2px) scale(1.03);
             box-shadow: 0 14px 32px rgba(242,101,34,.5), 0 6px 14px rgba(10,10,10,.22);
         }
-        #os-chat-bubble svg { width: 26px; height: 26px; }
-        #os-chat-bubble .os-badge {
-            position: absolute; top: 2px; right: 2px;
-            width: 12px; height: 12px;
-            background: #16a34a;
-            border-radius: 50%;
-            border: 2px solid #ffffff;
-            box-shadow: 0 0 0 0 rgba(22,163,74,.5);
+        #os-chat-bubble .os-bub-label { padding-bottom: 1px; }
+        #os-chat-bubble .os-wave {
+            font-size: 1.2rem;
+            display: inline-block;
+            transform-origin: 70% 70%;
+            animation: os-wave 2.6s ease-in-out infinite;
+        }
+        @keyframes os-wave {
+            0%, 60%, 100% { transform: rotate(0deg); }
+            65%, 75%, 85% { transform: rotate(16deg); }
+            70%, 80% { transform: rotate(-8deg); }
+        }
+        /* Little robot face at the trailing end */
+        #os-chat-bubble .os-robot {
+            position: relative;
+            flex: 0 0 auto;
+            width: 30px; height: 24px;
+            background: #ffffff;
+            border-radius: 7px;
+            box-shadow: inset 0 -2px 0 rgba(0,0,0,.10);
+        }
+        #os-chat-bubble .os-robot::before,
+        #os-chat-bubble .os-robot::after {
+            content: ''; position: absolute; top: 6px;
+            width: 6px; height: 8px; border-radius: 2.5px;
+            background: #e0540f;
+            animation: os-blink 4.5s infinite;
+        }
+        #os-chat-bubble .os-robot::before { left: 6px; }
+        #os-chat-bubble .os-robot::after { right: 6px; }
+        #os-chat-bubble .os-robot-antenna {
+            position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
+            width: 2.5px; height: 6px; background: #ffffff; border-radius: 2px;
+        }
+        #os-chat-bubble .os-robot-antenna::after {
+            content: ''; position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
+            width: 6px; height: 6px; background: #16a34a; border-radius: 50%;
             animation: os-pulse 2.2s ease-out infinite;
+        }
+        @keyframes os-blink {
+            0%, 46%, 50%, 100% { transform: scaleY(1); }
+            48% { transform: scaleY(.12); }
         }
         @keyframes os-pulse {
             0%   { box-shadow: 0 0 0 0 rgba(22,163,74,.45); }
-            70%  { box-shadow: 0 0 0 10px rgba(22,163,74,0); }
+            70%  { box-shadow: 0 0 0 8px rgba(22,163,74,0); }
             100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }
         }
 
@@ -265,14 +312,22 @@
         }
 
         @media (max-width: 640px) {
-            #os-chat-widget { right: 14px; bottom: 14px; }
+            #os-chat-widget { right: 14px; bottom: 14px; max-width: calc(100vw - 28px); }
+            #os-chat-bubble {
+                height: 52px;
+                padding: 0 13px;
+                gap: 8px;
+                font-size: .9rem;
+            }
+            #os-chat-bubble .os-wave { font-size: 1.1rem; }
+            #os-chat-bubble .os-robot { width: 27px; height: 22px; }
             #os-chat-panel {
                 position: fixed;
                 right: 12px; left: 12px;
-                bottom: 86px;
+                bottom: 82px;
                 width: auto;
-                height: calc(100vh - 110px);
-                max-height: calc(100vh - 110px);
+                height: calc(100vh - 106px);
+                max-height: calc(100vh - 106px);
             }
             .os-msg { max-width: 92%; }
         }
@@ -311,10 +366,9 @@
             </div>
         </div>
         <button id="os-chat-bubble" type="button" aria-label="Open chat with Robo-Nick">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            </svg>
-            <span class="os-badge" aria-hidden="true"></span>
+            <span class="os-wave" aria-hidden="true">👋</span>
+            <span class="os-bub-label">G'day — ask Robo-Nick</span>
+            <span class="os-robot" aria-hidden="true"><span class="os-robot-antenna"></span></span>
         </button>
     `;
     document.body.appendChild(widget);
@@ -329,8 +383,6 @@
 
     function openPanel() {
         panel.classList.add('open');
-        const badge = bubble.querySelector('.os-badge');
-        if (badge) badge.style.display = 'none';
         setTimeout(() => input.focus(), 60);
         track('widget_opened');
     }
