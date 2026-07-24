@@ -7,6 +7,7 @@ routes prospects toward the right front door, and captures clean lead context.
 """
 import os
 import base64
+import collections
 import csv
 import io
 import ipaddress
@@ -418,9 +419,27 @@ def read_json_array_file(path: Path) -> list[dict]:
     return data if isinstance(data, list) else []
 
 
+# Local JSONL fallbacks only grow during Supabase outages, but nothing capped
+# them: on the 512MiB instance the whole-file reads over an ever-growing file
+# contributed to the 2026-07-23 oomKill. Cap by rewriting the newest lines once
+# the file passes the threshold (atomic tmp+rename, matching the leads.json cap).
+JSONL_MAX_BYTES = 5 * 1024 * 1024
+JSONL_KEEP_LINES = 20000
+
+
 def append_jsonl_file(path: Path, payload: dict) -> None:
     with path.open("a") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    try:
+        if path.stat().st_size > JSONL_MAX_BYTES:
+            with path.open() as handle:
+                tail = collections.deque(handle, maxlen=JSONL_KEEP_LINES)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            with tmp.open("w") as handle:
+                handle.writelines(tail)
+            tmp.replace(path)
+    except Exception:
+        pass
 
 
 def supabase_enabled() -> bool:
@@ -436,6 +455,14 @@ def supabase_headers(*, prefer: str | None = None) -> dict[str, str]:
     if prefer:
         headers["Prefer"] = prefer
     return headers
+
+
+# One shared client for all Supabase traffic. The old per-call httpx.request()
+# built and tore down a full Client + SSLContext on EVERY call (6-9 per chat
+# message, 1-3 per widget event) — tens of thousands of alloc/free cycles over a
+# multi-week uptime fragmented the heap and ratcheted RSS into the 512MiB
+# oomKill on 2026-07-23. httpx.Client is thread-safe (daemon threads included).
+_supabase_http = httpx.Client(timeout=SUPABASE_TIMEOUT_SECONDS)
 
 
 def supabase_request(
@@ -459,13 +486,12 @@ def supabase_request(
     last_exc: Exception | None = None
     for attempt in range(attempts):
         try:
-            response = httpx.request(
+            response = _supabase_http.request(
                 method,
                 url,
                 headers=supabase_headers(prefer=prefer),
                 params=params,
                 json=json_body,
-                timeout=SUPABASE_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
             _supabase_last_ok, _supabase_last_error = True, None
@@ -531,7 +557,11 @@ def read_events(limit: int | None = None) -> list[dict]:
             rows = supabase_request(
                 "GET",
                 SUPABASE_TABLES["events"],
-                params={"select": "*", "order": "timestamp.desc", "limit": str(limit)},
+                params={
+                    "select": "timestamp,event_type,session_id,metadata",
+                    "order": "timestamp.desc",
+                    "limit": str(limit),
+                },
             ) or []
             events = []
             for row in sort_rows_by_timestamp(rows):
@@ -548,7 +578,11 @@ def read_events(limit: int | None = None) -> list[dict]:
     events: list[dict] = []
     if not EVENTS_FILE.exists():
         return events
-    for line in EVENTS_FILE.read_text().splitlines()[-limit:]:
+    # Tail-read without loading the whole file (it is uncapped growth during
+    # long Supabase outages that made the full read_text() a memory spike).
+    with EVENTS_FILE.open() as handle:
+        tail = collections.deque(handle, maxlen=limit)
+    for line in tail:
         if not line.strip():
             continue
         try:
@@ -577,7 +611,9 @@ def read_conversation_logs(limit: int | None = None) -> list[dict]:
     logs: list[dict] = []
     if not CONVERSATION_LOG_FILE.exists():
         return logs
-    for line in CONVERSATION_LOG_FILE.read_text().splitlines()[-limit:]:
+    with CONVERSATION_LOG_FILE.open() as handle:
+        tail = collections.deque(handle, maxlen=limit)
+    for line in tail:
         if not line.strip():
             continue
         try:
