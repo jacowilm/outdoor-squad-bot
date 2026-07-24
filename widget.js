@@ -478,7 +478,22 @@
             hideTeaser();
         });
         bubble.addEventListener('animationend', () => bubble.classList.remove('os-nudge'));
-        setTimeout(showTeaser, 10000);
+        // The 10s countdown is cumulative across the whole visit, not per page:
+        // the first page stamps a session start-time, and later pages count
+        // from that stamp — otherwise a visitor hopping pages every few seconds
+        // would reset the timer forever and never see the teaser. When the 10s
+        // are already spent, a short 1.2s floor keeps the teaser from popping
+        // jarringly mid page-transition.
+        let teaserDelay = 10000;
+        try {
+            let t0 = Number(sessionStorage.getItem('os-teaser-t0'));
+            if (!t0) {
+                t0 = Date.now();
+                sessionStorage.setItem('os-teaser-t0', String(t0));
+            }
+            teaserDelay = Math.max(1200, 10000 - (Date.now() - t0));
+        } catch (e) { /* storage blocked — plain per-page delay */ }
+        setTimeout(showTeaser, teaserDelay);
     }
 
     // Delegated click tracking on links inside bot messages. Fires a

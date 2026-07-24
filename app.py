@@ -3985,10 +3985,14 @@ async def serve_demo():
 @app.get("/widget.js")
 async def serve_widget():
     """Serve the embeddable widget JS"""
+    # Without Cache-Control, browsers heuristically cache this for an
+    # unpredictable time, so widget rollouts reached returning visitors days
+    # late. no-cache forces a cheap (~6KB) revalidation per page load.
+    headers = {"Cache-Control": "no-cache, max-age=0"}
     js_path = Path(__file__).parent / "widget.js"
     if js_path.exists():
-        return Response(content=js_path.read_text(), media_type="application/javascript")
-    return Response(content="console.error('widget.js not found')", media_type="application/javascript")
+        return Response(content=js_path.read_text(), media_type="application/javascript", headers=headers)
+    return Response(content="console.error('widget.js not found')", media_type="application/javascript", headers=headers)
 
 
 @app.get("/widget-preview", response_class=HTMLResponse)
