@@ -7,7 +7,21 @@
 (function() {
     const API_URL = document.currentScript.src.replace('/widget.js', '/api/chat');
     const EVENT_URL = document.currentScript.src.replace('/widget.js', '/api/event');
-    const SESSION_ID = 'widget-' + Math.random().toString(36).substr(2, 9);
+    // One session id per VISIT, not per page load: persisted so a conversation
+    // survives page navigation (the bot's server-side memory is keyed by this
+    // id), and so funnel analytics count a multi-page visit as one session.
+    const SESSION_ID = (() => {
+        try {
+            let sid = sessionStorage.getItem('os-session-id');
+            if (!sid) {
+                sid = 'widget-' + Math.random().toString(36).substr(2, 9);
+                sessionStorage.setItem('os-session-id', sid);
+            }
+            return sid;
+        } catch (e) {
+            return 'widget-' + Math.random().toString(36).substr(2, 9);
+        }
+    })();
 
     // Bubble design variant. Stamped on every event so Nicholas can split-test
     // icons month by month and compare open-rate per variant. Bump this string
@@ -420,14 +434,18 @@
     const msgs = document.getElementById('os-messages');
     const quickReplies = document.getElementById('os-quick-replies');
 
-    function openPanel() {
+    function openPanel(restoring) {
         hideTeaser();
         panel.classList.add('open');
-        setTimeout(() => input.focus(), 60);
-        track('widget_opened');
+        try { sessionStorage.setItem('os-panel-open', '1'); } catch (e) {}
+        if (!restoring) {
+            setTimeout(() => input.focus(), 60);
+            track('widget_opened');
+        }
     }
     function closePanel() {
         panel.classList.remove('open');
+        try { sessionStorage.removeItem('os-panel-open'); } catch (e) {}
     }
 
     bubble.onclick = () => {
@@ -441,22 +459,29 @@
     const teaserClose = document.getElementById('os-teaser-close');
     let teaserHideTimer = null;
 
-    function hideTeaser() {
-        if (teaser) teaser.classList.remove('show');
-        if (teaserHideTimer) { clearTimeout(teaserHideTimer); teaserHideTimer = null; }
+    function teaserState() {
+        try { return sessionStorage.getItem('os-teaser'); } catch (e) { return null; }
     }
 
-    function showTeaser() {
+    function hideTeaser() {
+        // Any hide ends the teaser's lifecycle for the whole visit (dismissed,
+        // clicked, expired, or the chat opened) — no page will re-show it.
+        if (teaser) teaser.classList.remove('show');
+        if (teaserHideTimer) { clearTimeout(teaserHideTimer); teaserHideTimer = null; }
+        try { sessionStorage.setItem('os-teaser', 'done'); } catch (e) {}
+    }
+
+    function showTeaser(resumeMs) {
         if (!teaser || panel.classList.contains('open')) return;
-        try {
-            if (sessionStorage.getItem('os-teaser')) return;
-            sessionStorage.setItem('os-teaser', '1');
-        } catch (e) { /* storage blocked — show once per page load instead */ }
+        if (!resumeMs) {
+            if (teaserState()) return;
+            try { sessionStorage.setItem('os-teaser', String(Date.now())); } catch (e) {}
+            track('teaser_shown');
+        }
         teaser.classList.add('show');
         bubble.classList.add('os-nudge');
-        track('teaser_shown');
         // Don't hover forever — quietly retire if ignored.
-        teaserHideTimer = setTimeout(hideTeaser, 45000);
+        teaserHideTimer = setTimeout(hideTeaser, resumeMs || 45000);
     }
 
     if (teaser) {
@@ -478,22 +503,32 @@
             hideTeaser();
         });
         bubble.addEventListener('animationend', () => bubble.classList.remove('os-nudge'));
-        // The 10s countdown is cumulative across the whole visit, not per page:
-        // the first page stamps a session start-time, and later pages count
-        // from that stamp — otherwise a visitor hopping pages every few seconds
-        // would reset the timer forever and never see the teaser. When the 10s
-        // are already spent, a short 1.2s floor keeps the teaser from popping
-        // jarringly mid page-transition.
-        let teaserDelay = 10000;
-        try {
-            let t0 = Number(sessionStorage.getItem('os-teaser-t0'));
-            if (!t0) {
-                t0 = Date.now();
-                sessionStorage.setItem('os-teaser-t0', String(t0));
-            }
-            teaserDelay = Math.max(1200, 10000 - (Date.now() - t0));
-        } catch (e) { /* storage blocked — plain per-page delay */ }
-        setTimeout(showTeaser, teaserDelay);
+        // Teaser lifecycle survives navigation: 'os-teaser' holds the epoch-ms
+        // it was first shown while it is on screen, then 'done' once dismissed,
+        // clicked, expired, or the chat opened. Landing on a new page while it
+        // is mid-display re-shows it for the REMAINDER of its 45s, so hopping
+        // pages doesn't make it vanish. The 10s countdown is likewise
+        // cumulative from the visit's first page (os-teaser-t0), with a 1.2s
+        // floor so it never pops jarringly mid page-transition. ('1' is the
+        // legacy shown-flag from the previous widget build — treat as done.)
+        const st = teaserState();
+        if (st === 'done' || st === '1') {
+            /* lifecycle already finished this visit */
+        } else if (st) {
+            const remaining = 45000 - (Date.now() - Number(st));
+            if (remaining > 1000) showTeaser(remaining); else hideTeaser();
+        } else {
+            let teaserDelay = 10000;
+            try {
+                let t0 = Number(sessionStorage.getItem('os-teaser-t0'));
+                if (!t0) {
+                    t0 = Date.now();
+                    sessionStorage.setItem('os-teaser-t0', String(t0));
+                }
+                teaserDelay = Math.max(1200, 10000 - (Date.now() - t0));
+            } catch (e) { /* storage blocked — plain per-page delay */ }
+            setTimeout(showTeaser, teaserDelay);
+        }
     }
 
     // Delegated click tracking on links inside bot messages. Fires a
@@ -579,7 +614,7 @@
         return html;
     }
 
-    function addMsg(text, type) {
+    function addMsg(text, type, restoring) {
         const el = document.createElement('div');
         el.className = `os-msg ${type}`;
         if (type === 'bot') {
@@ -589,6 +624,15 @@
         }
         msgs.appendChild(el);
         msgs.scrollTop = msgs.scrollHeight;
+        if (!restoring) {
+            // Keep the transcript for this visit so page navigation mid-chat
+            // doesn't wipe the conversation from the panel.
+            try {
+                const log = JSON.parse(sessionStorage.getItem('os-chat-log') || '[]');
+                log.push({ t: text, w: type });
+                sessionStorage.setItem('os-chat-log', JSON.stringify(log.slice(-40)));
+            } catch (e) {}
+        }
     }
 
     async function send(presetText) {
@@ -631,6 +675,20 @@
     }
     sendBtn.onclick = () => send();
     input.onkeypress = (e) => { if (e.key === 'Enter') send(); };
+
+    // Restore the visit's chat across page navigations: the stable session id
+    // already keeps the bot's server-side memory intact, and here the
+    // transcript and the open/closed panel state come back client-side, so
+    // switching pages mid-conversation loses nothing. Restores are silent —
+    // no events are re-tracked.
+    try {
+        const savedLog = JSON.parse(sessionStorage.getItem('os-chat-log') || '[]');
+        if (savedLog.length) {
+            savedLog.forEach((m) => addMsg(m.t, m.w, true));
+            if (quickReplies) quickReplies.style.display = 'none';
+        }
+        if (sessionStorage.getItem('os-panel-open')) openPanel(true);
+    } catch (e) {}
 
     // Impression ping: counts a visit where the chat bubble was visible, so the
     // weekly report can show what % of visitors actually engage. Fired once per
