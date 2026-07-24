@@ -104,6 +104,18 @@ def test_widget_impression_is_allowlisted():
     assert mine and mine[-1]["event_type"] == "widget_impression"  # not widget_event_other
 
 
+def test_teaser_events_are_allowlisted():
+    for event_type in ("teaser_shown", "teaser_clicked", "teaser_dismissed"):
+        resp = client.post(
+            "/api/event",
+            json={"event_type": event_type, "session_id": "widget-teaser1"},
+        )
+        assert resp.status_code == 200
+    lines = [json.loads(l) for l in app.EVENTS_FILE.read_text().splitlines() if l.strip()]
+    mine = [l["event_type"] for l in lines if l.get("session_id") == "widget-teaser1"]
+    assert mine == ["teaser_shown", "teaser_clicked", "teaser_dismissed"]
+
+
 def test_report_stats_window_and_widget_filtering():
     _seed_funnel()
     stats = app.build_report_stats(days=7)

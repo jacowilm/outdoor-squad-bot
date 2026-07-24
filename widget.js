@@ -106,6 +106,41 @@
             100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }
         }
 
+        /* Proactive teaser: small speech bubble above the pill. Shown once per
+           browser session after a short delay; the passive pill alone had a
+           ~0.1% open rate over the first live fortnight. */
+        #os-teaser {
+            display: none;
+            position: absolute; bottom: 68px; right: 0;
+            max-width: 280px;
+            background: #ffffff;
+            color: #0a0a0a;
+            border-radius: 14px;
+            border-bottom-right-radius: 4px;
+            padding: 12px 34px 12px 14px;
+            font-size: .88rem;
+            font-weight: 500;
+            line-height: 1.35;
+            box-shadow: 0 12px 32px rgba(10,10,10,.18), 0 3px 10px rgba(10,10,10,.10);
+            cursor: pointer;
+            transform-origin: bottom right;
+        }
+        #os-teaser.show { display: block; animation: os-pop .25s cubic-bezier(.2,.9,.3,1.1); }
+        #os-teaser-close {
+            position: absolute; top: 6px; right: 8px;
+            border: 0; background: none; cursor: pointer;
+            color: #9a9a9a; font-size: 1rem; line-height: 1;
+            padding: 2px 4px; font-family: inherit;
+        }
+        #os-teaser-close:hover { color: #0a0a0a; }
+        @media (prefers-reduced-motion: no-preference) {
+            #os-chat-bubble.os-nudge { animation: os-nudge 1.5s ease-in-out 3; }
+        }
+        @keyframes os-nudge {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); box-shadow: 0 12px 30px rgba(242,101,34,.55), 0 5px 13px rgba(10,10,10,.2); }
+        }
+
         #os-chat-panel {
             display: none;
             position: absolute; bottom: 76px; right: 0;
@@ -365,6 +400,10 @@
                 </button>
             </div>
         </div>
+        <div id="os-teaser" role="button" tabindex="0" aria-label="Open chat with Robo-Nick">
+            <button id="os-teaser-close" type="button" aria-label="Dismiss">✕</button>
+            <span>Got a question about times, prices or where to start? Ask me — I'm quick 👋</span>
+        </div>
         <button id="os-chat-bubble" type="button" aria-label="Open chat with Robo-Nick">
             <span class="os-wave" aria-hidden="true">👋</span>
             <span class="os-bub-label">G'day — ask Robo-Nick</span>
@@ -382,6 +421,7 @@
     const quickReplies = document.getElementById('os-quick-replies');
 
     function openPanel() {
+        hideTeaser();
         panel.classList.add('open');
         setTimeout(() => input.focus(), 60);
         track('widget_opened');
@@ -394,6 +434,52 @@
         if (panel.classList.contains('open')) closePanel(); else openPanel();
     };
     if (closeBtn) closeBtn.onclick = closePanel;
+
+    // Proactive teaser: after a short delay, nudge visitors who haven't opened
+    // the chat. Once per browser session; click opens the chat, ✕ dismisses.
+    const teaser = document.getElementById('os-teaser');
+    const teaserClose = document.getElementById('os-teaser-close');
+    let teaserHideTimer = null;
+
+    function hideTeaser() {
+        if (teaser) teaser.classList.remove('show');
+        if (teaserHideTimer) { clearTimeout(teaserHideTimer); teaserHideTimer = null; }
+    }
+
+    function showTeaser() {
+        if (!teaser || panel.classList.contains('open')) return;
+        try {
+            if (sessionStorage.getItem('os-teaser')) return;
+            sessionStorage.setItem('os-teaser', '1');
+        } catch (e) { /* storage blocked — show once per page load instead */ }
+        teaser.classList.add('show');
+        bubble.classList.add('os-nudge');
+        track('teaser_shown');
+        // Don't hover forever — quietly retire if ignored.
+        teaserHideTimer = setTimeout(hideTeaser, 45000);
+    }
+
+    if (teaser) {
+        teaser.addEventListener('click', (ev) => {
+            if (ev.target.closest('#os-teaser-close')) return;
+            track('teaser_clicked');
+            openPanel();
+        });
+        teaser.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+                ev.preventDefault();
+                track('teaser_clicked');
+                openPanel();
+            }
+        });
+        teaserClose.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            track('teaser_dismissed');
+            hideTeaser();
+        });
+        bubble.addEventListener('animationend', () => bubble.classList.remove('os-nudge'));
+        setTimeout(showTeaser, 10000);
+    }
 
     // Delegated click tracking on links inside bot messages. Fires a
     // link_clicked event with the URL; backend treats trial-provider URLs as
