@@ -195,3 +195,63 @@ def test_next_report_time_math():
     # Monday 08:00 exactly -> NEXT Monday (strictly future)
     now = datetime(2026, 7, 6, 8, 0, tzinfo=tz)
     assert app._next_report_time(now).day == 13
+
+
+# --- PostgREST row-cap pagination (2026-07-27) ---------------------------------
+# Supabase truncates any response to 1000 rows and reports no error, so the old
+# `limit=5000` read only ever saw the newest 1000 events. Once the events table
+# passed 1000 rows that silently shortened every report window: a days=21 report
+# covered ~10 real days (924 impressions reported vs 1857 actual).
+
+
+class _FakePagedSupabase:
+    """Stands in for supabase_request, enforcing PostgREST's 1000-row ceiling."""
+
+    def __init__(self, total_rows):
+        self.rows = [{"timestamp": f"2026-07-{(i % 28) + 1:02d}T00:00:00", "n": i}
+                     for i in range(total_rows)]
+        self.calls = []
+
+    def __call__(self, method, table, *, params=None, json_body=None, prefer=None):
+        params = params or {}
+        limit = min(int(params.get("limit", 1000)), app.SUPABASE_PAGE_SIZE)
+        offset = int(params.get("offset", 0))
+        self.calls.append((offset, limit))
+        return self.rows[offset:offset + limit]
+
+
+def test_paged_select_reads_past_the_1000_row_cap(monkeypatch):
+    fake = _FakePagedSupabase(2048)
+    monkeypatch.setattr(app, "supabase_request", fake)
+    rows = app.supabase_select_paged("t", {"select": "*"}, 5000)
+    # All 2048 rows, not the first 1000.
+    assert len(rows) == 2048
+    assert [r["n"] for r in rows[:3]] == [0, 1, 2]
+    assert rows[-1]["n"] == 2047
+    # Stopped as soon as a short page came back — no wasted extra request.
+    assert fake.calls == [(0, 1000), (1000, 1000), (2000, 1000)]
+
+
+def test_paged_select_honours_the_cap():
+    fake = _FakePagedSupabase(10000)
+    import app as _app
+    original = _app.supabase_request
+    _app.supabase_request = fake
+    try:
+        rows = _app.supabase_select_paged("t", {"select": "*"}, 1500)
+    finally:
+        _app.supabase_request = original
+    # Never reads more than the caller's ceiling (the OOM-era memory bound).
+    assert len(rows) == 1500
+    assert fake.calls == [(0, 1000), (1000, 500)]
+
+
+def test_paged_select_handles_empty_table():
+    fake = _FakePagedSupabase(0)
+    import app as _app
+    original = _app.supabase_request
+    _app.supabase_request = fake
+    try:
+        assert _app.supabase_select_paged("t", {"select": "*"}, 5000) == []
+    finally:
+        _app.supabase_request = original

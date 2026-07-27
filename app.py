@@ -268,6 +268,9 @@ CONVERSATION_CACHE_TTL_SECONDS = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_
 CONVERSATION_STATE_MAX_MESSAGES = int(os.environ.get("OUTDOOR_SQUAD_CONVERSATION_STATE_MAX_MESSAGES", "60"))
 EVENTS_READ_LIMIT = int(os.environ.get("OUTDOOR_SQUAD_EVENTS_READ_LIMIT", "5000"))
 CONVERSATION_LOGS_READ_LIMIT = int(os.environ.get("OUTDOOR_SQUAD_LOGS_READ_LIMIT", "1000"))
+LEADS_READ_LIMIT = int(os.environ.get("OUTDOOR_SQUAD_LEADS_READ_LIMIT", "5000"))
+# PostgREST returns at most this many rows per response and truncates silently.
+SUPABASE_PAGE_SIZE = 1000
 SUPABASE_TABLES = {
     "conversations": "outdoor_squad_conversations",
     "events": "outdoor_squad_events",
@@ -536,11 +539,11 @@ def sort_rows_by_timestamp(rows: list[dict], key: str = "timestamp") -> list[dic
 def read_leads() -> list[dict]:
     if supabase_enabled():
         try:
-            rows = supabase_request(
-                "GET",
+            rows = supabase_select_paged(
                 SUPABASE_TABLES["leads"],
-                params={"select": "*", "order": "timestamp.asc"},
-            ) or []
+                {"select": "*", "order": "timestamp.asc"},
+                LEADS_READ_LIMIT,
+            )
             for row in rows:
                 if not isinstance(row.get("concerns"), list):
                     row["concerns"] = row.get("concerns") or []
@@ -550,19 +553,42 @@ def read_leads() -> list[dict]:
     return read_json_array_file(LEADS_FILE)
 
 
+def supabase_select_paged(table: str, params: dict, cap: int) -> list[dict]:
+    """GET rows past PostgREST's per-response row cap.
+
+    Supabase caps a single response at 1000 rows and returns them WITHOUT any
+    error, so a bare `limit=5000` silently yielded only the newest 1000. That
+    quietly shortened every report window once the events table passed 1000
+    rows: on 2026-07-27 a `days=21` report covered ~10 real days and reported
+    924 impressions when the true figure was 1857. Page by offset instead, and
+    stop at `cap` so the memory ceiling stays the one the caller asked for.
+    """
+    rows: list[dict] = []
+    offset = 0
+    while len(rows) < cap:
+        page = min(SUPABASE_PAGE_SIZE, cap - len(rows))
+        batch = supabase_request(
+            "GET", table, params={**params, "limit": str(page), "offset": str(offset)}
+        ) or []
+        rows.extend(batch)
+        if len(batch) < page:
+            break
+        offset += page
+    return rows
+
+
 def read_events(limit: int | None = None) -> list[dict]:
     limit = max(1, min(limit or EVENTS_READ_LIMIT, 10000))
     if supabase_enabled():
         try:
-            rows = supabase_request(
-                "GET",
+            rows = supabase_select_paged(
                 SUPABASE_TABLES["events"],
-                params={
+                {
                     "select": "timestamp,event_type,session_id,metadata",
                     "order": "timestamp.desc",
-                    "limit": str(limit),
                 },
-            ) or []
+                limit,
+            )
             events = []
             for row in sort_rows_by_timestamp(rows):
                 metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
@@ -596,15 +622,14 @@ def read_conversation_logs(limit: int | None = None) -> list[dict]:
     limit = max(1, min(limit or CONVERSATION_LOGS_READ_LIMIT, 5000))
     if supabase_enabled():
         try:
-            rows = supabase_request(
-                "GET",
+            rows = supabase_select_paged(
                 SUPABASE_TABLES["conversation_logs"],
-                params={
+                {
                     "select": "timestamp,session_id,role,content",
                     "order": "timestamp.desc",
-                    "limit": str(limit),
                 },
-            ) or []
+                limit,
+            )
             return sort_rows_by_timestamp(rows)
         except Exception:
             pass
