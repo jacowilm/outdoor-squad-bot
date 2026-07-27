@@ -3717,8 +3717,9 @@ def format_report_text(stats: dict) -> str:
     else:
         lines += [
             "",
-            "NOTE: since 24 July we can detect visitors who stay under 10 seconds,",
-            "so the visitor count is more complete than in earlier reports — a",
+            "NOTE: since 24 July anyone who stays on a page 10+ seconds is",
+            "counted, even if they never touch the chat — earlier reports could",
+            "only see visitors who browsed several pages or interacted. A",
             "week-over-week rise around that date reflects better counting, not",
             "more traffic.",
         ]
