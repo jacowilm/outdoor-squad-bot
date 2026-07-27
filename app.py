@@ -3553,6 +3553,44 @@ def _event_ts(event: dict) -> str:
     return ts[:-1] if ts.endswith("Z") else ts
 
 
+# A session with any of these did something only a person does: stayed on a
+# page 10+ seconds (teaser_shown), or interacted with the widget. Crawlers
+# execute widget.js enough to fire ONE widget_impression per crawled page but
+# keep no sessionStorage and interact with nothing.
+HUMAN_SIGNAL_EVENT_TYPES = {
+    "teaser_shown",
+    "teaser_clicked",
+    "teaser_dismissed",
+    "widget_opened",
+    "widget_closed",
+    "conversation_started",
+    "message_sent",
+    "quick_reply_clicked",
+    "link_clicked",
+    "trial_link_clicked",
+    "booking_link_shown",
+    "lead_captured",
+    "human_handoff_suggested",
+}
+
+
+def is_human_session(session_events: list[dict]) -> bool:
+    """Crawler filter for owner-facing stats (2026-07-27).
+
+    98% of raw sessions were search-engine/AI crawlers — exactly one
+    widget_impression, no storage, no interaction — which made the weekly
+    email's "visits" number (~1,900/3wk) wildly overstate real reach (~110).
+    A session counts as human if it viewed 2+ pages in one visit (crawlers
+    can't: no sessionStorage means every page is a fresh session) or fired any
+    human-signal event. Every chat-open and teaser session in the live data
+    survives this filter; only bare single-impression sessions are dropped.
+    """
+    impressions = sum(1 for e in session_events if e.get("event_type") == "widget_impression")
+    if impressions >= 2:
+        return True
+    return any(e.get("event_type") in HUMAN_SIGNAL_EVENT_TYPES for e in session_events)
+
+
 def build_report_stats(days: int = 7) -> dict:
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
     # Only widget-* sessions count: every real visitor comes through the embedded
@@ -3568,7 +3606,12 @@ def build_report_stats(days: int = 7) -> dict:
     def sessions(event_type: str) -> set:
         return {e.get("session_id") for e in events if e.get("event_type") == event_type}
 
-    impressions = sum(1 for e in events if e.get("event_type") == "widget_impression")
+    by_session: dict = {}
+    for e in events:
+        by_session.setdefault(e.get("session_id"), []).append(e)
+    human_sessions = {sid for sid, evts in by_session.items() if is_human_session(evts)}
+    page_loads = sum(1 for e in events if e.get("event_type") == "widget_impression")
+    impressions = len(human_sessions)
     opened = sessions("widget_opened")
     conversations = sessions("conversation_started")
     # Real contact leads (name/phone/email handed over) vs synthetic
@@ -3598,6 +3641,7 @@ def build_report_stats(days: int = 7) -> dict:
         "window_days": days,
         "since": cutoff,
         "widget_impressions": impressions,
+        "raw_page_loads": page_loads,
         "widget_opened_sessions": len(opened),
         "conversations_started": len(conversations),
         "engagement_rate": safe_rate(len(conversations), impressions),
@@ -3631,11 +3675,13 @@ def format_report_text(stats: dict) -> str:
         f"Robo-Nick stats — last {days} days",
         "",
         "THE FUNNEL",
-        f"- Page visits where the chat bubble was seen: {stats['widget_impressions']}",
+        f"- Real visitors who saw the chat bubble: {stats['widget_impressions']}",
+        "  (Search-engine and AI crawlers are filtered out — they used to be",
+        f"   counted. Raw page loads including them: {stats.get('raw_page_loads', 0)}.)",
         f"- Chats opened: {stats['widget_opened_sessions']}",
         f"- Conversations started: {stats['conversations_started']}"
         + (
-            f"  ({_pct(stats['engagement_rate'])} of visits)"
+            f"  ({_pct(stats['engagement_rate'])} of real visitors)"
             if stats["widget_impressions"]
             else ""
         ),
@@ -3668,6 +3714,14 @@ def format_report_text(stats: dict) -> str:
             "NOTE: visit tracking is newly live, so the visits number (and the",
             "% of visits that engage) will be meaningful from the next report.",
         ]
+    else:
+        lines += [
+            "",
+            "NOTE: since 24 July we can detect visitors who stay under 10 seconds,",
+            "so the visitor count is more complete than in earlier reports — a",
+            "week-over-week rise around that date reflects better counting, not",
+            "more traffic.",
+        ]
     lines += [
         "",
         "Full transcripts and live numbers: https://outdoor-squad-bot.onrender.com/admin",
@@ -3678,7 +3732,7 @@ def format_report_text(stats: dict) -> str:
 
 def format_report_sms(stats: dict) -> str:
     return (
-        f"Robo-Nick weekly: {stats['widget_impressions']} visits, "
+        f"Robo-Nick weekly: {stats['widget_impressions']} real visitors, "
         f"{stats['conversations_started']} chats, {stats['contact_leads']} leads "
         f"({_pct(stats['conversation_to_lead_rate'])} of chats), "
         f"{stats['trial_link_clicks']} trial clicks, {stats['handoffs']} handoffs. "

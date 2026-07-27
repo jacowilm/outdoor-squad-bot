@@ -119,7 +119,10 @@ def test_teaser_events_are_allowlisted():
 def test_report_stats_window_and_widget_filtering():
     _seed_funnel()
     stats = app.build_report_stats(days=7)
-    assert stats["widget_impressions"] == 4  # widget-old + QA noise excluded
+    # widget-a4 is a bare single impression with no interaction — the crawler
+    # signature — so it is excluded from visitors; raw_page_loads still sees it.
+    assert stats["widget_impressions"] == 3  # widget-old + QA noise + crawler excluded
+    assert stats["raw_page_loads"] == 4
     assert stats["widget_opened_sessions"] == 3
     assert stats["conversations_started"] == 3  # e2e-leadtest + widget-old excluded
     assert stats["contact_leads"] == 2  # trial-link-clicked + QA lead excluded
@@ -131,7 +134,7 @@ def test_report_stats_window_and_widget_filtering():
 def test_report_rates():
     _seed_funnel()
     stats = app.build_report_stats(days=7)
-    assert stats["engagement_rate"] == 0.75  # 3 conversations / 4 impressions
+    assert stats["engagement_rate"] == 1.0  # 3 conversations / 3 real visitors
     assert stats["conversation_to_lead_rate"] == 0.667  # 2 / 3
     assert stats["handoff_rate"] == 0.333  # 1 / 3
 
@@ -153,7 +156,7 @@ def test_report_sms_digest_is_short_and_complete():
     stats = app.build_report_stats(days=7)
     sms = app.format_report_sms(stats)
     assert len(sms) <= 320
-    for fragment in ["4 visits", "3 chats", "2 leads", "1 trial clicks", "1 handoffs"]:
+    for fragment in ["3 real visitors", "3 chats", "2 leads", "1 trial clicks", "1 handoffs"]:
         assert fragment in sms
 
 
@@ -255,3 +258,57 @@ def test_paged_select_handles_empty_table():
         assert _app.supabase_select_paged("t", {"select": "*"}, 5000) == []
     finally:
         _app.supabase_request = original
+
+
+# --- crawler filter (2026-07-27) ------------------------------------------------
+# 98% of raw sessions were crawlers: exactly one widget_impression, no
+# sessionStorage, no interaction. They inflated the owner email's "visits" to
+# ~1,900/3wk when real reach was ~110. A session is human if it viewed 2+
+# pages in one visit or fired any human-signal event.
+
+
+def test_single_bare_impression_is_not_human():
+    assert not app.is_human_session(
+        [{"event_type": "widget_impression", "session_id": "widget-c1"}]
+    )
+
+
+def test_multi_page_session_is_human():
+    assert app.is_human_session(
+        [
+            {"event_type": "widget_impression", "session_id": "widget-h1"},
+            {"event_type": "widget_impression", "session_id": "widget-h1"},
+        ]
+    )
+
+
+def test_any_interaction_makes_a_single_page_session_human():
+    for signal in ("teaser_shown", "widget_opened", "conversation_started", "message_sent"):
+        assert app.is_human_session(
+            [
+                {"event_type": "widget_impression", "session_id": "widget-h2"},
+                {"event_type": signal, "session_id": "widget-h2"},
+            ]
+        ), signal
+
+
+def test_crawler_sessions_excluded_from_report_but_kept_in_raw_page_loads():
+    rows = [
+        # 5 crawler hits: one impression each, nothing else
+        *[
+            {"timestamp": _ts(1), "event_type": "widget_impression", "session_id": f"widget-bot{i}"}
+            for i in range(5)
+        ],
+        # 1 human: stayed 10s+ on a single page
+        {"timestamp": _ts(1), "event_type": "widget_impression", "session_id": "widget-real"},
+        {"timestamp": _ts(1), "event_type": "teaser_shown", "session_id": "widget-real"},
+    ]
+    _seed_events(rows)
+    stats = app.build_report_stats(days=7)
+    assert stats["widget_impressions"] == 1
+    assert stats["raw_page_loads"] == 6
+    text = app.format_report_text(stats)
+    assert "Real visitors who saw the chat bubble: 1" in text
+    assert "Raw page loads including them: 6" in text
+    # counting-change caveat so a jump around 24 Jul isn't read as growth
+    assert "better counting, not" in text
