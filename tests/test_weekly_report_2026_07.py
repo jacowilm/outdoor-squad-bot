@@ -104,6 +104,34 @@ def test_widget_impression_is_allowlisted():
     assert mine and mine[-1]["event_type"] == "widget_impression"  # not widget_event_other
 
 
+def test_greeting_ab_split_and_report_section():
+    rows = []
+    for i in range(3):
+        sid = f"widget-va{i}"
+        rows.append({"timestamp": _ts(1), "event_type": "widget_impression", "session_id": sid, "teaser_variant": "control"})
+        rows.append({"timestamp": _ts(1), "event_type": "teaser_shown", "session_id": sid, "teaser_variant": "control"})
+    rows.append({"timestamp": _ts(1), "event_type": "widget_opened", "session_id": "widget-va0", "teaser_variant": "control"})
+    for i in range(2):
+        sid = f"widget-vb{i}"
+        rows.append({"timestamp": _ts(1), "event_type": "widget_impression", "session_id": sid, "teaser_variant": "nick"})
+        rows.append({"timestamp": _ts(1), "event_type": "teaser_shown", "session_id": sid, "teaser_variant": "nick"})
+        rows.append({"timestamp": _ts(1), "event_type": "widget_opened", "session_id": sid, "teaser_variant": "nick"})
+    _seed_events(rows)
+    stats = app.build_report_stats(days=7)
+    assert stats["teaser_variants"]["control"] == {"visitors": 3, "opened": 1, "conversations": 0}
+    assert stats["teaser_variants"]["nick"] == {"visitors": 2, "opened": 2, "conversations": 0}
+    text = app.format_report_text(stats)
+    assert "GREETING TEST" in text
+    assert "Original greeting: 3 visitors, 1 chats opened (33%)" in text
+    assert "Nick's greeting line: 2 visitors, 2 chats opened (100%)" in text
+
+
+def test_no_greeting_section_without_both_variants():
+    _seed_funnel()
+    text = app.format_report_text(app.build_report_stats(days=7))
+    assert "GREETING TEST" not in text
+
+
 def test_teaser_events_are_allowlisted():
     for event_type in ("teaser_shown", "teaser_clicked", "teaser_dismissed"):
         resp = client.post(

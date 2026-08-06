@@ -28,9 +28,25 @@
     // whenever the bubble look changes (e.g. 'gday-robot' -> 'kettlebell').
     const BUBBLE_VARIANT = 'gday-robot';
 
+    // Greeting copy A/B (Nicholas's Robo-Coach line vs the original, 2026-08-06):
+    // assigned once per visit, sticky in sessionStorage, stamped on every event
+    // so the weekly report can compare open rates per greeting line.
+    const TEASER_VARIANT = (() => {
+        try {
+            let v = sessionStorage.getItem('os-teaser-variant');
+            if (!v) {
+                v = Math.random() < 0.5 ? 'control' : 'nick';
+                sessionStorage.setItem('os-teaser-variant', v);
+            }
+            return v;
+        } catch (e) {
+            return Math.random() < 0.5 ? 'control' : 'nick';
+        }
+    })();
+
     function track(eventType, metadata) {
         try {
-            const meta = Object.assign({ bubble_variant: BUBBLE_VARIANT }, metadata || {});
+            const meta = Object.assign({ bubble_variant: BUBBLE_VARIANT, teaser_variant: TEASER_VARIANT }, metadata || {});
             fetch(EVENT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -140,6 +156,10 @@
             transform-origin: bottom right;
         }
         #os-teaser.show { display: block; animation: os-pop .25s cubic-bezier(.2,.9,.3,1.1); }
+        #os-teaser .os-teaser-chips {
+            display: flex; flex-wrap: wrap; gap: 6px;
+            margin-top: 10px;
+        }
         #os-teaser-close {
             position: absolute; top: 6px; right: 8px;
             border: 0; background: none; cursor: pointer;
@@ -416,7 +436,13 @@
         </div>
         <div id="os-teaser" role="button" tabindex="0" aria-label="Open chat with Robo-Nick">
             <button id="os-teaser-close" type="button" aria-label="Dismiss">✕</button>
-            <span>Got a question about times, prices or where to start? Ask me — I'm quick 👋</span>
+            <span id="os-teaser-text">Got a question about times, prices or where to start? Ask me — I'm quick 👋</span>
+            <div class="os-teaser-chips">
+                <button class="os-chip" data-message="How does the free trial work?">Free trial</button>
+                <button class="os-chip" data-message="What's the timetable?">Timetable</button>
+                <button class="os-chip" data-message="What are your prices?">Prices</button>
+                <button class="os-chip" data-message="Where do you meet?">Where do you meet?</button>
+            </div>
         </div>
         <button id="os-chat-bubble" type="button" aria-label="Open chat with Robo-Nick">
             <span class="os-wave" aria-hidden="true">👋</span>
@@ -485,10 +511,18 @@
     }
 
     if (teaser) {
+        // Nicholas's Robo-Coach greeting line as the B variant.
+        if (TEASER_VARIANT === 'nick') {
+            const teaserText = document.getElementById('os-teaser-text');
+            if (teaserText) teaserText.textContent = "G'day — Robo-Nick here. The real Nick's mid-session, but I know the timetable, the prices, and where to park.";
+        }
         teaser.addEventListener('click', (ev) => {
             if (ev.target.closest('#os-teaser-close')) return;
-            track('teaser_clicked');
+            const chip = ev.target.closest('.os-chip');
+            track('teaser_clicked', chip ? { chip: chip.textContent } : undefined);
             openPanel();
+            // A chip tap IS the first message — straight into the conversation.
+            if (chip) send(chip.dataset.message || chip.textContent);
         });
         teaser.addEventListener('keydown', (ev) => {
             if (ev.key === 'Enter' || ev.key === ' ') {

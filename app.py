@@ -3625,6 +3625,25 @@ def build_report_stats(days: int = 7) -> dict:
     booking_shown = sessions("booking_link_shown")
     handoffs = sessions("human_handoff_suggested")
 
+    # Greeting A/B: teaser_variant is stamped on every widget event, so a human
+    # session's variant reads off any of its events. Lets the report compare
+    # open rates per greeting line ('control' vs Nicholas's 'nick' line).
+    teaser_variants: dict[str, dict] = {}
+    for sid in human_sessions:
+        variant = next(
+            (str(e.get("teaser_variant")) for e in by_session.get(sid, []) if e.get("teaser_variant")),
+            None,
+        )
+        if not variant:
+            continue
+        bucket = teaser_variants.setdefault(variant, {"visitors": 0, "opened": 0, "conversations": 0})
+        bucket["visitors"] += 1
+        session_event_types = {e.get("event_type") for e in by_session.get(sid, [])}
+        if "widget_opened" in session_event_types:
+            bucket["opened"] += 1
+        if "conversation_started" in session_event_types:
+            bucket["conversations"] += 1
+
     lead_lines = []
     for lead in read_leads():
         ts = _event_ts(lead)
@@ -3652,6 +3671,7 @@ def build_report_stats(days: int = 7) -> dict:
         "handoffs": len(handoffs),
         "handoff_rate": safe_rate(len(handoffs), len(conversations)),
         "lead_lines": lead_lines[:20],
+        "teaser_variants": teaser_variants,
     }
 
 
@@ -3706,6 +3726,17 @@ def format_report_text(stats: dict) -> str:
             else ""
         ),
     ]
+    variants = stats.get("teaser_variants") or {}
+    if len(variants) >= 2:
+        variant_labels = {"control": "Original greeting", "nick": "Nick's greeting line"}
+        lines += ["", "GREETING TEST (running since 6 Aug)"]
+        for key in sorted(variants):
+            bucket = variants[key]
+            rate = safe_rate(bucket["opened"], bucket["visitors"])
+            lines.append(
+                f"- {variant_labels.get(key, key)}: {bucket['visitors']} visitors, "
+                f"{bucket['opened']} chats opened ({_pct(rate)})"
+            )
     if stats["lead_lines"]:
         lines += ["", "LEADS THIS PERIOD"] + [f"- {line}" for line in stats["lead_lines"]]
     if not stats["widget_impressions"]:
