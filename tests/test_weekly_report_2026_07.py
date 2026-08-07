@@ -243,6 +243,52 @@ def test_send_weekly_report_without_config_is_safe():
     assert result["sent_sms"] is False
 
 
+def test_wa_onboard_requires_admin_and_reports_unconfigured():
+    assert client.get("/wa-onboard").status_code == 401
+    resp = client.get("/wa-onboard", headers=AUTH)
+    assert resp.status_code == 200
+    assert "Not configured yet" in resp.text
+
+
+def test_wa_webhook_verify_handshake():
+    app.WA_WEBHOOK_VERIFY_TOKEN = "test-verify-tok"
+    try:
+        ok = client.get(
+            "/wa-webhook",
+            params={"hub.mode": "subscribe", "hub.verify_token": "test-verify-tok", "hub.challenge": "12345"},
+        )
+        assert ok.status_code == 200 and ok.text == "12345"
+        bad = client.get(
+            "/wa-webhook",
+            params={"hub.mode": "subscribe", "hub.verify_token": "wrong", "hub.challenge": "x"},
+        )
+        assert bad.status_code == 403
+    finally:
+        app.WA_WEBHOOK_VERIFY_TOKEN = ""
+
+
+def test_wa_webhook_signature_enforced_and_events_logged():
+    app.WA_APP_SECRET = "test-secret"
+    try:
+        payload = json.dumps({
+            "entry": [{"changes": [{"field": "messages", "value": {
+                "metadata": {"phone_number_id": "123"},
+                "messages": [{"type": "text"}],
+            }}]}]
+        })
+        import hashlib as _h, hmac as _hm
+        sig = "sha256=" + _hm.new(b"test-secret", payload.encode(), _h.sha256).hexdigest()
+        bad = client.post("/wa-webhook", content=payload, headers={"x-hub-signature-256": "sha256=nope"})
+        assert bad.status_code == 403
+        good = client.post("/wa-webhook", content=payload, headers={"x-hub-signature-256": sig})
+        assert good.status_code == 200
+        lines = [json.loads(l) for l in app.EVENTS_FILE.read_text().splitlines() if l.strip()]
+        wa = [l for l in lines if l.get("event_type") == "wa_messages"]
+        assert wa and wa[-1]["message_count"] == 1 and wa[-1]["message_type"] == "text"
+    finally:
+        app.WA_APP_SECRET = ""
+
+
 def test_next_report_time_math():
     from zoneinfo import ZoneInfo
 

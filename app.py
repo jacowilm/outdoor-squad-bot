@@ -9,6 +9,8 @@ import os
 import base64
 import collections
 import csv
+import hashlib
+import hmac
 import io
 import ipaddress
 import json
@@ -239,6 +241,13 @@ REPORT_EMAIL_TO = os.environ.get("OUTDOOR_SQUAD_REPORT_EMAIL_TO", "").strip()
 REPORT_WEEKDAY = int(os.environ.get("OUTDOOR_SQUAD_REPORT_WEEKDAY", "0"))  # 0 = Monday
 REPORT_HOUR = int(os.environ.get("OUTDOOR_SQUAD_REPORT_HOUR", "8"))  # local Sydney hour
 REPORT_TIMEZONE = os.environ.get("OUTDOOR_SQUAD_REPORT_TIMEZONE", "Australia/Sydney")
+# WhatsApp Cloud API (Coexistence) — stage-1 scaffolding. Entirely env-driven
+# and dormant until Nick's Meta app access lands: without these, /wa-onboard
+# shows "not configured" and the webhook rejects everything.
+WA_APP_ID = os.environ.get("OUTDOOR_SQUAD_META_APP_ID", "").strip()
+WA_ES_CONFIG_ID = os.environ.get("OUTDOOR_SQUAD_META_ES_CONFIG_ID", "").strip()
+WA_APP_SECRET = os.environ.get("OUTDOOR_SQUAD_META_APP_SECRET", "").strip()
+WA_WEBHOOK_VERIFY_TOKEN = os.environ.get("OUTDOOR_SQUAD_WA_VERIFY_TOKEN", "").strip()
 SMTP_HOST = os.environ.get("OUTDOOR_SQUAD_SMTP_HOST", "").strip()
 SMTP_PORT = int(os.environ.get("OUTDOOR_SQUAD_SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("OUTDOOR_SQUAD_SMTP_USER", "").strip()
@@ -3906,6 +3915,154 @@ def _weekly_report_loop() -> None:
 def _start_weekly_report_scheduler() -> None:
     if REPORT_EMAIL_TO and LEAD_SUMMARY_RESEND_API_KEY:
         threading.Thread(target=_weekly_report_loop, daemon=True, name="weekly-report").start()
+
+
+# ── WhatsApp Coexistence scaffolding (stage 1) ──────────────────────────────
+# The linking page Jacobo opens at the in-person session, plus the webhook the
+# Cloud API talks to. Built ahead of Nick's app invite so the pre-flight is a
+# 15-minute config job, not a build. The paid bot-brain build comes after.
+
+WA_ONBOARD_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Outdoor Squad — WhatsApp linking</title>
+<style>body{font-family:Arial,sans-serif;max-width:640px;margin:60px auto;color:#1E293B;padding:0 20px}
+h1{font-size:22px}button{background:#25D366;color:#fff;border:0;border-radius:8px;padding:14px 26px;font-size:16px;font-weight:bold;cursor:pointer}
+pre{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:14px;white-space:pre-wrap;word-break:break-all;font-size:12px}
+.log{color:#64748B;font-size:13px;margin-top:14px}</style></head>
+<body>
+<h1>Link the Outdoor Squad WhatsApp number</h1>
+<p>Nick: press the button, log in with <strong>your</strong> Facebook account, choose
+<strong>"connect your existing WhatsApp Business account"</strong>, and follow the QR step on your phone.</p>
+<button onclick="launch()">Connect WhatsApp</button>
+<div class="log" id="log"></div>
+<pre id="out" style="display:none"></pre>
+<script>
+  const APP_ID = "__APP_ID__", CONFIG_ID = "__CONFIG_ID__";
+  function log(m){ document.getElementById('log').textContent += m + "\\n"; }
+  window.fbAsyncInit = function(){ FB.init({ appId: APP_ID, autoLogAppEvents: true, xfbml: true, version: 'v23.0' }); };
+  (function(d,s,id){ var js, fjs=d.getElementsByTagName(s)[0]; if(d.getElementById(id)) return;
+    js=d.createElement(s); js.id=id; js.src="https://connect.facebook.net/en_US/sdk.js";
+    fjs.parentNode.insertBefore(js,fjs); }(document,'script','facebook-jssdk'));
+  // Session logging (required by Meta): capture Embedded Signup progress events.
+  window.addEventListener('message', (event) => {
+    if (!event.origin.endsWith('facebook.com')) return;
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'WA_EMBEDDED_SIGNUP') {
+        log('ES event: ' + (data.event || JSON.stringify(data).slice(0, 120)));
+        if (data.data) {
+          document.getElementById('out').style.display = 'block';
+          document.getElementById('out').textContent = 'SESSION INFO (waba_id / phone_number_id — copy for env):\\n' + JSON.stringify(data.data, null, 1);
+        }
+      }
+    } catch (e) {}
+  });
+  function launch(){
+    FB.login(function(response){
+      if (response.authResponse && response.authResponse.code) {
+        log('Auth code received — exchanging (30s window)...');
+        fetch('/wa-token-exchange', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: response.authResponse.code })
+        }).then(r => r.json()).then(d => {
+          document.getElementById('out').style.display = 'block';
+          document.getElementById('out').textContent += '\\n\\nTOKEN EXCHANGE:\\n' + JSON.stringify(d, null, 1);
+          log(d.ok ? 'Token exchanged — copy the values above into Render env.' : 'Exchange failed — see details above.');
+        }).catch(e => log('Exchange error: ' + e));
+      } else { log('Login cancelled or no code returned.'); }
+    }, {
+      config_id: CONFIG_ID,
+      response_type: 'code',
+      override_default_response_type: true,
+      extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' }
+    });
+  }
+</script></body></html>"""
+
+
+@app.get("/wa-onboard")
+async def wa_onboard(_: str = Depends(require_admin)):
+    """The Embedded Signup launcher for the in-person linking session."""
+    if not (WA_APP_ID and WA_ES_CONFIG_ID):
+        return HTMLResponse(
+            "<h1>Not configured yet</h1><p>Waiting for Nick's Meta app access: set "
+            "OUTDOOR_SQUAD_META_APP_ID and OUTDOOR_SQUAD_META_ES_CONFIG_ID, then reload.</p>",
+            status_code=200,
+        )
+    html = WA_ONBOARD_HTML.replace("__APP_ID__", WA_APP_ID).replace("__CONFIG_ID__", WA_ES_CONFIG_ID)
+    return HTMLResponse(html)
+
+
+@app.post("/wa-token-exchange")
+async def wa_token_exchange(request: Request, _: str = Depends(require_admin)):
+    """Exchange the ES auth code (30s TTL) for the business token. The token is
+    RETURNED for manual copy into Render env — never stored server-side."""
+    if not (WA_APP_ID and WA_APP_SECRET):
+        return JSONResponse({"ok": False, "error": "app id/secret not configured"}, status_code=503)
+    body = await request.json()
+    code = str(body.get("code", ""))[:512]
+    if not code:
+        return JSONResponse({"ok": False, "error": "no code"}, status_code=400)
+    params = urllib.parse.urlencode(
+        {"client_id": WA_APP_ID, "client_secret": WA_APP_SECRET, "code": code}
+    )
+    try:
+        with urllib.request.urlopen(
+            f"https://graph.facebook.com/v23.0/oauth/access_token?{params}", timeout=20
+        ) as resp:
+            data = json.loads(resp.read().decode())
+        log_event("wa_token_exchanged", session_id="system")
+        return JSONResponse({"ok": True, "env_to_set": {"OUTDOOR_SQUAD_WA_ACCESS_TOKEN": data.get("access_token", "")}})
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:300]
+        log_event("wa_token_exchange_error", session_id="system", error=detail[:200])
+        return JSONResponse({"ok": False, "error": detail}, status_code=502)
+
+
+@app.get("/wa-webhook")
+async def wa_webhook_verify(request: Request):
+    """Meta's webhook verification handshake."""
+    q = request.query_params
+    if (
+        WA_WEBHOOK_VERIFY_TOKEN
+        and q.get("hub.mode") == "subscribe"
+        and secrets.compare_digest(q.get("hub.verify_token", ""), WA_WEBHOOK_VERIFY_TOKEN)
+    ):
+        return Response(content=q.get("hub.challenge", ""), media_type="text/plain")
+    return Response(status_code=403)
+
+
+@app.post("/wa-webhook")
+async def wa_webhook_receive(request: Request):
+    """Cloud API events. Signature-checked; each change logged as a compact
+    wa_* event (full history ingest is stage-1 build work, not scaffold work)."""
+    raw = await request.body()
+    if WA_APP_SECRET:
+        sig = request.headers.get("x-hub-signature-256", "")
+        expected = "sha256=" + hmac.new(WA_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+        if not (sig and secrets.compare_digest(sig, expected)):
+            return Response(status_code=403)
+    try:
+        payload = json.loads(raw.decode())
+    except Exception:
+        return Response(status_code=400)
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            field = str(change.get("field", "unknown"))[:40]
+            value = change.get("value") or {}
+            meta = {"phone_number_id": str((value.get("metadata") or {}).get("phone_number_id", ""))[:40]}
+            if field == "messages":
+                msgs = value.get("messages") or []
+                echoes = value.get("message_echoes") or []
+                meta["message_count"] = len(msgs)
+                if msgs:
+                    meta["message_type"] = str(msgs[0].get("type", ""))[:20]
+                if echoes:
+                    meta["echo_count"] = len(echoes)
+            elif field == "history":
+                meta["chunk_threads"] = len((value.get("history") or []))
+            log_event(f"wa_{field}", session_id="wa-system", **meta)
+    return JSONResponse({"status": "received"})
 
 
 @app.get("/api/storage-health")
