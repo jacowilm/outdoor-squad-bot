@@ -132,6 +132,38 @@ def test_no_greeting_section_without_both_variants():
     assert "GREETING TEST" not in text
 
 
+def test_shipped_lines_windowed_and_report_section():
+    cl = _tmpdir / "changelog.json"
+    cl.write_text(json.dumps([
+        {"date": _ts(1)[:10], "line": "New thing went live"},
+        {"date": "2020-01-01", "line": "Ancient thing"},
+    ]))
+    old = app.CHANGELOG_FILE
+    app.CHANGELOG_FILE = cl
+    try:
+        _seed_funnel()
+        stats = app.build_report_stats(days=7)
+        assert stats["shipped_lines"] == [f"{_ts(1)[:10]} — New thing went live"]
+        text = app.format_report_text(stats)
+        assert "WENT LIVE THIS WEEK" in text
+        assert "New thing went live" in text
+        assert "Ancient thing" not in text
+    finally:
+        app.CHANGELOG_FILE = old
+
+
+def test_missing_changelog_is_safe():
+    old = app.CHANGELOG_FILE
+    app.CHANGELOG_FILE = _tmpdir / "nope.json"
+    try:
+        _seed_funnel()
+        stats = app.build_report_stats(days=7)
+        assert stats["shipped_lines"] == []
+        assert "WENT LIVE THIS WEEK" not in app.format_report_text(stats)
+    finally:
+        app.CHANGELOG_FILE = old
+
+
 def test_teaser_events_are_allowlisted():
     for event_type in ("teaser_shown", "teaser_clicked", "teaser_dismissed"):
         resp = client.post(

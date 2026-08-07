@@ -28,6 +28,11 @@
     // whenever the bubble look changes (e.g. 'gday-robot' -> 'kettlebell').
     const BUBBLE_VARIANT = 'gday-robot';
 
+    // Stamped on every event so we can MEASURE how many visitors still run an
+    // old cached copy after a rollout (Nicholas's 7-Aug question). Bump on
+    // every user-visible widget change.
+    const WIDGET_VERSION = '2026-08-07';
+
     // Greeting copy A/B (Nicholas's Robo-Coach line vs the original, 2026-08-06):
     // assigned once per visit, sticky in sessionStorage, stamped on every event
     // so the weekly report can compare open rates per greeting line.
@@ -46,7 +51,7 @@
 
     function track(eventType, metadata) {
         try {
-            const meta = Object.assign({ bubble_variant: BUBBLE_VARIANT, teaser_variant: TEASER_VARIANT }, metadata || {});
+            const meta = Object.assign({ bubble_variant: BUBBLE_VARIANT, teaser_variant: TEASER_VARIANT, widget_version: WIDGET_VERSION }, metadata || {});
             fetch(EVENT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

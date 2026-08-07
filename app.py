@@ -3591,6 +3591,24 @@ def is_human_session(session_events: list[dict]) -> bool:
     return any(e.get("event_type") in HUMAN_SIGNAL_EVENT_TYPES for e in session_events)
 
 
+# Ship log ("anything that ships gets a line in the log" — Nicholas, 7 Aug).
+# Every user-visible change appends an entry here; the weekly report surfaces
+# the window's entries so go-lives are never silent news again.
+CHANGELOG_FILE = Path(__file__).parent / "changelog.json"
+
+
+def read_changelog_entries(since_iso: str) -> list[str]:
+    try:
+        entries = json.loads(CHANGELOG_FILE.read_text())
+    except Exception:
+        return []
+    return [
+        f"{entry.get('date')} — {entry.get('line')}"
+        for entry in entries
+        if str(entry.get("date", "")) >= since_iso[:10]
+    ]
+
+
 def build_report_stats(days: int = 7) -> dict:
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
     # Only widget-* sessions count: every real visitor comes through the embedded
@@ -3672,6 +3690,7 @@ def build_report_stats(days: int = 7) -> dict:
         "handoff_rate": safe_rate(len(handoffs), len(conversations)),
         "lead_lines": lead_lines[:20],
         "teaser_variants": teaser_variants,
+        "shipped_lines": read_changelog_entries(cutoff),
     }
 
 
@@ -3726,6 +3745,9 @@ def format_report_text(stats: dict) -> str:
             else ""
         ),
     ]
+    shipped = stats.get("shipped_lines") or []
+    if shipped:
+        lines += ["", "WENT LIVE THIS WEEK"] + [f"- {line}" for line in shipped]
     variants = stats.get("teaser_variants") or {}
     if len(variants) >= 2:
         variant_labels = {"control": "Original greeting", "nick": "Nick's greeting line"}
@@ -3737,6 +3759,8 @@ def format_report_text(stats: dict) -> str:
                 f"- {variant_labels.get(key, key)}: {bucket['visitors']} visitors, "
                 f"{bucket['opened']} chats opened ({_pct(rate)})"
             )
+        lines.append("  (Long game: at current traffic this needs months, not weeks —")
+        lines.append("   it runs in the background; nobody decides off early numbers.)")
     if stats["lead_lines"]:
         lines += ["", "LEADS THIS PERIOD"] + [f"- {line}" for line in stats["lead_lines"]]
     if not stats["widget_impressions"]:
