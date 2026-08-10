@@ -4194,6 +4194,111 @@ async def admin_dashboard(_: str = Depends(require_admin)):
     return HTMLResponse(ADMIN_HTML.replace("__ADMIN_DATA__", html_safe_json(admin_data)))
 
 
+MOMENCE_V2_BASE = os.environ.get("MOMENCE_V2_BASE", "https://api.momence.com")
+MOMENCE_V2_CLIENT_ID = os.environ.get("MOMENCE_V2_CLIENT_ID", "").strip()
+MOMENCE_V2_CLIENT_SECRET = os.environ.get("MOMENCE_V2_CLIENT_SECRET", "").strip()
+MOMENCE_V2_REDIRECT_URI = os.environ.get(
+    "MOMENCE_V2_REDIRECT_URI",
+    "https://outdoor-squad-bot.onrender.com/api/momence/oauth/callback",
+).strip()
+
+
+@app.get("/api/momence/oauth/callback", response_class=HTMLResponse)
+async def momence_oauth_callback(request: Request, _: str = Depends(require_admin)):
+    """Capture the Momence OAuth2 code and swap it for tokens.
+
+    Admin-protected: without the gate, anyone who guessed this URL could feed us
+    their own authorisation code and repoint the integration at another Momence
+    account. The refresh token is the long-lived secret here, so this page is the
+    one place it is ever displayed — copy it into the environment and it is never
+    shown again.
+
+    Two Momence quirks this endpoint exists to absorb (both cost us time on
+    2026-08-10): the token endpoint REJECTS application/json and demands
+    x-www-form-urlencoded, and there is no client_credentials grant, so the only
+    route to a long-lived credential is this one-time interactive consent.
+    """
+    code = request.query_params.get("code", "")
+    err = request.query_params.get("error")
+
+    def page(title: str, body: str) -> HTMLResponse:
+        return HTMLResponse(
+            "<!doctype html><meta charset='utf-8'>"
+            "<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "max-width:760px;margin:48px auto;padding:0 20px;line-height:1.55;color:#0a0a0a}"
+            "code{background:#f4f4f2;padding:2px 6px;border-radius:4px;font-size:.9em}"
+            "pre{background:#f4f4f2;padding:14px;border-radius:8px;overflow-x:auto;"
+            "white-space:pre-wrap;word-break:break-all}"
+            "h1{font-size:1.3rem}</style>"
+            f"<h1>{title}</h1>{body}"
+        )
+
+    if err:
+        return page("Momence consent failed", f"<p>Momence returned: <code>{err}</code></p>")
+    if not code:
+        if not MOMENCE_V2_CLIENT_ID:
+            return page("Not configured", "<p><code>MOMENCE_V2_CLIENT_ID</code> is not set.</p>")
+        authorize = (
+            f"{MOMENCE_V2_BASE}/api/v2/auth/authorize?"
+            + urllib.parse.urlencode(
+                {
+                    "client_id": MOMENCE_V2_CLIENT_ID,
+                    "redirect_uri": MOMENCE_V2_REDIRECT_URI,
+                    "response_type": "code",
+                    "scope": "public-api-v2",
+                    "state": "osq",
+                }
+            )
+        )
+        return page(
+            "Momence — start consent",
+            f'<p>No code supplied. <a href="{authorize}">Start the Momence consent flow</a>, '
+            "then you will be returned here and the tokens will be exchanged automatically.</p>",
+        )
+
+    if not (MOMENCE_V2_CLIENT_ID and MOMENCE_V2_CLIENT_SECRET):
+        return page("Not configured", "<p>Momence client id/secret are not set in the environment.</p>")
+
+    # Form-encoded ONLY. JSON returns 400 "content must be application/x-www-form-urlencoded".
+    payload = urllib.parse.urlencode(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": MOMENCE_V2_CLIENT_ID,
+            "client_secret": MOMENCE_V2_CLIENT_SECRET,
+            "redirect_uri": MOMENCE_V2_REDIRECT_URI,
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{MOMENCE_V2_BASE}/api/v2/auth/token",
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")[:300]
+        log_event("momence_oauth_error", session_id="system", error=f"{exc.code}: {detail}")
+        return page("Token exchange failed", f"<p>HTTP {exc.code}</p><pre>{detail}</pre>")
+    except Exception as exc:
+        log_event("momence_oauth_error", session_id="system", error=str(exc)[:200])
+        return page("Token exchange failed", f"<pre>{str(exc)[:300]}</pre>")
+
+    refresh = data.get("refreshToken") or data.get("refresh_token") or ""
+    expires = data.get("refreshTokenExpiresAt", "unknown")
+    log_event("momence_oauth_success", session_id="system", refresh_expires_at=str(expires))
+    return page(
+        "Momence connected",
+        "<p>Tokens obtained. Copy the refresh token into the environment as "
+        "<code>MOMENCE_V2_REFRESH_TOKEN</code> — this is the only time it is shown.</p>"
+        f"<pre>{refresh}</pre>"
+        f"<p>Refresh token expires: <strong>{expires}</strong>. "
+        "Re-run this consent before then or the integration stops silently.</p>",
+    )
+
+
 @app.get("/api/health")
 async def health():
     """Deployment health check without exposing secret values."""
