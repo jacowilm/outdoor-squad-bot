@@ -3829,6 +3829,12 @@ HUMAN_SIGNAL_EVENT_TYPES = {
 }
 
 
+REAL_VISITOR_DEFINITION = (
+    "a widget session with either 2+ page impressions or at least one human-signal event; "
+    "bare single-impression sessions and non-widget QA traffic are excluded"
+)
+
+
 def is_human_session(session_events: list[dict]) -> bool:
     """Crawler filter for owner-facing stats (2026-07-27).
 
@@ -3864,17 +3870,32 @@ def read_changelog_entries(since_iso: str) -> list[str]:
     ]
 
 
+def _report_events_between(start: datetime, end: datetime) -> list[dict]:
+    """Return report-eligible events in [start, end), using one locked source filter."""
+    return [
+        event
+        for event in read_events()
+        if start.isoformat() <= _event_ts(event) < end.isoformat()
+        and str(event.get("session_id") or "").startswith("widget-")
+    ]
+
+
+def _human_session_ids(events: list[dict]) -> set:
+    by_session: dict = {}
+    for event in events:
+        by_session.setdefault(event.get("session_id"), []).append(event)
+    return {sid for sid, session_events in by_session.items() if is_human_session(session_events)}
+
+
 def build_report_stats(days: int = 7) -> dict:
-    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    now = datetime.now()
+    cutoff_dt = now - timedelta(days=days)
+    cutoff = cutoff_dt.isoformat()
     # Only widget-* sessions count: every real visitor comes through the embedded
     # widget (widget.js mints 'widget-…' ids), while internal QA/maintenance
     # tests hit /api/chat with custom session ids — excluding them keeps Nick's
     # numbers honest.
-    events = [
-        e
-        for e in read_events()
-        if _event_ts(e) >= cutoff and str(e.get("session_id") or "").startswith("widget-")
-    ]
+    events = _report_events_between(cutoff_dt, now)
 
     def sessions(event_type: str) -> set:
         return {e.get("session_id") for e in events if e.get("event_type") == event_type}
@@ -3882,9 +3903,29 @@ def build_report_stats(days: int = 7) -> dict:
     by_session: dict = {}
     for e in events:
         by_session.setdefault(e.get("session_id"), []).append(e)
-    human_sessions = {sid for sid, evts in by_session.items() if is_human_session(evts)}
+    human_sessions = _human_session_ids(events)
     page_loads = sum(1 for e in events if e.get("event_type") == "widget_impression")
     impressions = len(human_sessions)
+
+    widget_versions: dict[str, int] = {}
+    for sid in human_sessions:
+        version = next(
+            (str(e.get("widget_version")) for e in by_session.get(sid, []) if e.get("widget_version")),
+            "unstamped / cached older copy",
+        )
+        widget_versions[version] = widget_versions.get(version, 0) + 1
+
+    traffic_baseline_4w = []
+    for week_index in range(4):
+        week_end = now - timedelta(days=7 * week_index)
+        week_start = week_end - timedelta(days=7)
+        week_events = _report_events_between(week_start, week_end)
+        traffic_baseline_4w.append({
+            "week_start": week_start.date().isoformat(),
+            "week_end": week_end.date().isoformat(),
+            "real_visitors": len(_human_session_ids(week_events)),
+            "definition": REAL_VISITOR_DEFINITION,
+        })
     opened = sessions("widget_opened")
     conversations = sessions("conversation_started")
     # Real contact leads (name/phone/email handed over) vs synthetic
@@ -3962,6 +4003,9 @@ def build_report_stats(days: int = 7) -> dict:
         "handoff_rate": safe_rate(len(human_requests), len(conversations)),
         "lead_lines": lead_lines[:20],
         "teaser_variants": teaser_variants,
+        "widget_versions": widget_versions,
+        "traffic_baseline_4w": traffic_baseline_4w,
+        "visitor_definition": REAL_VISITOR_DEFINITION,
         "shipped_lines": read_changelog_entries(cutoff),
     }
 
@@ -4019,6 +4063,24 @@ def format_report_text(stats: dict) -> str:
         ),
         f"- Owner alerts successfully sent: {stats.get('handoff_alerts_sent', stats.get('handoffs', 0))}",
     ]
+    versions = stats.get("widget_versions") or {}
+    if versions:
+        lines += ["", "WIDGET VERSION ROLLOUT"]
+        for version, visitors in sorted(versions.items()):
+            lines.append(f"- {version}: {visitors} visitor(s)")
+
+    baseline = stats.get("traffic_baseline_4w") or []
+    if baseline:
+        lines += [
+            "",
+            "FOUR-WEEK TRAFFIC BASELINE",
+            f"- Definition locked: {stats.get('visitor_definition', REAL_VISITOR_DEFINITION)}",
+        ]
+        for week in baseline:
+            lines.append(
+                f"- {week['week_start']} to {week['week_end']}: {week['real_visitors']} real visitor(s)"
+            )
+
     shipped = stats.get("shipped_lines") or []
     if shipped:
         lines += ["", "WENT LIVE THIS WEEK"] + [f"- {line}" for line in shipped]

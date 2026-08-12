@@ -8,5 +8,7 @@
   {"date": "2026-08-06", "line": "Quick-reply chips on the greeting (Free trial / Timetable / Prices / Where do you meet?) — one tap starts the chat"},
   {"date": "2026-08-06", "line": "Greeting copy A/B test: Robo-Coach's line vs the original, measured weekly"},
   {"date": "2026-08-07", "line": "Ship log: every change that goes live now gets a line in this report"},
-  {"date": "2026-08-07", "line": "Widget version stamping, so update rollout to visitors is measurable"}
+  {"date": "2026-08-07", "line": "Widget version stamping, so update rollout to visitors is measurable"},
+  {"date": "2026-08-12", "line": "Weekly report now shows widget-version rollout and a four-week traffic baseline under one locked real-visitor definition"},
+  {"date": "2026-08-12", "line": "Human follow-up reporting now separates bot suggestions, explicit human requests and successfully sent owner alerts"}
 ]

@@ -128,6 +128,50 @@ def test_greeting_ab_split_and_report_section():
     assert "Nick's greeting line: 2 visitors, 2 chats opened (100%)" in text
 
 
+def test_report_includes_widget_version_rollout_for_all_human_visitors():
+    rows = [
+        {"timestamp": _ts(1), "event_type": "widget_impression", "session_id": "widget-version-current", "widget_version": "2026-08-12"},
+        {"timestamp": _ts(1), "event_type": "conversation_started", "session_id": "widget-version-current", "widget_version": "2026-08-12"},
+        {"timestamp": _ts(1), "event_type": "widget_impression", "session_id": "widget-version-old", "widget_version": "2026-08-07"},
+        {"timestamp": _ts(1), "event_type": "widget_opened", "session_id": "widget-version-old", "widget_version": "2026-08-07"},
+        {"timestamp": _ts(1), "event_type": "widget_impression", "session_id": "widget-version-unstamped"},
+        {"timestamp": _ts(1), "event_type": "widget_opened", "session_id": "widget-version-unstamped"},
+    ]
+    _seed_events(rows)
+
+    stats = app.build_report_stats(days=7)
+    assert stats["widget_versions"] == {
+        "2026-08-12": 1,
+        "2026-08-07": 1,
+        "unstamped / cached older copy": 1,
+    }
+    text = app.format_report_text(stats)
+    assert "WIDGET VERSION ROLLOUT" in text
+    assert "2026-08-12: 1 visitor(s)" in text
+    assert "unstamped / cached older copy: 1 visitor(s)" in text
+
+
+def test_report_restates_four_non_overlapping_weeks_with_one_locked_visitor_definition():
+    rows = []
+    for index, days_ago in enumerate((1, 8, 15, 22)):
+        sid = f"widget-baseline-{index}"
+        rows.extend([
+            {"timestamp": _ts(days_ago), "event_type": "widget_impression", "session_id": sid},
+            {"timestamp": _ts(days_ago), "event_type": "conversation_started", "session_id": sid},
+        ])
+    rows.append({"timestamp": _ts(2), "event_type": "widget_impression", "session_id": "widget-baseline-crawler"})
+    _seed_events(rows)
+
+    stats = app.build_report_stats(days=7)
+    baseline = stats["traffic_baseline_4w"]
+    assert len(baseline) == 4
+    assert [week["real_visitors"] for week in baseline] == [1, 1, 1, 1]
+    assert all(week["definition"] == app.REAL_VISITOR_DEFINITION for week in baseline)
+    text = app.format_report_text(stats)
+    assert "FOUR-WEEK TRAFFIC BASELINE" in text
+    assert "Definition locked:" in text
+
+
 def test_no_greeting_section_without_both_variants():
     _seed_funnel()
     text = app.format_report_text(app.build_report_stats(days=7))
