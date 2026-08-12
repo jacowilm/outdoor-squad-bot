@@ -21,6 +21,16 @@ services:
         value: gemini-2.5-flash
       - key: OUTDOOR_SQUAD_ADMIN_USERNAME
         value: outdoorsquad
+      - key: OUTDOOR_SQUAD_WIDGET_SIGNING_KEY
+        sync: false
+      - key: OUTDOOR_SQUAD_WIDGET_ALLOWED_ORIGINS
+        value: https://www.outdoorsquad.com.au,https://outdoorsquad.com.au
+      - key: OUTDOOR_SQUAD_INTERNAL_QA_TOKEN
+        sync: false
+      - key: OUTDOOR_SQUAD_TURNSTILE_SITE_KEY
+        sync: false
+      - key: OUTDOOR_SQUAD_TURNSTILE_SECRET_KEY
+        sync: false
       - key: OUTDOOR_SQUAD_ADMIN_PASSWORD
         sync: false
       - key: OUTDOOR_SQUAD_TRIAL_LINK

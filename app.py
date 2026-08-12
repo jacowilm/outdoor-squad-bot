@@ -9,6 +9,7 @@ import os
 import base64
 import collections
 import csv
+import fcntl
 import hashlib
 import hmac
 import io
@@ -258,7 +259,8 @@ if DEPLOYMENT_MODE not in {"review", "handoff"}:
     DEPLOYMENT_MODE = "review"
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_KEY = SUPABASE_SERVICE_ROLE_KEY or os.environ.get("SUPABASE_KEY")
 SUPABASE_TIMEOUT_SECONDS = 12.0
 # Health/visibility: track whether the last Supabase op actually worked, so the
 # dashboard/health can show storage is DEGRADED instead of silently falling back
@@ -285,6 +287,7 @@ SUPABASE_TABLES = {
     "events": "outdoor_squad_events",
     "conversation_logs": "outdoor_squad_conversation_logs",
     "leads": "outdoor_squad_leads",
+    "human_request_claims": "outdoor_squad_human_request_claims",
 }
 
 # Load leads file
@@ -302,6 +305,22 @@ if not CONVERSATION_LOG_FILE.exists():
 
 ADMIN_USERNAME = os.environ.get("OUTDOOR_SQUAD_ADMIN_USERNAME", "outdoorsquad")
 ADMIN_PASSWORD = os.environ.get("OUTDOOR_SQUAD_ADMIN_PASSWORD")
+WIDGET_SIGNING_KEY = os.environ.get("OUTDOOR_SQUAD_WIDGET_SIGNING_KEY", "")
+WIDGET_SESSION_TTL_SECONDS = max(
+    300,
+    min(int(os.environ.get("OUTDOOR_SQUAD_WIDGET_SESSION_TTL_SECONDS", "86400")), 604800),
+)
+WIDGET_ALLOWED_ORIGINS = {
+    origin.strip().rstrip("/").lower()
+    for origin in os.environ.get(
+        "OUTDOOR_SQUAD_WIDGET_ALLOWED_ORIGINS",
+        "https://www.outdoorsquad.com.au,https://outdoorsquad.com.au",
+    ).split(",")
+    if origin.strip()
+}
+INTERNAL_QA_TOKEN = os.environ.get("OUTDOOR_SQUAD_INTERNAL_QA_TOKEN", "")
+TURNSTILE_SITE_KEY = os.environ.get("OUTDOOR_SQUAD_TURNSTILE_SITE_KEY", "")
+TURNSTILE_SECRET_KEY = os.environ.get("OUTDOOR_SQUAD_TURNSTILE_SECRET_KEY", "")
 
 # ── Abuse / input hardening ──────────────────────────────────────────────
 # Public endpoints (/api/chat etc.) call a paid LLM with no auth, so cap input
@@ -371,6 +390,34 @@ def sanitize_session_id(raw) -> str:
     return sid or "default"
 
 
+def mint_widget_session() -> tuple[str, str]:
+    """Mint a server-authenticated public widget session."""
+    if not WIDGET_SIGNING_KEY:
+        raise RuntimeError("widget signing is not configured")
+    session_id = "widget-" + secrets.token_urlsafe(18)
+    issued_at = str(int(time.time()))
+    payload = f"{session_id}.{issued_at}"
+    signature = hmac.new(WIDGET_SIGNING_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return session_id, f"{issued_at}.{signature}"
+
+
+def verify_widget_session_token(session_id: str, token: str) -> bool:
+    """Validate that a widget session id was minted by this server and is fresh."""
+    if not WIDGET_SIGNING_KEY:
+        return False
+    try:
+        issued_at_text, supplied_signature = str(token or "").split(".", 1)
+        issued_at = int(issued_at_text)
+    except (TypeError, ValueError):
+        return False
+    age = int(time.time()) - issued_at
+    if age < -60 or age > WIDGET_SESSION_TTL_SECONDS:
+        return False
+    payload = f"{session_id}.{issued_at_text}"
+    expected = hmac.new(WIDGET_SIGNING_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return secrets.compare_digest(supplied_signature, expected)
+
+
 def sanitize_event_metadata(meta) -> dict:
     """Bound/clean user-supplied /api/event metadata: drop reserved keys (which
     would collide with log_event's positional args and crash it), cap counts/sizes."""
@@ -437,6 +484,9 @@ def read_json_array_file(path: Path) -> list[dict]:
 # the file passes the threshold (atomic tmp+rename, matching the leads.json cap).
 JSONL_MAX_BYTES = 5 * 1024 * 1024
 JSONL_KEEP_LINES = 20000
+HUMAN_REQUEST_CLAIMS_FILE = Path(__file__).parent / "human_request_claims.jsonl"
+HUMAN_REQUEST_CLAIMS_LOCK_FILE = Path(__file__).parent / "human_request_claims.lock"
+human_request_lock = threading.Lock()
 
 
 def append_jsonl_file(path: Path, payload: dict) -> None:
@@ -3182,6 +3232,183 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
     return credentials.username
 
 
+EXPLICIT_HUMAN_REQUEST_PATTERNS = [
+    re.compile(r"\b(?:speak|talk|chat)\s+(?:to|with)\s+(?:a\s+|an\s+)?(?:real\s+|actual\s+)?(?:person|human|someone|nick|lyn)\b", re.I),
+    re.compile(r"\b(?:can|could|would|will)\s+(?:i|you)\s+(?:please\s+)?(?:speak|talk|chat|connect me)\s+(?:to|with)\s+(?:nick|lyn|someone|a person|a human)\b", re.I),
+    re.compile(r"\b(?:call|ring|phone)\s+me\s+(?:back|please)\b", re.I),
+    re.compile(r"\b(?:can|could|would|will)\s+(?:nick|lyn|someone)\s+(?:please\s+)?(?:call|ring|phone|contact)\s+me\b", re.I),
+    re.compile(r"\b(?:please\s+)?connect\s+me\s+(?:to|with)\s+(?:nick|lyn|someone|a person|a human)\b", re.I),
+    re.compile(r"\b(?:want|need|would like)\s+(?:nick|lyn|someone)\s+to\s+(?:call|ring|phone|contact)\s+me\b", re.I),
+    re.compile(r"\b(?:rather|prefer|want|need)\s+(?:to\s+)?(?:speak|talk|chat)\s+(?:to|with)\s+(?:a\s+|an\s+)?(?:real\s+|actual\s+)?(?:person|human|someone|nick|lyn)\b", re.I),
+]
+
+
+def is_explicit_human_request(message: str) -> bool:
+    """True only when the visitor asks to contact a person."""
+    text = normalise_chat_text(message)
+    identity_questions = [
+        "are you a real person", "are you real", "are you human", "are you a bot",
+        "is this a bot", "am i talking to a person", "am i talking to a human",
+    ]
+    if any(phrase in text for phrase in identity_questions) and not any(
+        pattern.search(text) for pattern in EXPLICIT_HUMAN_REQUEST_PATTERNS
+    ):
+        return False
+    return any(pattern.search(text) for pattern in EXPLICIT_HUMAN_REQUEST_PATTERNS)
+
+
+def human_request_already_logged(session_id: str) -> bool:
+    if supabase_enabled():
+        try:
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["human_request_claims"],
+                params={"select": "session_id", "session_id": f"eq.{session_id}", "limit": "1"},
+            ) or []
+            if rows:
+                return True
+        except Exception:
+            pass
+    if not HUMAN_REQUEST_CLAIMS_FILE.exists():
+        return False
+    try:
+        with HUMAN_REQUEST_CLAIMS_FILE.open() as handle:
+            return any(json.loads(line).get("session_id") == session_id for line in handle if line.strip())
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
+def claim_human_request(session_id: str) -> bool:
+    """Atomically claim this session's one allowed human-request alert."""
+    with human_request_lock:
+        if supabase_enabled():
+            if not SUPABASE_SERVICE_ROLE_KEY:
+                return False
+            try:
+                supabase_request(
+                    "POST",
+                    SUPABASE_TABLES["human_request_claims"],
+                    json_body={"session_id": session_id, "claimed_at": now_iso()},
+                    prefer="return=minimal",
+                )
+                return True
+            except Exception:
+                # A uniqueness conflict means another instance won the claim.
+                try:
+                    rows = supabase_request(
+                        "GET",
+                        SUPABASE_TABLES["human_request_claims"],
+                        params={"select": "session_id", "session_id": f"eq.{session_id}", "limit": "1"},
+                    ) or []
+                    if rows:
+                        return False
+                except Exception:
+                    pass
+                # Configured shared storage is unavailable: fail closed rather
+                # than letting separate instances each send an owner alert.
+                return False
+
+        # Local-only deployments coordinate processes with an advisory file lock.
+        # Claims are append-only and never compacted, so old sessions stay claimed.
+        HUMAN_REQUEST_CLAIMS_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with HUMAN_REQUEST_CLAIMS_LOCK_FILE.open("a+") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                if human_request_already_logged(session_id):
+                    return False
+                HUMAN_REQUEST_CLAIMS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                with HUMAN_REQUEST_CLAIMS_FILE.open("a") as handle:
+                    handle.write(json.dumps({"session_id": session_id, "claimed_at": now_iso()}) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                return True
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def notify_human_request_if_needed(
+    message: str,
+    session_id: str,
+    *,
+    trusted_widget: bool = False,
+    internal_qa: bool = False,
+) -> bool:
+    """Alert the owner once when a trusted real visitor explicitly asks for a human."""
+    if not is_explicit_human_request(message):
+        return False
+
+    should_notify = trusted_widget and not internal_qa
+    skip_reason = None
+    if internal_qa:
+        skip_reason = "internal_session"
+    elif not trusted_widget:
+        skip_reason = "untrusted_session"
+    if not should_notify:
+        log_event(
+            "human_handoff_requested",
+            session_id=session_id,
+            notification_skipped=skip_reason,
+            alert_eligible=False,
+        )
+        return internal_qa
+    log_event(
+        "human_handoff_requested",
+        session_id=session_id,
+        alert_eligible=True,
+    )
+    if not claim_human_request(session_id):
+        return False
+
+    lead_info = {
+        "session_id": session_id,
+        "timestamp": now_iso(),
+        "raw_message": message,
+        **contact_details_from_history(session_id),
+        **build_lead_summary(session_id, message),
+    }
+    lead_info["route"] = "human handoff"
+    lead_info["alert_type"] = "human_request"
+    notify_lead_summary_async(lead_info, reason="explicit_human_request")
+    return True
+
+
+def verify_turnstile_token(token: str, remote_ip: str = "") -> bool:
+    """Verify a Cloudflare Turnstile proof for consequential owner alerts."""
+    if not TURNSTILE_SECRET_KEY or not token:
+        return False
+    payload = {"secret": TURNSTILE_SECRET_KEY, "response": str(token)}
+    if remote_ip:
+        payload["remoteip"] = remote_ip
+    request = urllib.request.Request(
+        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+        data=urllib.parse.urlencode(payload).encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        return result.get("success") is True
+    except Exception:
+        return False
+
+
+@app.post("/api/widget-session")
+async def create_widget_session(request: Request):
+    """Issue a signed session credential to the public widget."""
+    origin = str(request.headers.get("origin", "")).rstrip("/").lower()
+    if origin not in WIDGET_ALLOWED_ORIGINS:
+        return JSONResponse({"error": "Origin not allowed"}, status_code=403)
+    if is_rate_limited(client_ip(request), scope="widget-session", max_per_window=20, window=60):
+        return JSONResponse({"error": "Too many requests"}, status_code=429)
+    session_id, token = mint_widget_session()
+    return JSONResponse({
+        "session_id": session_id,
+        "widget_token": token,
+        "expires_in": WIDGET_SESSION_TTL_SECONDS,
+    })
+
+
 @app.post("/api/chat")
 async def chat(request: Request):
     if is_rate_limited(client_ip(request)):
@@ -3224,6 +3451,25 @@ async def chat(request: Request):
         route=classify_route(message.lower()),
         message_length=len(message),
     )
+    widget_token = str(body.get("widget_token", ""))
+    turnstile_token = str(body.get("turnstile_token", ""))
+    internal_qa_requested = bool(body.get("internal_qa", False))
+    qa_token = str(body.get("qa_token", ""))
+    internal_qa = bool(
+        internal_qa_requested
+        and INTERNAL_QA_TOKEN
+        and secrets.compare_digest(qa_token, INTERNAL_QA_TOKEN)
+    )
+    trusted_widget = bool(
+        verify_widget_session_token(session_id, widget_token)
+        and (internal_qa or verify_turnstile_token(turnstile_token, client_ip(request)))
+    )
+    human_request_handled = notify_human_request_if_needed(
+        message,
+        session_id,
+        trusted_widget=trusted_widget,
+        internal_qa=internal_qa,
+    )
 
     if should_use_local_tone_handler(message, session_id):
         reply = demo_fallback_reply(message, session_id=session_id)
@@ -3236,7 +3482,7 @@ async def chat(request: Request):
         if lead_info:
             save_lead(lead_info)
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
-            if has_contact_details(message):
+            if has_contact_details(message) and not internal_qa and not human_request_handled:
                 notify_lead_summary_async(lead_info, reason="local_tone_handler_contact_capture")
 
         log_event("local_tone_handler_used", session_id=session_id)
@@ -3260,7 +3506,7 @@ async def chat(request: Request):
         if lead_info:
             save_lead(lead_info)
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
-            if has_contact_details(message):
+            if has_contact_details(message) and not internal_qa and not human_request_handled:
                 notify_lead_summary_async(lead_info, reason="ai_contact_capture")
 
         reply_delay_ms = random.randint(MIN_REPLY_DELAY_MS, MAX_REPLY_DELAY_MS)
@@ -3292,7 +3538,7 @@ async def chat(request: Request):
         if lead_info:
             save_lead(lead_info)
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
-            if has_contact_details(message):
+            if has_contact_details(message) and not internal_qa and not human_request_handled:
                 notify_lead_summary_async(lead_info, reason="fallback_contact_capture")
 
         using_demo_fallback = (
@@ -3650,7 +3896,19 @@ def build_report_stats(days: int = 7) -> dict:
     }
     trial_clicks = sessions("trial_link_clicked")
     booking_shown = sessions("booking_link_shown")
-    handoffs = sessions("human_handoff_suggested")
+    handoff_suggestions = sessions("human_handoff_suggested")
+    human_requests = {
+        e.get("session_id")
+        for e in events
+        if e.get("event_type") == "human_handoff_requested"
+        and e.get("alert_eligible") is True
+    }
+    handoff_alerts_sent = {
+        e.get("session_id")
+        for e in events
+        if e.get("event_type") == "lead_summary_notification_sent"
+        and e.get("reason") == "explicit_human_request"
+    }
 
     # Greeting A/B: teaser_variant is stamped on every widget event, so a human
     # session's variant reads off any of its events. Lets the report compare
@@ -3695,8 +3953,13 @@ def build_report_stats(days: int = 7) -> dict:
         "conversation_to_lead_rate": safe_rate(len(contact_lead_sessions), len(conversations)),
         "trial_link_clicks": len(trial_clicks),
         "booking_link_shown_sessions": len(booking_shown),
-        "handoffs": len(handoffs),
-        "handoff_rate": safe_rate(len(handoffs), len(conversations)),
+        # Compatibility alias: this now means a real successfully-sent owner
+        # alert, never merely a phrase present in the bot's reply.
+        "handoffs": len(handoff_alerts_sent),
+        "handoff_suggestions": len(handoff_suggestions),
+        "human_requests": len(human_requests),
+        "handoff_alerts_sent": len(handoff_alerts_sent),
+        "handoff_rate": safe_rate(len(human_requests), len(conversations)),
         "lead_lines": lead_lines[:20],
         "teaser_variants": teaser_variants,
         "shipped_lines": read_changelog_entries(cutoff),
@@ -3746,13 +4009,15 @@ def format_report_text(stats: dict) -> str:
         "  (Clicks are the strongest booking signal we can see from the chat side —",
         "   cross-check names against Momence for confirmed trials.)",
         "",
-        "HANDOFFS",
-        f"- Passed to Nick/Lyn: {stats['handoffs']}"
+        "HUMAN FOLLOW-UP",
+        f"- Bot-generated follow-up suggestions: {stats.get('handoff_suggestions', 0)}",
+        f"- Explicit requests to speak with Nick/Lyn: {stats.get('human_requests', 0)}"
         + (
             f"  ({_pct(stats['handoff_rate'])} of conversations)"
             if stats["conversations_started"]
             else ""
         ),
+        f"- Owner alerts successfully sent: {stats.get('handoff_alerts_sent', stats.get('handoffs', 0))}",
     ]
     shipped = stats.get("shipped_lines") or []
     if shipped:
@@ -3800,7 +4065,10 @@ def format_report_sms(stats: dict) -> str:
         f"Robo-Nick weekly: {stats['widget_impressions']} real visitors, "
         f"{stats['conversations_started']} chats, {stats['contact_leads']} leads "
         f"({_pct(stats['conversation_to_lead_rate'])} of chats), "
-        f"{stats['trial_link_clicks']} trial clicks, {stats['handoffs']} handoffs. "
+        f"{stats['trial_link_clicks']} trial clicks, "
+        f"{stats.get('handoff_suggestions', 0)} bot suggestions, "
+        f"{stats.get('human_requests', 0)} human requests, "
+        f"{stats.get('handoff_alerts_sent', stats.get('handoffs', 0))} alerts sent. "
         "Full report in your email."
     )
 
@@ -4388,7 +4656,8 @@ async def serve_widget():
     headers = {"Cache-Control": "no-cache, max-age=0"}
     js_path = Path(__file__).parent / "widget.js"
     if js_path.exists():
-        return Response(content=js_path.read_text(), media_type="application/javascript", headers=headers)
+        content = js_path.read_text().replace("__TURNSTILE_SITE_KEY__", TURNSTILE_SITE_KEY)
+        return Response(content=content, media_type="application/javascript", headers=headers)
     return Response(content="console.error('widget.js not found')", media_type="application/javascript", headers=headers)
 
 
@@ -5147,8 +5416,13 @@ def format_lead_summary(lead_info: dict) -> str:
         concerns_text = ", ".join(concerns) or "none captured"
     else:
         concerns_text = str(concerns)
+    heading = (
+        "Outdoor Squad visitor asked for a human"
+        if lead_info.get("alert_type") == "human_request"
+        else "New Outdoor Squad lead"
+    )
     return (
-        "New Outdoor Squad lead\n\n"
+        f"{heading}\n\n"
         f"Name: {lead_info.get('name') or 'unknown'}\n"
         f"Email: {lead_info.get('email') or 'not provided'}\n"
         f"Phone: {lead_info.get('phone') or 'not provided'}\n"
@@ -5169,7 +5443,10 @@ def send_lead_summary_email(lead_info: dict) -> bool:
     recipients = [email.strip() for email in LEAD_SUMMARY_EMAIL_TO.split(",") if email.strip()]
     if not recipients:
         return False
-    subject = f"New Outdoor Squad lead: {lead_info.get('name') or lead_info.get('route') or 'website enquiry'}"
+    if lead_info.get("alert_type") == "human_request":
+        subject = "Outdoor Squad visitor asked to speak with Nick/Lyn"
+    else:
+        subject = f"New Outdoor Squad lead: {lead_info.get('name') or lead_info.get('route') or 'website enquiry'}"
     body = format_lead_summary(lead_info)
 
     # Primary path: Resend HTTP API. Works on Render, where SMTP ports are blocked.
@@ -5308,15 +5585,15 @@ def send_lead_summary_phone(lead_info: dict) -> bool:
     return send_lead_summary_webhook(lead_info)
 
 
-def notify_lead_summary(lead_info: dict, *, reason: str) -> None:
-    """Best-effort owner notification after a real contact-detail capture."""
+def notify_lead_summary(lead_info: dict, *, reason: str) -> bool:
+    """Best-effort owner notification for a lead or explicit human request."""
     if not lead_summary_delivery_configured():
         log_event(
             "lead_summary_notification_not_configured",
             session_id=lead_info.get("session_id", "unknown"),
             reason=reason,
         )
-        return
+        return False
 
     sent_channels = []
     failures = []
@@ -5345,6 +5622,7 @@ def notify_lead_summary(lead_info: dict, *, reason: str) -> None:
             error="; ".join(failures)[:240],
             reason=reason,
         )
+    return bool(sent_channels)
 
 
 def notify_lead_summary_async(lead_info: dict, *, reason: str) -> None:

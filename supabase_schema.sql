@@ -19,6 +19,13 @@ create index if not exists outdoor_squad_events_session_idx
 create index if not exists outdoor_squad_events_type_idx
   on public.outdoor_squad_events (event_type, timestamp desc);
 
+-- Atomic, durable once-per-session claim for explicit human-request alerts.
+-- The primary key is the cross-instance dedupe guarantee used by PostgREST.
+create table if not exists public.outdoor_squad_human_request_claims (
+  session_id text primary key,
+  claimed_at timestamptz not null default timezone('utc', now())
+);
+
 create table if not exists public.outdoor_squad_conversation_logs (
   id bigserial primary key,
   timestamp timestamptz not null default timezone('utc', now()),
@@ -58,5 +65,6 @@ create unique index if not exists outdoor_squad_leads_dedupe_idx
 
 alter table public.outdoor_squad_conversations enable row level security;
 alter table public.outdoor_squad_events enable row level security;
+alter table public.outdoor_squad_human_request_claims enable row level security;
 alter table public.outdoor_squad_conversation_logs enable row level security;
 alter table public.outdoor_squad_leads enable row level security;

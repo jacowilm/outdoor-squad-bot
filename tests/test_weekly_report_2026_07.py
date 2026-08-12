@@ -83,6 +83,8 @@ def _seed_funnel():
         {"timestamp": _ts(1), "event_type": "trial_link_clicked", "session_id": "widget-a2"},
         {"timestamp": _ts(1), "event_type": "booking_link_shown", "session_id": "widget-a1"},
         {"timestamp": _ts(2), "event_type": "human_handoff_suggested", "session_id": "widget-a3"},
+        {"timestamp": _ts(2), "event_type": "human_handoff_requested", "session_id": "widget-a3", "alert_eligible": True},
+        {"timestamp": _ts(2), "event_type": "lead_summary_notification_sent", "session_id": "widget-a3", "reason": "explicit_human_request"},
         # internal QA traffic (non-widget session ids) — excluded
         {"timestamp": _ts(1), "event_type": "conversation_started", "session_id": "e2e-leadtest"},
         {"timestamp": _ts(1), "event_type": "lead_captured", "session_id": "e2e-leadtest", "route": "trial"},
@@ -188,7 +190,8 @@ def test_report_stats_window_and_widget_filtering():
     assert stats["contact_leads"] == 2  # trial-link-clicked + QA lead excluded
     assert stats["trial_link_clicks"] == 1
     assert stats["booking_link_shown_sessions"] == 1
-    assert stats["handoffs"] == 1
+    assert stats["human_requests"] == 1
+    assert stats["handoff_alerts_sent"] == 1
 
 
 def test_report_rates():
@@ -207,7 +210,8 @@ def test_report_text_content():
     assert "Conversations started: 3" in text
     assert "Leads captured (name/phone/email handed over): 2" in text
     assert "67% of conversations" in text
-    assert "Passed to Nick/Lyn: 1" in text
+    assert "Explicit requests to speak with Nick/Lyn: 1" in text
+    assert "Owner alerts successfully sent: 1" in text
     assert "outdoor-squad-bot.onrender.com/admin" in text
 
 
@@ -216,7 +220,7 @@ def test_report_sms_digest_is_short_and_complete():
     stats = app.build_report_stats(days=7)
     sms = app.format_report_sms(stats)
     assert len(sms) <= 320
-    for fragment in ["3 real visitors", "3 chats", "2 leads", "1 trial clicks", "1 handoffs"]:
+    for fragment in ["3 real visitors", "3 chats", "2 leads", "1 trial clicks", "1 human requests", "1 alerts sent"]:
         assert fragment in sms
 
 
