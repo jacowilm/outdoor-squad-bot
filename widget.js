@@ -5,23 +5,89 @@
  * The widget creates a floating chat bubble in the bottom-right corner.
  */
 (function() {
-    const API_URL = document.currentScript.src.replace('/widget.js', '/api/chat');
-    const EVENT_URL = document.currentScript.src.replace('/widget.js', '/api/event');
-    // One session id per VISIT, not per page load: persisted so a conversation
-    // survives page navigation (the bot's server-side memory is keyed by this
-    // id), and so funnel analytics count a multi-page visit as one session.
-    const SESSION_ID = (() => {
+    const SCRIPT = document.currentScript;
+    const API_URL = SCRIPT.src.replace('/widget.js', '/api/chat');
+    const EVENT_URL = SCRIPT.src.replace('/widget.js', '/api/event');
+    const SESSION_URL = SCRIPT.src.replace('/widget.js', '/api/widget-session');
+    // Internal reviewers can embed with data-internal-qa="true" and provide the
+    // separately configured token. Suppression is honoured only after server verification.
+    const INTERNAL_QA = SCRIPT.dataset.internalQa === 'true';
+    const QA_TOKEN = SCRIPT.dataset.qaToken || '';
+    const TURNSTILE_SITE_KEY = SCRIPT.dataset.turnstileSiteKey || "__TURNSTILE_SITE_KEY__";
+    if (TURNSTILE_SITE_KEY && !document.querySelector('script[data-os-turnstile]')) {
+        const turnstileScript = document.createElement('script');
+        turnstileScript.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+        turnstileScript.async = true;
+        turnstileScript.defer = true;
+        turnstileScript.dataset.osTurnstile = 'true';
+        document.head.appendChild(turnstileScript);
+    }
+    // The server mints and signs the visit id. The signature is required only for
+    // consequential owner alerts; ordinary chat remains backwards-compatible.
+    let SESSION_ID = '';
+    let WIDGET_TOKEN = '';
+    let SESSION_EXPIRES_AT = 0;
+    let sessionReady = null;
+
+    async function ensureSession() {
+        if (SESSION_ID && WIDGET_TOKEN && Date.now() < SESSION_EXPIRES_AT) return;
+        if (sessionReady) return sessionReady;
         try {
-            let sid = sessionStorage.getItem('os-session-id');
-            if (!sid) {
-                sid = 'widget-' + Math.random().toString(36).substr(2, 9);
-                sessionStorage.setItem('os-session-id', sid);
-            }
-            return sid;
-        } catch (e) {
-            return 'widget-' + Math.random().toString(36).substr(2, 9);
-        }
-    })();
+            SESSION_ID = sessionStorage.getItem('os-session-id') || '';
+            WIDGET_TOKEN = sessionStorage.getItem('os-widget-token') || '';
+            SESSION_EXPIRES_AT = Number(sessionStorage.getItem('os-widget-expires-at') || '0');
+        } catch (e) {}
+        if (SESSION_ID && WIDGET_TOKEN && Date.now() < SESSION_EXPIRES_AT) return;
+        SESSION_ID = '';
+        WIDGET_TOKEN = '';
+        sessionReady = fetch(SESSION_URL, { method: 'POST' })
+            .then((res) => {
+                if (!res.ok) throw new Error('widget session unavailable');
+                return res.json();
+            })
+            .then((data) => {
+                SESSION_ID = data.session_id || '';
+                WIDGET_TOKEN = data.widget_token || '';
+                SESSION_EXPIRES_AT = Date.now() + Math.max(1, Number(data.expires_in || 0) - 60) * 1000;
+                if (!SESSION_ID || !WIDGET_TOKEN) throw new Error('widget session unavailable');
+                try {
+                    sessionStorage.setItem('os-session-id', SESSION_ID);
+                    sessionStorage.setItem('os-widget-token', WIDGET_TOKEN);
+                    sessionStorage.setItem('os-widget-expires-at', String(SESSION_EXPIRES_AT));
+                } catch (e) {}
+                sessionReady = null;
+            })
+            .catch((error) => {
+                sessionReady = null;
+                throw error;
+            });
+        return sessionReady;
+    }
+    ensureSession().catch(() => {});
+
+    function getTurnstileToken() {
+        if (!TURNSTILE_SITE_KEY || !window.turnstile) return Promise.resolve('');
+        return new Promise((resolve) => {
+            const holder = document.createElement('div');
+            holder.style.display = 'none';
+            document.body.appendChild(holder);
+            let settled = false;
+            const finish = (token) => {
+                if (settled) return;
+                settled = true;
+                holder.remove();
+                resolve(token || '');
+            };
+            window.turnstile.render(holder, {
+                sitekey: TURNSTILE_SITE_KEY,
+                size: 'invisible',
+                callback: finish,
+                'error-callback': () => finish(''),
+                'expired-callback': () => finish('')
+            });
+            setTimeout(() => finish(''), 8000);
+        });
+    }
 
     // Bubble design variant. Stamped on every event so Nicholas can split-test
     // icons month by month and compare open-rate per variant. Bump this string
@@ -52,12 +118,12 @@
     function track(eventType, metadata) {
         try {
             const meta = Object.assign({ bubble_variant: BUBBLE_VARIANT, teaser_variant: TEASER_VARIANT, widget_version: WIDGET_VERSION }, metadata || {});
-            fetch(EVENT_URL, {
+            ensureSession().then(() => fetch(EVENT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ event_type: eventType, session_id: SESSION_ID, metadata: meta }),
                 keepalive: true
-            }).catch(() => {});
+            })).catch(() => {});
         } catch (e) {}
     }
 
@@ -689,10 +755,19 @@
         msgs.scrollTop = msgs.scrollHeight;
 
         try {
+            await ensureSession();
+            const turnstileToken = INTERNAL_QA ? '' : await getTurnstileToken();
             const res = await fetch(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text, session_id: SESSION_ID })
+                body: JSON.stringify({
+                    message: text,
+                    session_id: SESSION_ID,
+                    widget_token: WIDGET_TOKEN,
+                    turnstile_token: turnstileToken,
+                    internal_qa: INTERNAL_QA,
+                    qa_token: QA_TOKEN
+                })
             });
             const data = await res.json();
             const delay = typeof data.reply_delay_ms === 'number' ? data.reply_delay_ms : 0;
