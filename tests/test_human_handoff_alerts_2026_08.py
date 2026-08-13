@@ -238,3 +238,44 @@ def test_human_request_subject_names_the_asker(monkeypatch):
         {"session_id": "widget-3", "route": "SPT enquiry", "name": "Tom"}
     )
     assert sent["payload"]["subject"] == "New Outdoor Squad lead: Tom"
+
+
+def test_supabase_claim_failure_is_not_silent(monkeypatch):
+    """A missing claims table must never swallow the owner alert silently.
+
+    2026-08-13: outdoor_squad_human_request_claims was in supabase_schema.sql
+    but had never been created on the live project. claim_human_request()
+    caught the PostgREST 404, failed closed, and returned False — so every real
+    visitor asking for a human was logged as alert_eligible and then dropped,
+    with no alert and no error event. This guards the shape of that failure:
+    when the claim cannot be taken, no alert is queued, which is only safe
+    because /api/storage-health now probes every configured table.
+    """
+    session_id = "widget-claim-storage-down"
+    queued = []
+    monkeypatch.setattr(app, "notify_lead_summary_async", lambda payload, *, reason: queued.append((payload, reason)))
+    monkeypatch.setattr(app, "claim_human_request", lambda sid: False)
+
+    assert not app.notify_human_request_if_needed("Can Nick call me?", session_id, trusted_widget=True)
+    assert queued == []
+    assert any(
+        e["event_type"] == "human_handoff_requested"
+        and e.get("session_id") == session_id
+        and e.get("alert_eligible") is True
+        for e in _events()
+    )
+
+
+def test_storage_health_probes_every_configured_table():
+    """The probe that would have caught the missing claims table."""
+    assert set(app.SUPABASE_TABLES) >= {
+        "conversations",
+        "events",
+        "conversation_logs",
+        "leads",
+        "human_request_claims",
+    }
+    source = Path(app.__file__).read_text()
+    probe = source.split("async def storage_diag")[1].split("@app.get")[0]
+    assert "for label, table in SUPABASE_TABLES.items()" in probe
+    assert "tables_ok" in probe

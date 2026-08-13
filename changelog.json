@@ -1,14 +1,58 @@
 [
-  {"date": "2026-07-03", "line": "Instant email alert to innerwest@ whenever the bot captures a lead"},
-  {"date": "2026-07-03", "line": "Weekly stats report, Mondays 8am"},
-  {"date": "2026-07-24", "line": "Proactive greeting bubble (pops once per visit, ~10s in) + visit tracking"},
-  {"date": "2026-07-24", "line": "Fix: widget updates now reach returning visitors (browser-cache header)"},
-  {"date": "2026-07-24", "line": "Chat, greeting and session now survive moving between pages"},
-  {"date": "2026-07-27", "line": "Crawler filtering — the report now counts real visitors, not bots"},
-  {"date": "2026-08-06", "line": "Quick-reply chips on the greeting (Free trial / Timetable / Prices / Where do you meet?) — one tap starts the chat"},
-  {"date": "2026-08-06", "line": "Greeting copy A/B test: Robo-Coach's line vs the original, measured weekly"},
-  {"date": "2026-08-07", "line": "Ship log: every change that goes live now gets a line in this report"},
-  {"date": "2026-08-07", "line": "Widget version stamping, so update rollout to visitors is measurable"},
-  {"date": "2026-08-12", "line": "Weekly report now shows widget-version rollout and a four-week traffic baseline under one locked real-visitor definition"},
-  {"date": "2026-08-12", "line": "Human follow-up reporting now separates bot suggestions, explicit human requests and successfully sent owner alerts"}
+  {
+    "date": "2026-07-03",
+    "line": "Instant email alert to innerwest@ whenever the bot captures a lead"
+  },
+  {
+    "date": "2026-07-03",
+    "line": "Weekly stats report, Mondays 8am"
+  },
+  {
+    "date": "2026-07-24",
+    "line": "Proactive greeting bubble (pops once per visit, ~10s in) + visit tracking"
+  },
+  {
+    "date": "2026-07-24",
+    "line": "Fix: widget updates now reach returning visitors (browser-cache header)"
+  },
+  {
+    "date": "2026-07-24",
+    "line": "Chat, greeting and session now survive moving between pages"
+  },
+  {
+    "date": "2026-07-27",
+    "line": "Crawler filtering \u2014 the report now counts real visitors, not bots"
+  },
+  {
+    "date": "2026-08-06",
+    "line": "Quick-reply chips on the greeting (Free trial / Timetable / Prices / Where do you meet?) \u2014 one tap starts the chat"
+  },
+  {
+    "date": "2026-08-06",
+    "line": "Greeting copy A/B test: Robo-Coach's line vs the original, measured weekly"
+  },
+  {
+    "date": "2026-08-07",
+    "line": "Ship log: every change that goes live now gets a line in this report"
+  },
+  {
+    "date": "2026-08-07",
+    "line": "Widget version stamping, so update rollout to visitors is measurable"
+  },
+  {
+    "date": "2026-08-12",
+    "line": "Weekly report now shows widget-version rollout and a four-week traffic baseline under one locked real-visitor definition"
+  },
+  {
+    "date": "2026-08-12",
+    "line": "Human follow-up reporting now separates bot suggestions, explicit human requests and successfully sent owner alerts"
+  },
+  {
+    "date": "2026-08-13",
+    "line": "Fix: owner alerts for \"I want to speak to a human\" now actually send. The database table that stops duplicate alerts had never been created, so every request was dropped silently. Verified end to end on the live site."
+  },
+  {
+    "date": "2026-08-13",
+    "line": "Storage health check now tests every database table, so a missing one shows up instead of failing quietly"
+  }
 ]

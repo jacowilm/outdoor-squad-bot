@@ -4429,6 +4429,20 @@ async def storage_diag(_: str = Depends(require_admin)):
             out["cleanup"] = f"{type(exc).__name__}: {str(exc)[:200]}"
     except Exception as exc:
         out["write"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    # 3) every configured table is actually reachable. The owner-alert claims
+    # table was in supabase_schema.sql but had never been created on the live
+    # project, so claim_human_request() failed closed and no owner alert could
+    # ever be sent — silently, because only the leads table was probed here
+    # (2026-08-13). Probe them all so a missing table is visible, not invisible.
+    tables = {}
+    for label, table in SUPABASE_TABLES.items():
+        try:
+            supabase_request("GET", table, params={"select": "*", "limit": "1"})
+            tables[label] = "ok"
+        except Exception as exc:
+            tables[label] = f"MISSING/UNREADABLE: {type(exc).__name__}: {str(exc)[:160]}"
+    out["tables"] = tables
+    out["tables_ok"] = all(v == "ok" for v in tables.values())
     return JSONResponse(out)
 
 
