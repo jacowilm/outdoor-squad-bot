@@ -5506,7 +5506,16 @@ def send_lead_summary_email(lead_info: dict) -> bool:
     if not recipients:
         return False
     if lead_info.get("alert_type") == "human_request":
-        subject = "Outdoor Squad visitor asked to speak with Nick/Lyn"
+        # This lands on a phone lock screen, where only the first ~35 characters
+        # are read, so lead with who and what. The sender address already says
+        # Outdoor Squad, and the old wording dropped the name even when the
+        # visitor had already given it earlier in the same conversation.
+        asker = (lead_info.get("name") or "").strip()
+        subject = (
+            f"{asker} asked to speak with you"
+            if asker
+            else "A visitor asked to speak with you"
+        )
     else:
         subject = f"New Outdoor Squad lead: {lead_info.get('name') or lead_info.get('route') or 'website enquiry'}"
     body = format_lead_summary(lead_info)

@@ -193,3 +193,48 @@ def test_weekly_report_separates_requests_from_successfully_sent_alerts():
     assert "Owner alerts successfully sent: 1" in text
     assert "Passed to Nick/Lyn" not in text
     assert "2 handoffs" not in app.format_report_sms(stats)
+
+
+def test_human_request_subject_names_the_asker(monkeypatch):
+    """The alert is read on a lock screen: it must say WHO wants a call back.
+
+    The first version returned one fixed string for every human request, so an
+    alert about Sarah, who had already given her name, was indistinguishable
+    from an anonymous one. Nick had to open the email to learn anything.
+    """
+    sent = {}
+
+    class _Resp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def read(self): return b'{"id":"stub"}'
+
+    def _fake_request(url, data=None, headers=None, method=None):
+        sent["payload"] = json.loads(data.decode())
+        return object()
+
+    monkeypatch.setattr(app, "lead_summary_email_configured", lambda: True)
+    monkeypatch.setattr(app, "LEAD_SUMMARY_EMAIL_TO", "owner@example.com")
+    monkeypatch.setattr(app, "LEAD_SUMMARY_RESEND_API_KEY", "stub")
+    monkeypatch.setattr(app, "LEAD_SUMMARY_EMAIL_FROM", "bot@example.com")
+    monkeypatch.setattr(app.urllib.request, "Request", _fake_request)
+    monkeypatch.setattr(app.urllib.request, "urlopen", lambda *a, **k: _Resp())
+
+    app.send_lead_summary_email(
+        {"session_id": "widget-1", "route": "human handoff",
+         "alert_type": "human_request", "name": "Sarah"}
+    )
+    assert sent["payload"]["subject"] == "Sarah asked to speak with you"
+
+    app.send_lead_summary_email(
+        {"session_id": "widget-2", "route": "human handoff",
+         "alert_type": "human_request"}
+    )
+    assert sent["payload"]["subject"] == "A visitor asked to speak with you"
+
+    # An ordinary contact-capture lead keeps its existing subject.
+    app.send_lead_summary_email(
+        {"session_id": "widget-3", "route": "SPT enquiry", "name": "Tom"}
+    )
+    assert sent["payload"]["subject"] == "New Outdoor Squad lead: Tom"
