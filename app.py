@@ -7460,7 +7460,7 @@ LOGIN_HTML = """
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; min-height: 100%; }
@@ -7485,8 +7485,13 @@ LOGIN_HTML = """
     }
     .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
     .brand img { width: 40px; height: 40px; }
-    .wordmark { font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; color: #fff; }
-    .wordmark .q { color: #ffd070; }
+    .wordmark {
+      font-family: 'Sora', 'Inter', sans-serif;
+      font-size: 1.5rem; font-weight: 700; letter-spacing: -.025em; color: #fff;
+      display: inline-flex; align-items: center;
+    }
+    .wordmark .mark-q { height: .92em; width: auto; margin-left: .07em; transform: translateY(.05em); color: #ffd070; }
+    .foot .mark-q { height: .95em; width: auto; vertical-align: -.12em; margin-left: .18em; color: rgba(255,208,112,.8); }
     .sub { color: rgba(238,241,248,.55); font-size: .86rem; margin: 0 0 26px; }
     label { display: block; font-size: .78rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: rgba(238,241,248,.6); margin: 16px 0 6px; }
     input {
@@ -7533,7 +7538,7 @@ LOGIN_HTML = """
 <body>
   <form class="card" method="post" action="/login" autocomplete="on">
     <div class="brand">
-      <div class="wordmark">realti<span class="q">q</span><span class="q">.</span></div>
+      <div class="wordmark">realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg></div>
     </div>
     <p class="sub">Robo-Nick console · The Outdoor Squad</p>
     <label for="username">Username</label>
@@ -7542,7 +7547,7 @@ LOGIN_HTML = """
     <input id="password" name="password" type="password" autocomplete="current-password" required>
     __LOGIN_ERROR__
     <button type="submit">Sign in</button>
-    <div class="foot">Robo-Nick · a realti<span class="q">q</span> system</div>
+    <div class="foot">Robo-Nick · a realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg> system</div>
   </form>
 </body>
 </html>
@@ -7561,7 +7566,7 @@ ADMIN_HTML = """
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@700&display=swap" rel="stylesheet">
   <style>
     :root {
       --ink: #0b0c0f;
@@ -7610,8 +7615,12 @@ ADMIN_HTML = """
       display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
     }
     .brand-text { line-height: 1.1; }
-    .brand-text .wordmark { font-size: 1.05rem; font-weight: 800; letter-spacing: -.02em; color: #fff; }
-    .brand-text .wordmark .q { color: var(--amber); }
+    .brand-text .wordmark {
+      font-family: 'Sora', 'Inter', sans-serif;
+      font-size: 1.05rem; font-weight: 700; letter-spacing: -.025em; color: #fff;
+      display: inline-flex; align-items: center;
+    }
+    .brand-text .wordmark .mark-q { height: .92em; width: auto; margin-left: .07em; transform: translateY(.05em); color: var(--amber); }
     .brand-text .eyebrow {
       font-size: .62rem; letter-spacing: .18em; text-transform: uppercase;
       color: rgba(255,255,255,.5); font-weight: 600; margin-top: 1px;
@@ -7955,7 +7964,7 @@ ADMIN_HTML = """
   <div class="topbar">
     <div class="topbar-inner">
       <div class="brand-text">
-        <div class="wordmark">realti<span class="q">q</span><span class="q">.</span></div>
+        <div class="wordmark">realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg></div>
         <div class="eyebrow">Robo-Nick · The Outdoor Squad</div>
       </div>
       <div class="topbar-meta">
