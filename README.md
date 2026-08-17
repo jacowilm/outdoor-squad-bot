@@ -23,8 +23,10 @@ Add to any website:
 <script src="https://your-deploy-url/widget.js"></script>
 ```
 
-## Demo
-Visit `http://localhost:8000` for the full demo page.
+## Console
+The root path redirects to the owner console sign-in (`/login` -> `/admin`).
+The public demo page was retired on 2026-08-17; the widget itself is embedded
+on the client site via `/widget.js` (see `/widget-preview`, admin-only, for QA).
 
 ## API
 - `POST /api/chat` — Send a message, get a reply

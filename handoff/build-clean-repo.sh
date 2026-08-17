@@ -20,7 +20,6 @@ FILES=(
   app.py
   widget.js
   widget_preview.html
-  demo.html
   knowledge_base.md
   render.yaml
   requirements.txt

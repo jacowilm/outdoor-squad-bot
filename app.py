@@ -94,6 +94,9 @@ _ADMIN_PATH_PREFIXES = (
     "/logout",
     "/api/admin",
     "/api/momence",
+    # Added 2026-08-17: the retired public previews are admin surfaces now.
+    "/widget-preview",
+    "/bubble-options",
 )
 
 
@@ -5929,7 +5932,7 @@ async def admin_dashboard(_: str = Depends(require_admin)):
         "metrics": build_metrics_payload(),
         "leads": read_leads(),
         "logs": read_conversation_logs(120),
-        "transcripts": grouped_transcripts(500),
+        "transcripts": grouped_transcripts(1000),
         "wa": wa_dashboard_payload(),
     }
     # html_safe_json (not plain json.dumps): a visitor's chat message containing
@@ -6248,13 +6251,12 @@ async def health():
     })
 
 
-@app.get("/", response_class=HTMLResponse)
-async def serve_demo():
-    """Serve the demo chat widget page"""
-    html_path = Path(__file__).parent / "demo.html"
-    if html_path.exists():
-        return HTMLResponse(html_path.read_text())
-    return HTMLResponse("<h1>Outdoor Squad Bot Demo</h1><p>demo.html not found</p>")
+@app.get("/")
+async def root_redirect():
+    """The public demo that used to live here predates Robo-Nick going live on
+    the real website; it must not be publicly reachable (Jacobo, 2026-08-17).
+    Anyone landing on the bare host gets the console sign-in instead."""
+    return RedirectResponse("/login", status_code=302)
 
 
 @app.get("/widget.js")
@@ -6272,8 +6274,9 @@ async def serve_widget():
 
 
 @app.get("/widget-preview", response_class=HTMLResponse)
-async def widget_preview():
-    """Serve a simple page that mounts the embeddable widget."""
+async def widget_preview(_: str = Depends(require_admin)):
+    """Mounts the embeddable widget for QA. Admin-only since 2026-08-17: the
+    public demo surfaces were retired once the bot went live on the real site."""
     html_path = Path(__file__).parent / "widget_preview.html"
     if html_path.exists():
         return HTMLResponse(html_path.read_text())
@@ -6281,8 +6284,9 @@ async def widget_preview():
 
 
 @app.get("/bubble-options", response_class=HTMLResponse)
-async def bubble_options():
-    """Client-facing gallery of chat-bubble design options (Nicholas, 2026-07)."""
+async def bubble_options(_: str = Depends(require_admin)):
+    """Gallery of chat-bubble design options (Nicholas, 2026-07). The decision
+    was made long ago; kept for reference but admin-only since 2026-08-17."""
     html_path = Path(__file__).parent / "bubble_options.html"
     if html_path.exists():
         return HTMLResponse(html_path.read_text())
@@ -7551,35 +7555,38 @@ ADMIN_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Robo-Nick Console — Realtiq</title>
+  <title>Robo-Nick Console · Realtiq</title>
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --ink: #0a0a0a;
-      --ink-soft: #1a1a1a;
-      --char: #2a2a2a;
-      --muted: #6a6a6a;
-      --line: #ececec;
-      --line-strong: #d8d8d8;
+      --ink: #0b0c0f;
+      --ink-2: #3d4048;
+      --muted: #676a72;
+      --faint: #6f727a;
+      --line: #e9e8e4;
+      --line-2: #d9d7d1;
       --paper: #ffffff;
-      --canvas: #f5f4f1;
+      --canvas: #f6f5f2;
+      --hover: #faf9f6;
       --navy: #0a0e1a;
       --amber: #ffd070;
-      --amber-hover: #f5c452;
-      --amber-strong: #e2a815;
-      --amber-text: #8a6100;
+      --amber-2: #f5c452;
+      --amber-deep: #e2a815;
+      --amber-ink: #8a6100;
       --amber-tint: #fff6de;
-      --green: #16a34a;
-      --green-tint: #e8f7ee;
+      --amber-wash: #fffdf6;
+      --green: #15803d;
+      --green-tint: #e9f7ef;
       --red: #b91c1c;
-      --red-tint: #fdeaea;
-      --shadow-sm: 0 1px 2px rgba(10,10,10,.04);
-      --shadow-md: 0 4px 16px rgba(10,10,10,.06);
+      --red-tint: #fdecec;
+      --shadow-1: 0 1px 2px rgba(16,18,24,.05);
+      --shadow-2: 0 12px 32px rgba(16,18,24,.09);
+      --ease-out: cubic-bezier(.23, 1, .32, 1);
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
@@ -7587,459 +7594,373 @@ ADMIN_HTML = """
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: var(--canvas);
       color: var(--ink);
+      font-size: .875rem;
+      line-height: 1.45;
       font-feature-settings: 'ss01', 'cv11';
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
     a { color: inherit; }
+    :focus-visible { outline: 2px solid var(--amber-deep); outline-offset: 2px; border-radius: 4px; }
 
-    /* Top bar */
-    .topbar {
-      background: var(--navy);
-      color: #fff;
-      border-bottom: 3px solid var(--amber);
-    }
+    /* ── Top bar ─────────────────────────────────────────────── */
+    .topbar { background: var(--navy); color: #fff; border-bottom: 2px solid var(--amber); }
     .topbar-inner {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 18px 24px;
-      display: flex;
-      align-items: center;
-      gap: 18px;
-      flex-wrap: wrap;
+      max-width: 1160px; margin: 0 auto; padding: 13px 24px;
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
     }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .brand-mark { width: 38px; height: 38px; display: block; }
-    .brand-text { line-height: 1.15; }
-    .brand-text .wordmark {
-      font-size: 1.2rem;
-      font-weight: 800;
-      letter-spacing: -.02em;
-      color: #fff;
-    }
+    .brand-text { line-height: 1.1; }
+    .brand-text .wordmark { font-size: 1.05rem; font-weight: 800; letter-spacing: -.02em; color: #fff; }
     .brand-text .wordmark .q { color: var(--amber); }
     .brand-text .eyebrow {
-      font-size: .66rem;
-      letter-spacing: .2em;
-      text-transform: uppercase;
-      color: rgba(255,255,255,.55);
-      font-weight: 600;
-      margin-top: 2px;
+      font-size: .62rem; letter-spacing: .18em; text-transform: uppercase;
+      color: rgba(255,255,255,.5); font-weight: 600; margin-top: 1px;
     }
     .topbar-meta {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      font-size: .82rem;
-      color: rgba(255,255,255,.7);
+      margin-left: auto; display: flex; align-items: center; gap: 10px;
+      font-size: .76rem; color: rgba(255,255,255,.65);
     }
-    .live-dot {
-      display: inline-flex; align-items: center; gap: 6px;
-      font-weight: 600; color: rgba(255,255,255,.85);
-    }
+    .live-dot { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: rgba(255,255,255,.85); }
     .live-dot::before {
-      content: ''; width: 7px; height: 7px; border-radius: 50%;
-      background: #4ade80;
-      box-shadow: 0 0 0 4px rgba(74,222,128,.18);
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: #4ade80; box-shadow: 0 0 0 3px rgba(74,222,128,.18);
     }
     .topbar-link {
-      color: rgba(255,255,255,.85);
-      text-decoration: none;
-      font-weight: 600;
-      font-size: .82rem;
-      border: 1px solid rgba(255,255,255,.18);
-      padding: 7px 12px;
-      border-radius: 6px;
-      transition: background .15s ease;
+      color: rgba(255,255,255,.82); text-decoration: none; font-weight: 600; font-size: .76rem;
+      border: 1px solid rgba(255,255,255,.16); padding: 6px 11px; border-radius: 7px;
+      transition: background 150ms ease, transform 120ms var(--ease-out);
     }
-    .topbar-link:hover { background: rgba(255,255,255,.08); }
     button.topbar-link { font-family: inherit; background: none; cursor: pointer; }
+    .topbar-link:active { transform: scale(.97); }
+    @media (hover: hover) and (pointer: fine) {
+      .topbar-link:hover { background: rgba(255,255,255,.08); }
+    }
 
-    /* Change-password modal */
-    .modal-backdrop {
-      position: fixed; inset: 0; z-index: 50;
-      background: rgba(10,14,26,.55);
-      display: flex; align-items: center; justify-content: center;
-      padding: 24px;
-    }
-    .modal-backdrop[hidden] { display: none; }
-    .modal {
-      background: var(--paper);
-      border-radius: 12px;
-      box-shadow: 0 24px 60px rgba(10,14,26,.35);
-      width: 100%; max-width: 400px;
-      padding: 26px 26px 22px;
-    }
-    .modal h3 { margin: 0 0 4px; font-size: 1.15rem; letter-spacing: -.01em; }
-    .modal-sub { color: var(--muted); font-size: .84rem; margin: 0 0 14px; }
-    .modal label { display: block; font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 12px 0 5px; }
-    .modal input {
-      width: 100%;
-      border: 1px solid var(--line-strong);
-      border-radius: 8px;
-      font: inherit; font-size: .92rem;
-      padding: 10px 12px;
-      outline: none;
-      transition: border-color .15s ease, box-shadow .15s ease;
-    }
-    .modal input:focus { border-color: var(--amber-strong); box-shadow: 0 0 0 3px rgba(255,208,112,.25); }
-    .modal-msg { min-height: 20px; font-size: .84rem; margin-top: 12px; }
-    .modal-msg.err { color: var(--red); }
-    .modal-msg.ok { color: var(--green); }
-    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-
-    /* Tabs */
-    .tabs {
-      background: var(--paper);
-      border-bottom: 1px solid var(--line);
-      position: sticky; top: 0; z-index: 10;
-    }
+    /* ── Tabs ────────────────────────────────────────────────── */
+    .tabs { background: var(--paper); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; }
     .tabs-inner {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 24px;
-      display: flex;
-      gap: 4px;
+      max-width: 1160px; margin: 0 auto; padding: 0 24px;
+      display: flex; gap: 2px; overflow-x: auto;
     }
     .tab {
-      background: none; border: 0;
-      padding: 16px 14px;
-      font-family: inherit;
-      font-size: .88rem;
-      font-weight: 600;
-      color: var(--muted);
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      transition: color .15s ease, border-color .15s ease;
-      display: inline-flex; align-items: center; gap: 8px;
+      background: none; border: 0; padding: 12px 12px 11px;
+      font-family: inherit; font-size: .82rem; font-weight: 600; color: var(--muted);
+      cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 7px;
+      transition: color 120ms ease, border-color 120ms ease;
     }
-    .tab:hover { color: var(--ink); }
-    .tab.active { color: var(--ink); border-bottom-color: var(--amber-strong); }
+    .tab svg { width: 15px; height: 15px; flex: none; }
+    .tab.active { color: var(--ink); border-bottom-color: var(--amber-deep); }
+    @media (hover: hover) and (pointer: fine) { .tab:hover { color: var(--ink); } }
     .tab-count {
-      background: var(--canvas);
-      color: var(--char);
-      font-size: .72rem;
-      font-weight: 700;
-      padding: 2px 7px;
-      border-radius: 999px;
-      min-width: 20px;
-      text-align: center;
+      background: var(--canvas); color: var(--ink-2);
+      font-size: .68rem; font-weight: 700; font-variant-numeric: tabular-nums;
+      padding: 1px 7px; border-radius: 999px; min-width: 20px; text-align: center;
     }
-    .tab.active .tab-count { background: var(--amber-tint); color: var(--amber-text); }
+    .tab.active .tab-count { background: var(--amber-tint); color: var(--amber-ink); }
 
-    /* Main */
-    main {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 28px 24px 64px;
-    }
+    /* ── Layout ──────────────────────────────────────────────── */
+    main { max-width: 1160px; margin: 0 auto; padding: 24px 24px 72px; }
     .panel { display: none; }
     .panel.active { display: block; }
 
-    /* Metrics */
-    .section-title {
-      font-size: 1.4rem;
-      font-weight: 800;
-      letter-spacing: -.015em;
-      margin: 0 0 4px;
+    .page-head { margin: 0 0 16px; }
+    .page-title { font-size: 1.05rem; font-weight: 700; letter-spacing: -.01em; margin: 0; }
+    .page-sub { color: var(--muted); font-size: .82rem; margin: 3px 0 0; }
+    .section-head {
+      display: flex; align-items: flex-end; justify-content: space-between;
+      gap: 12px; margin: 0 0 14px; flex-wrap: wrap;
     }
-    .section-sub { color: var(--muted); font-size: .9rem; margin: 0 0 22px; }
+    .section-head .page-head { margin: 0; }
+    .section-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
-    .metric-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
-      margin-bottom: 32px;
+    /* ── KPI tiles ───────────────────────────────────────────── */
+    .kpis {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+      gap: 10px; margin-bottom: 12px;
     }
-    .metric-card {
-      background: var(--paper);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 18px 18px 16px;
-      box-shadow: var(--shadow-sm);
-      position: relative;
-      overflow: hidden;
+    .kpi {
+      background: var(--paper); border: 1px solid var(--line); border-radius: 10px;
+      padding: 13px 15px 12px; box-shadow: var(--shadow-1);
     }
-    .metric-card.feature {
-      background: var(--navy);
-      color: #fff;
-      border-color: var(--navy);
+    .kpi-label {
+      font-size: .64rem; letter-spacing: .08em; text-transform: uppercase;
+      color: var(--muted); font-weight: 600;
     }
-    .metric-card.feature .metric-label { color: rgba(255,255,255,.6); }
-    .metric-card.feature .metric-foot { color: rgba(255,255,255,.55); }
-    .metric-label {
-      font-size: .68rem;
-      letter-spacing: .16em;
-      text-transform: uppercase;
-      color: var(--muted);
-      font-weight: 700;
+    .kpi-value {
+      font-size: 1.55rem; font-weight: 700; letter-spacing: -.02em;
+      font-variant-numeric: tabular-nums; line-height: 1.15; margin-top: 5px;
     }
-    .metric-value {
-      font-size: 2.4rem;
-      font-weight: 800;
-      letter-spacing: -.025em;
-      line-height: 1.05;
-      margin-top: 8px;
-    }
-    .metric-card.feature .metric-value { color: var(--amber); }
-    .metric-foot {
-      margin-top: 10px;
-      font-size: .78rem;
-      color: var(--muted);
-      display: flex; align-items: center; gap: 6px;
-    }
+    .kpi-foot { margin-top: 3px; font-size: .7rem; color: var(--faint); }
 
-    /* Tables */
+    /* ── Cards ───────────────────────────────────────────────── */
+    .card {
+      background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+      box-shadow: var(--shadow-1); overflow: hidden;
+    }
+    .card-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 12px 16px; border-bottom: 1px solid var(--line);
+    }
+    .card-title { font-size: .8rem; font-weight: 700; letter-spacing: -.005em; }
+    .card-link {
+      background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer;
+      font-size: .74rem; font-weight: 600; color: var(--amber-ink); text-decoration: none;
+    }
+    @media (hover: hover) and (pointer: fine) { .card-link:hover { text-decoration: underline; } }
+
+    .ov-grid {
+      display: grid; grid-template-columns: 1.9fr 1fr; gap: 12px; align-items: start;
+    }
+    .ov-side { display: grid; gap: 12px; }
+
+    .feed-row {
+      display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+      background: none; border: 0; border-bottom: 1px solid var(--line);
+      padding: 10px 16px; cursor: pointer; font-family: inherit;
+      transition: background 120ms ease;
+    }
+    .feed-row:last-child { border-bottom: 0; }
+    @media (hover: hover) and (pointer: fine) { .feed-row:hover { background: var(--hover); } }
+    .chip {
+      flex: none; width: 28px; height: 28px; border-radius: 8px;
+      display: grid; place-items: center;
+    }
+    .chip svg { width: 14px; height: 14px; }
+    .chip.website { background: var(--canvas); color: var(--ink-2); }
+    .chip.whatsapp { background: var(--green-tint); color: var(--green); }
+    .feed-main { min-width: 0; flex: 1; }
+    .feed-name { display: block; font-size: .8rem; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feed-preview { display: block; font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+    .feed-time { flex: none; font-size: .7rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+    .plain-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px; border-bottom: 1px solid var(--line);
+    }
+    .plain-row:last-child { border-bottom: 0; }
+
+    /* ── Badges ──────────────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 2px 8px; border-radius: 999px;
+      font-size: .68rem; font-weight: 700; letter-spacing: .02em;
+      background: var(--canvas); color: var(--ink-2); border: 1px solid var(--line-2);
+      white-space: nowrap;
+    }
+    .badge.amber { background: var(--amber-tint); color: var(--amber-ink); border-color: rgba(226,168,21,.35); }
+    .badge.green { background: var(--green-tint); color: var(--green); border-color: rgba(21,128,61,.22); }
+    .badge.red { background: var(--red-tint); color: var(--red); border-color: rgba(185,28,28,.22); }
+
+    /* ── Tables ──────────────────────────────────────────────── */
     .table-wrap {
-      background: var(--paper);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      overflow: hidden;
-      box-shadow: var(--shadow-sm);
+      background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+      overflow-x: auto; box-shadow: var(--shadow-1);
     }
     table { width: 100%; border-collapse: collapse; }
-    th, td {
-      text-align: left;
-      padding: 13px 16px;
-      font-size: .88rem;
-      vertical-align: top;
-    }
+    th, td { text-align: left; padding: 11px 16px; font-size: .82rem; vertical-align: top; }
     th {
-      background: #fafafa;
-      border-bottom: 1px solid var(--line);
-      font-size: .7rem;
-      font-weight: 700;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-      color: var(--muted);
+      background: #fafaf8; border-bottom: 1px solid var(--line);
+      font-size: .64rem; font-weight: 700; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--muted); white-space: nowrap;
     }
     tbody tr { border-bottom: 1px solid var(--line); }
     tbody tr:last-child { border-bottom: 0; }
-    tbody tr:hover { background: #fafafa; }
-    td.mono { font-feature-settings: 'tnum'; color: var(--char); }
+    @media (hover: hover) and (pointer: fine) { tbody tr:hover { background: var(--hover); } }
+    td.mono { font-variant-numeric: tabular-nums; color: var(--ink-2); }
     td.nowrap { white-space: nowrap; }
 
-    .badge {
-      display: inline-flex; align-items: center;
-      padding: 3px 9px;
-      border-radius: 999px;
-      font-size: .72rem;
-      font-weight: 700;
-      letter-spacing: .02em;
-      background: var(--canvas);
-      color: var(--char);
-      border: 1px solid var(--line-strong);
-    }
-    .badge.amber { background: var(--amber-tint); color: var(--amber-text); border-color: rgba(226,168,21,.35); }
-    .badge.green  { background: var(--green-tint);  color: var(--green);       border-color: rgba(22,163,74,.25); }
-    .badge.red    { background: var(--red-tint);    color: var(--red);         border-color: rgba(185,28,28,.22); }
-
-    /* Section head */
-    .section-head {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 12px; margin: 0 0 16px;
-      flex-wrap: wrap;
-    }
-    .section-head-left { min-width: 0; }
-    .section-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-
-    /* Buttons */
+    /* ── Buttons ─────────────────────────────────────────────── */
     .btn {
       display: inline-flex; align-items: center; gap: 7px;
-      background: var(--ink);
-      color: #fff;
-      border: 1px solid var(--ink);
-      border-radius: 8px;
-      padding: 9px 14px;
-      font-size: .82rem;
-      font-weight: 600;
-      font-family: inherit;
-      text-decoration: none;
-      cursor: pointer;
-      transition: transform .12s ease, background .15s ease;
-      white-space: nowrap;
+      background: var(--ink); color: #fff; border: 1px solid var(--ink);
+      border-radius: 8px; padding: 8px 13px;
+      font-size: .78rem; font-weight: 600; font-family: inherit;
+      text-decoration: none; cursor: pointer; white-space: nowrap;
+      transition: transform 120ms var(--ease-out), background 150ms ease, border-color 150ms ease;
     }
-    .btn:hover { transform: translateY(-1px); }
+    .btn:active:not(:disabled) { transform: scale(.97); }
     .btn.primary { background: var(--amber); border-color: var(--amber); color: var(--navy); }
-    .btn.primary:hover { background: var(--amber-hover); border-color: var(--amber-hover); }
-    .btn.ghost { background: var(--paper); color: var(--ink); border-color: var(--line-strong); }
-    .btn.ghost:hover { background: var(--canvas); }
-    .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .btn.ghost { background: var(--paper); color: var(--ink); border-color: var(--line-2); }
+    .btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; pointer-events: none; }
     .btn svg { width: 14px; height: 14px; }
-
-    /* Search field */
-    .search {
-      position: relative;
-      display: inline-flex; align-items: center;
-      background: var(--paper);
-      border: 1px solid var(--line-strong);
-      border-radius: 8px;
-      padding: 0 10px 0 34px;
-      min-height: 38px;
-      min-width: 260px;
-      transition: border-color .15s ease;
+    @media (hover: hover) and (pointer: fine) {
+      .btn:hover:not(:disabled) { background: #23252b; border-color: #23252b; }
+      .btn.primary:hover:not(:disabled) { background: var(--amber-2); border-color: var(--amber-2); }
+      .btn.ghost:hover:not(:disabled) { background: var(--canvas); border-color: var(--line-2); }
     }
-    .search:focus-within { border-color: var(--amber-strong); box-shadow: 0 0 0 3px rgba(255,208,112,.25); }
-    .search svg { position: absolute; left: 11px; width: 14px; height: 14px; color: var(--muted); }
+
+    /* ── Search ──────────────────────────────────────────────── */
+    .search {
+      position: relative; display: inline-flex; align-items: center;
+      background: var(--paper); border: 1px solid var(--line-2); border-radius: 8px;
+      padding: 0 10px 0 32px; min-height: 36px; min-width: 250px;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .search:focus-within { border-color: var(--amber-deep); box-shadow: 0 0 0 3px rgba(255,208,112,.25); }
+    .search svg { position: absolute; left: 10px; width: 14px; height: 14px; color: var(--muted); }
     .search input {
       background: none; border: 0; outline: 0;
-      font: inherit; font-size: .88rem; color: var(--ink);
-      padding: 0; width: 100%;
+      font: inherit; font-size: .82rem; color: var(--ink); padding: 0; width: 100%;
     }
 
-    /* Transcripts */
-    .transcript-grid {
-      display: grid;
-      gap: 14px;
-      grid-template-columns: minmax(280px, .8fr) minmax(420px, 1.4fr);
+    /* ── Split panes (Website / WhatsApp) ────────────────────── */
+    .split {
+      display: grid; gap: 12px;
+      grid-template-columns: minmax(270px, .75fr) minmax(420px, 1.45fr);
       align-items: start;
     }
-    .session-list {
-      background: var(--paper);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      max-height: 620px;
-      overflow: auto;
-      box-shadow: var(--shadow-sm);
+    .list-pane {
+      background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+      max-height: min(640px, calc(100vh - 240px)); overflow: auto; box-shadow: var(--shadow-1);
     }
     .session-row {
-      display: flex; gap: 12px;
-      width: 100%; text-align: left;
+      position: relative; display: flex; gap: 11px; width: 100%; text-align: left;
       background: none; border: 0; border-bottom: 1px solid var(--line);
-      padding: 14px 14px;
-      cursor: pointer;
-      font-family: inherit;
-      transition: background .12s ease;
+      padding: 12px 14px; cursor: pointer; font-family: inherit;
+      transition: background 120ms ease;
     }
     .session-row:last-child { border-bottom: 0; }
-    .session-row:hover { background: #fafafa; }
-    .session-row.active { background: var(--amber-tint); }
-    .session-row.active::before {
-      content: ''; position: absolute;
-    }
+    @media (hover: hover) and (pointer: fine) { .session-row:hover { background: var(--hover); } }
+    .session-row.active { background: var(--amber-wash); box-shadow: inset 2px 0 0 var(--amber-deep); }
     .session-avatar {
-      flex: 0 0 36px;
-      width: 36px; height: 36px;
-      border-radius: 50%;
-      background: var(--ink);
-      color: #fff;
+      flex: none; width: 32px; height: 32px; border-radius: 9px;
+      background: var(--canvas); color: var(--ink-2);
       display: grid; place-items: center;
-      font-size: .72rem; font-weight: 800;
-      letter-spacing: .02em;
+      font-size: .66rem; font-weight: 700; letter-spacing: .02em;
     }
-    .session-row.active .session-avatar { background: var(--amber); color: var(--navy); }
+    .session-row.active .session-avatar { background: var(--amber-tint); color: var(--amber-ink); }
+    .session-avatar svg { width: 15px; height: 15px; }
     .session-meta { min-width: 0; flex: 1; }
     .session-id {
-      display: block;
-      font-size: .82rem; font-weight: 700;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      color: var(--ink);
+      display: block; font-size: .78rem; font-weight: 600;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink);
     }
-    .session-time { color: var(--muted); font-size: .72rem; font-weight: 500; margin-top: 2px; }
+    .session-time { color: var(--faint); font-size: .68rem; font-weight: 500; margin-top: 2px; }
     .session-preview {
-      color: var(--char); font-size: .8rem; margin-top: 6px;
+      color: var(--muted); font-size: .76rem; margin-top: 4px;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
       overflow: hidden; line-height: 1.4;
     }
 
-    .transcript-panel {
-      background: var(--paper);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      box-shadow: var(--shadow-sm);
-      max-height: 620px;
+    .detail-pane {
+      background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+      box-shadow: var(--shadow-1);
+      max-height: min(640px, calc(100vh - 240px));
       display: flex; flex-direction: column;
     }
-    .transcript-head {
+    .detail-head {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 14px 18px;
-      border-bottom: 1px solid var(--line);
-      gap: 12px;
-      flex-wrap: wrap;
+      padding: 12px 16px; border-bottom: 1px solid var(--line); gap: 12px; flex-wrap: wrap;
     }
-    .transcript-head-meta { font-size: .82rem; color: var(--muted); }
-    .transcript-head-meta strong { color: var(--ink); }
-    .transcript-actions { display: flex; gap: 6px; }
-    .messages {
-      display: flex; flex-direction: column; gap: 12px;
-      padding: 18px;
-      overflow: auto;
-    }
+    .detail-head-meta { font-size: .8rem; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .detail-head-meta strong { color: var(--ink); font-weight: 700; }
+    .detail-actions { display: flex; gap: 6px; }
+    .messages { display: flex; flex-direction: column; gap: 10px; padding: 16px; overflow: auto; flex: 1; }
     .chat-message {
-      max-width: 86%;
-      padding: 11px 14px;
-      border-radius: 14px;
-      font-size: .9rem;
-      line-height: 1.5;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
+      max-width: 84%; padding: 10px 13px; border-radius: 12px;
+      font-size: .84rem; line-height: 1.5;
+      white-space: pre-wrap; overflow-wrap: anywhere;
     }
     .chat-message .role {
-      font-size: .66rem;
-      letter-spacing: .14em;
-      text-transform: uppercase;
-      font-weight: 700;
-      opacity: .6;
-      margin-bottom: 5px;
+      font-size: .6rem; letter-spacing: .12em; text-transform: uppercase;
+      font-weight: 700; opacity: .6; margin-bottom: 4px;
     }
     .chat-message.user {
-      align-self: flex-end;
-      background: var(--ink);
-      color: #fff;
+      align-self: flex-end; background: var(--ink); color: #fff;
       border-bottom-right-radius: 4px;
     }
-    .chat-message.user .role { color: rgba(255,255,255,.55); }
-    .chat-message.assistant {
-      align-self: flex-start;
-      background: var(--canvas);
-      border: 1px solid var(--line);
-      color: var(--ink);
+    .chat-message.user .role { color: rgba(255,255,255,.75); opacity: 1; }
+    .chat-message.assistant, .chat-message.unknown {
+      align-self: flex-start; background: var(--canvas);
+      border: 1px solid var(--line); color: var(--ink);
       border-bottom-left-radius: 4px;
     }
 
-    .empty {
-      padding: 36px 20px;
-      text-align: center;
-      color: var(--muted);
-      font-size: .88rem;
+    /* ── WhatsApp extras ─────────────────────────────────────── */
+    .switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; }
+    .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .switch-track {
+      width: 34px; height: 20px; border-radius: 999px; background: var(--line-2);
+      position: relative; flex: none;
+      transition: background 160ms ease;
     }
-    .empty-icon { opacity: .5; margin-bottom: 8px; }
+    .switch-track::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 16px; height: 16px; border-radius: 50%; background: #fff;
+      box-shadow: 0 1px 2px rgba(16,18,24,.25);
+      transition: transform 160ms var(--ease-out);
+    }
+    .switch input:checked + .switch-track { background: var(--green); }
+    .switch input:checked + .switch-track::after { transform: translateX(14px); }
+    .switch input:focus-visible + .switch-track { outline: 2px solid var(--amber-deep); outline-offset: 2px; }
+    .switch-label { font-size: .78rem; font-weight: 600; color: var(--ink-2); }
+
+    .replybar { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
+    .replybar input {
+      flex: 1; border: 1px solid var(--line-2); border-radius: 9px;
+      padding: 9px 12px; font: inherit; font-size: .84rem; color: var(--ink);
+      outline: none; background: var(--paper);
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .replybar input:focus { border-color: var(--amber-deep); box-shadow: 0 0 0 3px rgba(255,208,112,.25); }
+    .replybar input:disabled { background: var(--canvas); color: var(--faint); }
+    .footnote { padding: 0 16px 12px; font-size: .72rem; color: var(--muted); min-height: 16px; }
+    .footnote.err { color: var(--red); }
+
+    /* ── Modal ───────────────────────────────────────────────── */
+    .modal-backdrop {
+      position: fixed; inset: 0; z-index: 50;
+      background: rgba(10,14,26,.55);
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+    }
+    .modal-backdrop[hidden] { display: none; }
+    .modal {
+      background: var(--paper); border-radius: 12px;
+      box-shadow: var(--shadow-2);
+      width: 100%; max-width: 400px; padding: 24px 24px 20px;
+    }
+    .modal h3 { margin: 0 0 3px; font-size: 1.02rem; letter-spacing: -.01em; }
+    .modal-sub { color: var(--muted); font-size: .8rem; margin: 0 0 12px; }
+    .modal label {
+      display: block; font-size: .66rem; font-weight: 700; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--muted); margin: 12px 0 5px;
+    }
+    .modal input {
+      width: 100%; border: 1px solid var(--line-2); border-radius: 8px;
+      font: inherit; font-size: .88rem; padding: 9px 12px; outline: none;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .modal input:focus { border-color: var(--amber-deep); box-shadow: 0 0 0 3px rgba(255,208,112,.25); }
+    .modal-msg { min-height: 18px; font-size: .8rem; margin-top: 12px; }
+    .modal-msg.err { color: var(--red); }
+    .modal-msg.ok { color: var(--green); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+    .empty { padding: 32px 20px; text-align: center; color: var(--muted); font-size: .82rem; }
+    .empty-icon { opacity: .45; margin-bottom: 6px; }
 
     @media (max-width: 960px) {
-      .transcript-grid { grid-template-columns: 1fr; }
-      .session-list { max-height: 320px; }
+      .split, .ov-grid { grid-template-columns: 1fr; }
+      .list-pane { max-height: 320px; }
       .search { min-width: 100%; }
       .topbar-meta { width: 100%; margin-left: 0; }
     }
-    .wa-badge { display:inline-block; font-size:11px; font-weight:600; border-radius:999px; padding:2px 9px; margin-left:6px; }
-    .wa-badge.open { background:#ECFDF5; color:#047857; }
-    .wa-badge.closed { background:#F1F5F9; color:#64748B; }
-    .wa-badge.muted { background:#FEF3C7; color:#B45309; }
-    .wa-switch { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:#334155; cursor:pointer; }
-    .wa-replybar { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line, #E2E8F0); }
-    .wa-replybar input { flex:1; border:1px solid #CBD5E1; border-radius:8px; padding:10px 12px; font-size:14px; }
-    .wa-replybar input:disabled { background:#F8FAFC; color:#94A3B8; }
-    .wa-note { padding:0 12px 12px; font-size:12px; color:#64748B; min-height:18px; }
-    .wa-note.err { color:#B91C1C; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: 0ms !important; }
+    }
   </style>
 </head>
 <body>
   <div class="topbar">
     <div class="topbar-inner">
-      <div class="brand">
-        <div class="brand-text">
-          <div class="wordmark">realti<span class="q">q</span><span class="q">.</span></div>
-          <div class="eyebrow">Robo-Nick · The Outdoor Squad</div>
-        </div>
+      <div class="brand-text">
+        <div class="wordmark">realti<span class="q">q</span><span class="q">.</span></div>
+        <div class="eyebrow">Robo-Nick · The Outdoor Squad</div>
       </div>
       <div class="topbar-meta">
         <span class="live-dot">Live</span>
-        <span id="lastUpdated">—</span>
+        <span id="lastUpdated">–</span>
         <a class="topbar-link" href="/admin">Refresh</a>
         <button class="topbar-link" id="changePwBtn" type="button">Change password</button>
         <form method="post" action="/logout" style="margin:0;display:inline;">
@@ -8051,25 +7972,62 @@ ADMIN_HTML = """
 
   <div class="tabs">
     <div class="tabs-inner">
-      <button class="tab active" data-tab="overview" type="button">Overview</button>
-      <button class="tab" data-tab="leads" type="button">Leads <span class="tab-count" id="leadsCount">0</span></button>
-      <button class="tab" data-tab="transcripts" type="button">Transcripts <span class="tab-count" id="transcriptsCount">0</span></button>
-      <button class="tab" data-tab="whatsapp" type="button">WhatsApp <span class="tab-count" id="waCount">0</span></button>
+      <button class="tab active" data-tab="overview" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+        Overview
+      </button>
+      <button class="tab" data-tab="leads" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Leads <span class="tab-count" id="leadsCount">0</span>
+      </button>
+      <button class="tab" data-tab="website" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13.5 13.5 0 0 1 0 18a13.5 13.5 0 0 1 0-18"/></svg>
+        Website <span class="tab-count" id="websiteCount">0</span>
+      </button>
+      <button class="tab" data-tab="whatsapp" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8a8.5 8.5 0 0 1-7.6 4.7a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8a8.5 8.5 0 0 1 4.7-7.6a8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
+        WhatsApp <span class="tab-count" id="waCount">0</span>
+      </button>
     </div>
   </div>
 
   <main>
     <section class="panel active" data-panel="overview">
-      <h2 class="section-title">At a glance</h2>
-      <p class="section-sub">Real-time activity from Robo-Nick. Refresh to pull the latest figures.</p>
-      <div class="metric-grid" id="metrics"></div>
+      <div class="page-head">
+        <h2 class="page-title">Overview</h2>
+        <p class="page-sub">What Robo-Nick has been doing across every channel.</p>
+      </div>
+      <div class="kpis" id="metrics"></div>
+      <div class="ov-grid">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">Recent activity</span>
+          </div>
+          <div id="ovActivity"></div>
+        </div>
+        <div class="ov-side">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">Channels</span>
+            </div>
+            <div id="ovChannels"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">Latest leads</span>
+              <button class="card-link" type="button" data-goto="leads">All leads</button>
+            </div>
+            <div id="ovLeads"></div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="panel" data-panel="leads">
       <div class="section-head">
-        <div class="section-head-left">
-          <h2 class="section-title">Captured leads</h2>
-          <p class="section-sub">Contacts collected by Robo-Nick. Most recent first.</p>
+        <div class="page-head">
+          <h2 class="page-title">Captured leads</h2>
+          <p class="page-sub">Contacts collected by Robo-Nick. Most recent first.</p>
         </div>
         <div class="section-head-actions">
           <a class="btn primary" href="/api/leads.csv">
@@ -8081,43 +8039,11 @@ ADMIN_HTML = """
       <div id="leads"></div>
     </section>
 
-    <section class="panel" data-panel="whatsapp">
+    <section class="panel" data-panel="website">
       <div class="section-head">
-        <div class="section-head-left">
-          <h2 class="section-title">WhatsApp</h2>
-          <p class="section-sub">Robo-Nick's WhatsApp threads. Reply here yourself and the bot goes quiet in that thread until you hand it back.</p>
-        </div>
-        <div class="section-head-actions">
-          <label class="wa-switch">
-            <input type="checkbox" id="waChannelToggle" checked>
-            <span id="waChannelLabel">Channel on</span>
-          </label>
-        </div>
-      </div>
-      <div class="transcript-grid">
-        <div class="session-list" id="waThreads"></div>
-        <div class="transcript-panel">
-          <div class="transcript-head">
-            <div class="transcript-head-meta" id="waMeta">Select a conversation on the left.</div>
-            <div class="transcript-actions">
-              <button class="btn ghost" id="waMuteBtn" type="button" disabled>Mute bot</button>
-            </div>
-          </div>
-          <div class="messages" id="waMessages"></div>
-          <form class="wa-replybar" id="waReplyForm">
-            <input id="waReplyInput" placeholder="Reply as Nick…" autocomplete="off" disabled>
-            <button class="btn primary" id="waReplySend" type="submit" disabled>Send</button>
-          </form>
-          <div class="wa-note" id="waNote"></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel" data-panel="transcripts">
-      <div class="section-head">
-        <div class="section-head-left">
-          <h2 class="section-title">Transcripts</h2>
-          <p class="section-sub">Grouped by session. Contact details are redacted in-app.</p>
+        <div class="page-head">
+          <h2 class="page-title">Website chat</h2>
+          <p class="page-sub">Conversations from the widget on theoutdoorsquad.com.au. Contact details are redacted in-app.</p>
         </div>
         <div class="section-head-actions">
           <label class="search">
@@ -8126,12 +8052,12 @@ ADMIN_HTML = """
           </label>
         </div>
       </div>
-      <div class="transcript-grid">
-        <div class="session-list" id="sessions"></div>
-        <div class="transcript-panel">
-          <div class="transcript-head">
-            <div class="transcript-head-meta" id="transcriptMeta">Select a conversation on the left.</div>
-            <div class="transcript-actions">
+      <div class="split">
+        <div class="list-pane" id="sessions"></div>
+        <div class="detail-pane">
+          <div class="detail-head">
+            <div class="detail-head-meta" id="transcriptMeta">Select a conversation on the left.</div>
+            <div class="detail-actions">
               <button class="btn ghost" id="copyTranscript" type="button" disabled>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
                 Copy
@@ -8143,6 +8069,39 @@ ADMIN_HTML = """
             </div>
           </div>
           <div class="messages" id="messages"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="whatsapp">
+      <div class="section-head">
+        <div class="page-head">
+          <h2 class="page-title">WhatsApp</h2>
+          <p class="page-sub">Reply here yourself and the bot goes quiet in that thread until you hand it back.</p>
+        </div>
+        <div class="section-head-actions">
+          <label class="switch">
+            <input type="checkbox" id="waChannelToggle" checked>
+            <span class="switch-track"></span>
+            <span class="switch-label" id="waChannelLabel">Channel on</span>
+          </label>
+        </div>
+      </div>
+      <div class="split">
+        <div class="list-pane" id="waThreads"></div>
+        <div class="detail-pane">
+          <div class="detail-head">
+            <div class="detail-head-meta" id="waMeta">Select a conversation on the left.</div>
+            <div class="detail-actions">
+              <button class="btn ghost" id="waMuteBtn" type="button" disabled>Mute bot</button>
+            </div>
+          </div>
+          <div class="messages" id="waMessages"></div>
+          <form class="replybar" id="waReplyForm">
+            <input id="waReplyInput" placeholder="Reply as Nick…" autocomplete="off" disabled>
+            <button class="btn primary" id="waReplySend" type="submit" disabled>Send</button>
+          </form>
+          <div class="footnote" id="waNote"></div>
         </div>
       </div>
     </section>
@@ -8169,6 +8128,9 @@ ADMIN_HTML = """
   <script>
     window.__OS_ADMIN_DATA__ = __ADMIN_DATA__;
 
+    var ICON_GLOBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13.5 13.5 0 0 1 0 18a13.5 13.5 0 0 1 0-18"/></svg>';
+    var ICON_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8a8.5 8.5 0 0 1-7.6 4.7a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8a8.5 8.5 0 0 1 4.7-7.6a8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>';
+
     function esc(value) {
       return String(value == null ? '' : value).replace(/[&<>"']/g, function(c) {
         return ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]);
@@ -8181,13 +8143,13 @@ ADMIN_HTML = """
       return new Intl.NumberFormat('en-AU').format(Number(value) || 0);
     }
     function fmtDate(value) {
-      if (!value) return '—';
+      if (!value) return '–';
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return String(value);
       return date.toLocaleString('en-AU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
     }
     function fmtRelative(value) {
-      if (!value) return '—';
+      if (!value) return '–';
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return String(value);
       const diff = (Date.now() - date.getTime()) / 1000;
@@ -8209,42 +8171,138 @@ ADMIN_HTML = """
       else if (r.includes('drop') || r.includes('lost')) tone = 'red';
       return '<span class="badge ' + tone + '">' + esc(route || 'lead') + '</span>';
     }
+    function websiteTranscripts() {
+      return (window.__OS_ADMIN_DATA__.transcripts || []).filter(function(s) {
+        return !String(s.session_id || '').startsWith('wa-');
+      });
+    }
+    function waPhone(sid) {
+      return '+' + String(sid || '').replace('wa-', '');
+    }
 
-    // Metric builder
-    function metricCard(label, value, foot, feature) {
+    function kpi(label, value, foot) {
       return ''
-        + '<div class="metric-card' + (feature ? ' feature' : '') + '">'
-        +   '<div class="metric-label">' + esc(label) + '</div>'
-        +   '<div class="metric-value">' + esc(value) + '</div>'
-        +   (foot ? '<div class="metric-foot">' + esc(foot) + '</div>' : '')
+        + '<div class="kpi">'
+        +   '<div class="kpi-label">' + esc(label) + '</div>'
+        +   '<div class="kpi-value">' + esc(value) + '</div>'
+        +   (foot ? '<div class="kpi-foot">' + esc(foot) + '</div>' : '')
         + '</div>';
     }
 
     // Tabs
+    function activateTab(name) {
+      document.querySelectorAll('.tab').forEach(function(t) {
+        t.classList.toggle('active', t.getAttribute('data-tab') === name);
+      });
+      document.querySelectorAll('.panel').forEach(function(p) {
+        p.classList.toggle('active', p.getAttribute('data-panel') === name);
+      });
+    }
     function initTabs() {
-      const tabs = document.querySelectorAll('.tab');
-      const panels = document.querySelectorAll('.panel');
-      tabs.forEach(function(tab) {
-        tab.addEventListener('click', function() {
-          const target = tab.getAttribute('data-tab');
-          tabs.forEach(function(t) { t.classList.toggle('active', t === tab); });
-          panels.forEach(function(p) {
-            p.classList.toggle('active', p.getAttribute('data-panel') === target);
-          });
-        });
+      document.querySelectorAll('.tab').forEach(function(tab) {
+        tab.addEventListener('click', function() { activateTab(tab.getAttribute('data-tab')); });
+      });
+      document.querySelectorAll('[data-goto]').forEach(function(el) {
+        el.addEventListener('click', function() { activateTab(el.getAttribute('data-goto')); });
       });
     }
 
-    // Transcripts
+    // ── Overview ────────────────────────────────────────────────
+    function renderOverview() {
+      const data = window.__OS_ADMIN_DATA__ || {};
+      const wa = data.wa || { channel_enabled: true, conversations: [] };
+      const leads = data.leads || [];
+
+      // Activity feed: newest sessions across channels, one line each.
+      const items = [];
+      websiteTranscripts().forEach(function(s) {
+        const lastUser = (s.messages || []).slice().reverse().find(function(m) { return m.role === 'user'; });
+        items.push({
+          channel: 'website', id: s.session_id, ts: s.latest_at,
+          name: s.session_id, preview: lastUser ? lastUser.content : 'No visitor message yet'
+        });
+      });
+      (wa.conversations || []).forEach(function(t) {
+        const last = t.last_message || {};
+        items.push({
+          channel: 'whatsapp', id: t.session_id, ts: last.timestamp,
+          name: waPhone(t.session_id), preview: last.content || ''
+        });
+      });
+      items.sort(function(a, b) { return new Date(b.ts || 0) - new Date(a.ts || 0); });
+      const feed = document.getElementById('ovActivity');
+      feed.innerHTML = items.length ? items.slice(0, 8).map(function(it) {
+        return '<button class="feed-row" type="button" data-open-channel="' + esc(it.channel) + '" data-open-id="' + esc(it.id) + '">'
+          + '<span class="chip ' + esc(it.channel) + '">' + (it.channel === 'whatsapp' ? ICON_CHAT : ICON_GLOBE) + '</span>'
+          + '<span class="feed-main">'
+          +   '<span class="feed-name">' + esc(it.name) + '</span>'
+          +   '<span class="feed-preview">' + esc(it.preview) + '</span>'
+          + '</span>'
+          + '<span class="feed-time">' + esc(fmtRelative(it.ts)) + '</span>'
+          + '</button>';
+      }).join('') : '<div class="empty">No conversations yet. Activity shows up here as people talk to Robo-Nick.</div>';
+      feed.querySelectorAll('[data-open-channel]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          const channel = btn.getAttribute('data-open-channel');
+          const id = btn.getAttribute('data-open-id');
+          if (channel === 'whatsapp') {
+            waSelectedId = id;
+            renderWaThreads(); renderWaDetail();
+            activateTab('whatsapp');
+          } else {
+            const searchEl = document.getElementById('search');
+            if (searchEl) searchEl.value = '';
+            selectedSessionId = id;
+            renderSessions(); renderTranscript();
+            activateTab('website');
+          }
+        });
+      });
+
+      // Channel status.
+      const webCount = websiteTranscripts().length;
+      const waCountN = (wa.conversations || []).length;
+      document.getElementById('ovChannels').innerHTML = ''
+        + '<div class="plain-row">'
+        +   '<span class="chip website">' + ICON_GLOBE + '</span>'
+        +   '<span class="feed-main">'
+        +     '<span class="feed-name">Website chat</span>'
+        +     '<span class="feed-preview">' + num(webCount) + (webCount === 1 ? ' conversation' : ' conversations') + '</span>'
+        +   '</span>'
+        +   '<span class="badge green">Live</span>'
+        + '</div>'
+        + '<div class="plain-row">'
+        +   '<span class="chip whatsapp">' + ICON_CHAT + '</span>'
+        +   '<span class="feed-main">'
+        +     '<span class="feed-name">WhatsApp</span>'
+        +     '<span class="feed-preview">' + (waCountN ? num(waCountN) + (waCountN === 1 ? ' conversation' : ' conversations') : 'No conversations yet') + '</span>'
+        +   '</span>'
+        +   (wa.channel_enabled ? '<span class="badge">On</span>' : '<span class="badge red">Off</span>')
+        + '</div>';
+
+      // Latest leads.
+      const latest = leads.slice().reverse().slice(0, 5);
+      document.getElementById('ovLeads').innerHTML = latest.length ? latest.map(function(lead) {
+        return '<div class="plain-row">'
+          + '<span class="feed-main">'
+          +   '<span class="feed-name">' + esc(lead.name || 'Unnamed lead') + '</span>'
+          +   '<span class="feed-preview">' + esc(lead.email || lead.phone || 'No contact details') + '</span>'
+          + '</span>'
+          + '<span class="feed-time">' + esc(fmtRelative(lead.timestamp)) + '</span>'
+          + '</div>';
+      }).join('') : '<div class="empty">No leads yet.</div>';
+    }
+
+    // ── Website chat ────────────────────────────────────────────
     let selectedSessionId = null;
     function selectedSession() {
-      const sessions = (window.__OS_ADMIN_DATA__.transcripts || []);
+      const sessions = websiteTranscripts();
       return sessions.find(function(s) { return s.session_id === selectedSessionId; }) || null;
     }
     function transcriptText(session) {
       if (!session) return '';
       const lines = [
-        'Outdoor Squad — Conversation Transcript',
+        'Outdoor Squad, conversation transcript',
         'Session: ' + session.session_id,
         'First: ' + (session.first_at || 'unknown'),
         'Latest: ' + (session.latest_at || 'unknown'),
@@ -8261,7 +8319,7 @@ ADMIN_HTML = """
     function renderSessions() {
       const searchEl = document.getElementById('search');
       const search = String(searchEl ? searchEl.value : '').toLowerCase();
-      const all = window.__OS_ADMIN_DATA__.transcripts || [];
+      const all = websiteTranscripts();
       const sessions = all.filter(function(session) {
         const haystack = [
           session.session_id,
@@ -8283,10 +8341,10 @@ ADMIN_HTML = """
           + '<div class="session-meta">'
           +   '<span class="session-id">' + esc(session.session_id) + '</span>'
           +   '<div class="session-time">' + esc(fmtRelative(session.latest_at)) + ' · ' + esc(session.message_count || 0) + ' msgs</div>'
-          +   '<div class="session-preview">' + esc(lastUser ? lastUser.content : 'No user message yet') + '</div>'
+          +   '<div class="session-preview">' + esc(lastUser ? lastUser.content : 'No visitor message yet') + '</div>'
           + '</div>'
         + '</button>';
-      }).join('') : '<div class="empty">No transcripts match your search.</div>';
+      }).join('') : '<div class="empty">No conversations match your search.</div>';
       wrap.querySelectorAll('.session-row').forEach(function(btn) {
         btn.addEventListener('click', function() {
           selectedSessionId = btn.getAttribute('data-session');
@@ -8308,15 +8366,18 @@ ADMIN_HTML = """
           + 'Nothing selected yet.</div>';
         copyBtn.disabled = true;
         download.removeAttribute('href');
+        download.setAttribute('aria-disabled', 'true');
         return;
       }
       copyBtn.disabled = false;
+      download.removeAttribute('aria-disabled');
       download.href = '/api/conversation-transcripts/' + encodeURIComponent(session.session_id) + '.md';
       meta.innerHTML = '<strong>' + esc(session.message_count || 0) + ' messages</strong> · last activity ' + esc(fmtRelative(session.latest_at));
       msgs.innerHTML = (session.messages || []).map(function(m) {
         const role = esc(m.role || 'unknown');
+        const who = m.role === 'user' ? 'Visitor' : 'Robo-Nick';
         return '<article class="chat-message ' + role + '">'
-          + '<div class="role">' + role + ' · ' + esc(fmtDate(m.timestamp)) + '</div>'
+          + '<div class="role">' + esc(who) + ' · ' + esc(fmtDate(m.timestamp)) + '</div>'
           + esc(m.content || '')
         + '</article>';
       }).join('') || '<div class="empty">No messages in this session.</div>';
@@ -8328,7 +8389,7 @@ ADMIN_HTML = """
         wrap.innerHTML = ''
           + '<div class="table-wrap"><div class="empty">'
           + '<div class="empty-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6m3-3v6"/></svg></div>'
-          + 'No leads captured yet. They’ll appear here as Robo-Nick collects contact info.'
+          + 'No leads captured yet. They\\'ll appear here as Robo-Nick collects contact info.'
           + '</div></div>';
         return;
       }
@@ -8339,17 +8400,17 @@ ADMIN_HTML = """
         + leads.slice().reverse().map(function(lead) {
             return '<tr>'
               + '<td class="nowrap mono">' + esc(fmtDate(lead.timestamp)) + '</td>'
-              + '<td>' + esc(lead.name || '—') + '</td>'
-              + '<td class="mono">' + esc(lead.email || lead.phone || '—') + '</td>'
+              + '<td>' + esc(lead.name || '–') + '</td>'
+              + '<td class="mono">' + esc(lead.email || lead.phone || '–') + '</td>'
               + '<td>' + badgeFor(lead.route) + '</td>'
-              + '<td>' + esc(lead.handoff_summary || '—') + '</td>'
-              + '<td class="mono">' + esc(lead.session_id || '—') + '</td>'
+              + '<td>' + esc(lead.handoff_summary || '–') + '</td>'
+              + '<td class="mono">' + esc(lead.session_id || '–') + '</td>'
             + '</tr>';
           }).join('')
         + '</tbody></table></div>';
     }
 
-    // ── WhatsApp tab ────────────────────────────────────────────────────
+    // ── WhatsApp ────────────────────────────────────────────────
     let waSelectedId = null;
 
     function waData() { return (window.__OS_ADMIN_DATA__ || {}).wa || { channel_enabled: true, conversations: [] }; }
@@ -8362,9 +8423,9 @@ ADMIN_HTML = """
     function waWindowBadge(thread) {
       if (thread.window_open) {
         const h = Math.floor(thread.minutes_remaining / 60), m = thread.minutes_remaining % 60;
-        return '<span class="wa-badge open">Window open · ' + h + 'h ' + m + 'm left</span>';
+        return '<span class="badge green">Window open · ' + h + 'h ' + m + 'm left</span>';
       }
-      return '<span class="wa-badge closed">Window closed · template only</span>';
+      return '<span class="badge">Window closed · template only</span>';
     }
 
     function renderWaThreads() {
@@ -8373,18 +8434,18 @@ ADMIN_HTML = """
       document.getElementById('waCount').textContent = num(threads.length);
       const toggle = document.getElementById('waChannelToggle');
       toggle.checked = !!wa.channel_enabled;
-      document.getElementById('waChannelLabel').textContent = wa.channel_enabled ? 'Channel on' : 'Channel OFF, bot silent';
+      document.getElementById('waChannelLabel').textContent = wa.channel_enabled ? 'Channel on' : 'Channel off, bot silent';
       if (!waSelectedId && threads.length) waSelectedId = threads[0].session_id;
       const wrap = document.getElementById('waThreads');
       wrap.innerHTML = threads.length ? threads.map(function(t) {
         const active = t.session_id === waSelectedId ? ' active' : '';
         const last = t.last_message || {};
         return '<button class="session-row' + active + '" type="button" data-wa-session="' + esc(t.session_id) + '">'
-          + '<div class="session-avatar">' + esc(initials(t.session_id)) + '</div>'
+          + '<div class="session-avatar">' + ICON_CHAT + '</div>'
           + '<div class="session-meta">'
-          +   '<span class="session-id">+' + esc(t.session_id.replace('wa-', '')) + '</span>'
+          +   '<span class="session-id">' + esc(waPhone(t.session_id)) + '</span>'
           +   '<div class="session-time">' + esc(fmtRelative(last.timestamp)) + ' · ' + esc(t.message_count || 0) + ' msgs'
-          +     (t.muted ? ' <span class="wa-badge muted">Bot muted</span>' : '') + '</div>'
+          +     (t.muted ? ' <span class="badge amber">Bot muted</span>' : '') + '</div>'
           +   '<div class="session-preview">' + esc(last.content || '') + '</div>'
           + '</div>'
           + '</button>';
@@ -8404,25 +8465,27 @@ ADMIN_HTML = """
       const input = document.getElementById('waReplyInput');
       const send = document.getElementById('waReplySend');
       const note = document.getElementById('waNote');
-      note.textContent = ''; note.className = 'wa-note';
+      note.textContent = ''; note.className = 'footnote';
       if (!thread) {
         meta.textContent = 'Select a conversation on the left.';
         muteBtn.disabled = true; input.disabled = true; send.disabled = true;
         document.getElementById('waMessages').innerHTML = '';
         return;
       }
-      meta.innerHTML = '<strong>+' + esc(thread.session_id.replace('wa-', '')) + '</strong> ' + waWindowBadge(thread)
-        + (thread.muted ? ' <span class="wa-badge muted">Bot muted, you are driving</span>' : '');
+      meta.innerHTML = '<strong>' + esc(waPhone(thread.session_id)) + '</strong> ' + waWindowBadge(thread)
+        + (thread.muted ? ' <span class="badge amber">Bot muted, you are driving</span>' : '');
       muteBtn.disabled = false;
       muteBtn.textContent = thread.muted ? 'Hand back to bot' : 'Mute bot';
       const canReply = !!thread.window_open;
       input.disabled = !canReply; send.disabled = !canReply;
-      input.placeholder = canReply ? 'Reply as Nick…' : 'Window closed. WhatsApp only allows template messages now';
+      input.placeholder = canReply ? 'Reply as Nick…' : 'Window closed. WhatsApp only allows template messages now.';
       document.getElementById('waMessages').innerHTML = waThreadMessages(thread.session_id).map(function(m) {
-        const who = m.role === 'user' ? 'them' : 'bot';
-        return '<div class="msg ' + esc(m.role || '') + '"><div class="msg-role">' + esc(who) + '</div>'
-          + '<div class="msg-bubble">' + esc(m.content || '') + '</div>'
-          + '<div class="msg-time">' + esc(fmtRelative(m.timestamp)) + '</div></div>';
+        const role = esc(m.role || 'unknown');
+        const who = m.role === 'user' ? 'Customer' : 'Robo-Nick';
+        return '<article class="chat-message ' + role + '">'
+          + '<div class="role">' + esc(who) + ' · ' + esc(fmtDate(m.timestamp)) + '</div>'
+          + esc(m.content || '')
+        + '</article>';
       }).join('') || '<div class="empty">No messages recorded for this thread.</div>';
     }
 
@@ -8431,7 +8494,7 @@ ADMIN_HTML = """
         const res = await fetch('/api/wa/conversations', { credentials: 'include' });
         if (res.ok) {
           window.__OS_ADMIN_DATA__.wa = await res.json();
-          renderWaThreads(); renderWaDetail();
+          renderWaThreads(); renderWaDetail(); renderOverview();
         }
       } catch (e) {}
     }
@@ -8439,17 +8502,24 @@ ADMIN_HTML = """
     function waNoteMsg(text, isErr) {
       const note = document.getElementById('waNote');
       note.textContent = text;
-      note.className = isErr ? 'wa-note err' : 'wa-note';
+      note.className = isErr ? 'footnote err' : 'footnote';
     }
 
     function initWaActions() {
       document.getElementById('waChannelToggle').addEventListener('change', async function() {
         const enabled = this.checked;
-        const res = await fetch('/api/wa/kill', {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: enabled })
-        });
+        let res;
+        try {
+          res = await fetch('/api/wa/kill', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled })
+          });
+        } catch (e) {
+          this.checked = !enabled;
+          waNoteMsg('Network error. Nothing was changed.', true);
+          return;
+        }
         const body = await res.json().catch(function() { return {}; });
         if (!res.ok) {
           this.checked = !enabled;
@@ -8465,11 +8535,17 @@ ADMIN_HTML = """
         if (!thread) return;
         const body = thread.muted ? { session_id: thread.session_id, clear: true }
                                   : { session_id: thread.session_id, minutes: 24 * 60 };
-        const res = await fetch('/api/wa/mute', {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
+        let res;
+        try {
+          res = await fetch('/api/wa/mute', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+        } catch (e) {
+          waNoteMsg('Network error. The mute was not changed.', true);
+          return;
+        }
         if (res.ok) { waRefresh(); } else { waNoteMsg('Could not change the mute.', true); }
       });
 
@@ -8480,11 +8556,18 @@ ADMIN_HTML = """
         if (!message || !waSelectedId) return;
         const send = document.getElementById('waReplySend');
         send.disabled = true;
-        const res = await fetch('/api/wa/reply', {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: waSelectedId, message: message })
-        });
+        let res;
+        try {
+          res = await fetch('/api/wa/reply', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: waSelectedId, message: message })
+          });
+        } catch (e) {
+          send.disabled = false;
+          waNoteMsg('Network error. Nothing was sent.', true);
+          return;
+        }
         const body = await res.json().catch(function() { return {}; });
         send.disabled = false;
         if (!res.ok) {
@@ -8506,19 +8589,18 @@ ADMIN_HTML = """
       const data = window.__OS_ADMIN_DATA__ || {};
       const metrics = data.metrics || { outcomes: {} };
       const leads = data.leads || [];
-      const transcripts = data.transcripts || [];
 
       document.getElementById('lastUpdated').textContent = 'Updated ' + fmtRelative(metrics.last_event_at || new Date().toISOString());
       document.getElementById('leadsCount').textContent = num(leads.length);
-      document.getElementById('transcriptsCount').textContent = num(transcripts.length);
+      document.getElementById('websiteCount').textContent = num(websiteTranscripts().length);
 
       document.getElementById('metrics').innerHTML = [
-        metricCard('Conversations started', num(metrics.conversations_started), 'total sessions', true),
-        metricCard('Completion rate', pct(metrics.completion_rate), 'of conversations completed'),
-        metricCard('Drop-off rate', pct(metrics.dropoff_rate), 'left mid-chat'),
-        metricCard('Leads captured', num(metrics.leads_captured), 'contacts + trial-link clicks'),
-        metricCard('Trial-link clicks', num(metrics.outcomes.trial_link_clicked), 'pressed the booking link'),
-        metricCard('Handoffs suggested', num(metrics.outcomes.human_handoff_suggested), 'routed to Nick / Lyn')
+        kpi('Conversations', num(metrics.conversations_started), 'total sessions'),
+        kpi('Leads captured', num(metrics.leads_captured), 'contacts + trial clicks'),
+        kpi('Trial-link clicks', num(metrics.outcomes.trial_link_clicked), 'pressed the booking link'),
+        kpi('Handoffs', num(metrics.outcomes.human_handoff_suggested), 'routed to Nick / Lyn'),
+        kpi('Completion', pct(metrics.completion_rate), 'of conversations completed'),
+        kpi('Drop-off', pct(metrics.dropoff_rate), 'left mid-chat')
       ].join('');
 
       renderLeads(leads);
@@ -8527,6 +8609,7 @@ ADMIN_HTML = """
       renderWaThreads();
       renderWaDetail();
       initWaActions();
+      renderOverview();
 
       document.getElementById('search').addEventListener('input', function() {
         renderSessions();
@@ -8563,7 +8646,7 @@ ADMIN_HTML = """
         msg.className = 'modal-msg err';
         if (!current || !next) { msg.textContent = 'Fill in every field.'; return; }
         if (next.length < 10) { msg.textContent = 'New password must be at least 10 characters.'; return; }
-        if (next !== confirm) { msg.textContent = 'New passwords don\\'t match.'; return; }
+        if (next !== confirm) { msg.textContent = "New passwords don't match."; return; }
         this.disabled = true;
         msg.className = 'modal-msg'; msg.textContent = 'Saving…';
         try {

@@ -148,7 +148,7 @@ def main() -> int:
             failures.append(f"admin dashboard HTTP {admin_response.status_code}")
         else:
             admin_html = admin_response.text
-            for term in ["Transcripts", "Copy selected", "Download selected", "Search transcripts"]:
+            for term in ["Overview", "Website", "WhatsApp", "Export CSV", "Search messages or session id"]:
                 if term not in admin_html:
                     failures.append(f"admin dashboard missing {term}")
         grouped_response = client.get("/api/conversation-transcripts?limit=20", auth=admin_auth)
