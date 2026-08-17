@@ -256,7 +256,49 @@ def test_report_text_content():
     assert "67% of conversations" in text
     assert "Explicit requests to speak with Nick/Lyn: 1" in text
     assert "Owner alerts successfully sent: 1" in text
-    assert "outdoor-squad-bot.onrender.com/admin" in text
+    assert "outdoorsquad.realtiq.ai/admin" in text
+
+
+def test_report_html_is_branded_and_complete():
+    _seed_funnel()
+    stats = app.build_report_stats(days=7)
+    html = app.format_report_html(stats)
+    # Realtiq brand
+    assert "#0a0e1a" in html and "#ffd070" in html
+    assert "realti" in html  # wordmark
+    # Content mirrors the text version
+    assert "Weekly report" in html
+    assert str(stats["widget_impressions"]) in html
+    assert "outdoorsquad.realtiq.ai/admin" in html
+    # Email-safe: no external resources
+    assert "<link" not in html and "src=" not in html
+
+
+def test_lead_alert_html_branded_with_contact_links():
+    lead = {
+        "name": "Test Person",
+        "email": "prospect@example.com",
+        "phone": "0400 111 222",
+        "route": "trial",
+        "location_preference": "Camperdown",
+        "time_preference": "6am",
+        "concerns": ["knee"],
+        "handoff_summary": "Wants to start next week.",
+        "raw_message": "Hi <b>there</b>, I'm keen!",
+        "session_id": "widget-x1",
+        "timestamp": "2026-08-17T00:00:00",
+    }
+    html = app.format_lead_summary_html(lead)
+    assert "New lead: Test Person" in html
+    assert 'href="tel:0400 111 222"' in html
+    assert 'href="mailto:prospect@example.com"' in html
+    assert "#0a0e1a" in html and "#ffd070" in html
+    # Visitor-controlled text must be escaped
+    assert "<b>there</b>" not in html and "&lt;b&gt;there&lt;/b&gt;" in html
+    # Human-request flavor
+    lead["alert_type"] = "human_request"
+    html2 = app.format_lead_summary_html(lead)
+    assert "Test Person asked to speak with you" in html2
 
 
 def test_report_sms_digest_is_short_and_complete():

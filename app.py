@@ -242,6 +242,11 @@ REPORT_EMAIL_TO = os.environ.get("OUTDOOR_SQUAD_REPORT_EMAIL_TO", "").strip()
 REPORT_WEEKDAY = int(os.environ.get("OUTDOOR_SQUAD_REPORT_WEEKDAY", "0"))  # 0 = Monday
 REPORT_HOUR = int(os.environ.get("OUTDOOR_SQUAD_REPORT_HOUR", "8"))  # local Sydney hour
 REPORT_TIMEZONE = os.environ.get("OUTDOOR_SQUAD_REPORT_TIMEZONE", "Australia/Sydney")
+# Client-facing base URL for dashboard links in emails. The onrender.com host
+# keeps working (widget embeds use it); this is what Nick clicks.
+PUBLIC_BASE_URL = os.environ.get(
+    "OUTDOOR_SQUAD_PUBLIC_BASE_URL", "https://outdoorsquad.realtiq.ai"
+).rstrip("/")
 # WhatsApp Cloud API (Coexistence) — stage-1 scaffolding. Entirely env-driven
 # and dormant until Nick's Meta app access lands: without these, /wa-onboard
 # shows "not configured" and the webhook rejects everything.
@@ -4116,10 +4121,233 @@ def format_report_text(stats: dict) -> str:
         ]
     lines += [
         "",
-        "Full transcripts and live numbers: https://outdoor-squad-bot.onrender.com/admin",
+        f"Full transcripts and live numbers: {PUBLIC_BASE_URL}/admin",
         "— Robo-Nick",
     ]
     return "\n".join(lines)
+
+
+# ── Realtiq-branded email templates ─────────────────────────────────────────
+# Table-based, inline-styled HTML (email-client-safe: no external CSS, no
+# images required). Brand: navy #0a0e1a, amber #ffd070, per ~/realtiq-logo.
+
+REALTIQ_NAVY = "#0a0e1a"
+REALTIQ_AMBER = "#ffd070"
+
+
+def _email_shell(kind_label: str, inner: str, recipient_note: str) -> str:
+    return f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:#f4f5f7;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:24px 12px;">
+<tr><td align="center">
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;">
+  <tr><td style="background:{REALTIQ_NAVY};border-radius:12px 12px 0 0;padding:18px 28px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:bold;letter-spacing:-0.3px;color:#ffffff;">
+        realti<span style="color:{REALTIQ_AMBER};">q</span><span style="display:inline-block;width:7px;height:7px;background:{REALTIQ_AMBER};border-radius:50%;margin-left:7px;"></span>
+      </td>
+      <td align="right" style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;">
+        {kind_label}
+      </td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="height:3px;background:{REALTIQ_AMBER};font-size:0;line-height:0;">&nbsp;</td></tr>
+  <tr><td style="background:#ffffff;padding:28px;border-radius:0 0 12px 12px;font-family:Arial,Helvetica,sans-serif;color:#1e293b;">
+    {inner}
+  </td></tr>
+  <tr><td style="padding:16px 28px;font-family:Arial,Helvetica,sans-serif;font-size:11.5px;line-height:1.5;color:#94a3b8;">
+    Robo-Nick &middot; a <span style="color:#64748b;font-weight:bold;">realtiq</span> system for The Outdoor Squad.<br>
+    {recipient_note}
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
+
+
+def _email_h1(text: str) -> str:
+    return (
+        f'<div style="font-size:21px;font-weight:bold;color:{REALTIQ_NAVY};'
+        f'line-height:1.3;margin:0 0 4px;">{text}</div>'
+    )
+
+
+def _email_section(label: str) -> str:
+    return (
+        f'<div style="font-size:11px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;'
+        f'border-left:3px solid {REALTIQ_AMBER};padding-left:9px;margin:24px 0 6px;">{label}</div>'
+    )
+
+
+def _email_row(label: str, value: str, note: str = "") -> str:
+    note_html = (
+        f'<div style="font-size:12px;color:#94a3b8;line-height:1.45;padding-top:2px;">{note}</div>'
+        if note
+        else ""
+    )
+    return f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #eef1f4;"><tr>
+      <td style="padding:9px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#475569;">{label}{note_html}</td>
+      <td align="right" valign="top" style="padding:9px 0 9px 16px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;color:{REALTIQ_NAVY};white-space:nowrap;">{value}</td>
+    </tr></table>"""
+
+
+def _email_button(label: str, url: str) -> str:
+    return f"""<table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px 0 2px;"><tr>
+      <td style="background:{REALTIQ_AMBER};border-radius:8px;">
+        <a href="{url}" style="display:inline-block;padding:12px 22px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;color:{REALTIQ_NAVY};text-decoration:none;">{label}</a>
+      </td>
+    </tr></table>"""
+
+
+def _html_escape(value) -> str:
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def format_report_html(stats: dict) -> str:
+    e = _html_escape
+    days = stats["window_days"]
+    inner = [_email_h1(f"Weekly report"),
+             f'<div style="font-size:13px;color:#64748b;margin-bottom:2px;">Last {days} days &middot; The Outdoor Squad website bot</div>']
+
+    inner.append(_email_section("The funnel"))
+    inner.append(_email_row(
+        "Real visitors who saw the chat bubble",
+        str(stats["widget_impressions"]),
+        f"Crawlers filtered out. Raw page loads including them: {stats.get('raw_page_loads', 0)}.",
+    ))
+    inner.append(_email_row("Chats opened", str(stats["widget_opened_sessions"])))
+    conv_note = f"{_pct(stats['engagement_rate'])} of real visitors" if stats["widget_impressions"] else ""
+    inner.append(_email_row("Conversations started", str(stats["conversations_started"]), conv_note))
+    lead_note = f"{_pct(stats['conversation_to_lead_rate'])} of conversations" if stats["conversations_started"] else ""
+    inner.append(_email_row("Leads captured (contact details handed over)", str(stats["contact_leads"]), lead_note))
+
+    inner.append(_email_section("Trial actions"))
+    inner.append(_email_row("Trial link offered in chat", str(stats["booking_link_shown_sessions"])))
+    inner.append(_email_row(
+        "Trial link actually clicked",
+        str(stats["trial_link_clicks"]),
+        "The strongest booking signal visible from the chat side — cross-check names against Momence.",
+    ))
+
+    inner.append(_email_section("Human follow-up"))
+    inner.append(_email_row("Bot-generated follow-up suggestions", str(stats.get("handoff_suggestions", 0))))
+    hr_note = f"{_pct(stats['handoff_rate'])} of conversations" if stats["conversations_started"] else ""
+    inner.append(_email_row("Explicit requests to speak with Nick/Lyn", str(stats.get("human_requests", 0)), hr_note))
+    inner.append(_email_row("Owner alerts successfully sent", str(stats.get("handoff_alerts_sent", stats.get("handoffs", 0)))))
+
+    versions = stats.get("widget_versions") or {}
+    if versions:
+        inner.append(_email_section("Widget version rollout"))
+        for version, visitors in sorted(versions.items()):
+            inner.append(_email_row(e(version), f"{visitors} visitor(s)"))
+
+    baseline = stats.get("traffic_baseline_4w") or []
+    if baseline:
+        inner.append(_email_section("Four-week traffic baseline"))
+        for week in baseline:
+            inner.append(_email_row(f"{e(week['week_start'])} &rarr; {e(week['week_end'])}", f"{week['real_visitors']} visitor(s)"))
+
+    shipped = stats.get("shipped_lines") or []
+    if shipped:
+        inner.append(_email_section("Went live this week"))
+        items = "".join(
+            f'<li style="padding:3px 0;color:#334155;font-size:13.5px;line-height:1.45;">{e(line)}</li>'
+            for line in shipped
+        )
+        inner.append(f'<ul style="margin:6px 0 0;padding-left:20px;">{items}</ul>')
+
+    variants = stats.get("teaser_variants") or {}
+    if len(variants) >= 2:
+        labels = {"control": "Original greeting", "nick": "Nick's greeting line"}
+        inner.append(_email_section("Greeting test (running since 6 Aug)"))
+        for key in sorted(variants):
+            bucket = variants[key]
+            rate = safe_rate(bucket["opened"], bucket["visitors"])
+            inner.append(_email_row(
+                labels.get(key, e(key)),
+                f"{bucket['opened']}/{bucket['visitors']} opened ({_pct(rate)})",
+            ))
+        inner.append('<div style="font-size:12px;color:#94a3b8;padding-top:6px;line-height:1.45;">Long game: at current traffic this needs months, not weeks. It runs in the background; nobody decides off early numbers.</div>')
+
+    if stats["lead_lines"]:
+        inner.append(_email_section("Leads this period"))
+        items = "".join(
+            f'<li style="padding:3px 0;color:#334155;font-size:13.5px;">{e(line)}</li>'
+            for line in stats["lead_lines"]
+        )
+        inner.append(f'<ul style="margin:6px 0 0;padding-left:20px;">{items}</ul>')
+
+    inner.append(_email_button("Open the live dashboard", f"{PUBLIC_BASE_URL}/admin"))
+
+    return _email_shell(
+        "Weekly report",
+        "".join(inner),
+        "Sent automatically every Monday. Full transcripts live in the dashboard.",
+    )
+
+
+def format_lead_summary_html(lead_info: dict) -> str:
+    e = _html_escape
+    concerns = lead_info.get("concerns") or []
+    concerns_text = ", ".join(concerns) if isinstance(concerns, list) else str(concerns)
+    is_human_request = lead_info.get("alert_type") == "human_request"
+
+    name = e(lead_info.get("name") or "Unknown name")
+    headline = (
+        f"{name} asked to speak with you" if is_human_request else f"New lead: {name}"
+    )
+    kind = "Human requested" if is_human_request else "New lead"
+
+    inner = [_email_h1(headline)]
+    inner.append(
+        f'<div style="font-size:13px;color:#64748b;margin-bottom:4px;">Captured by Robo-Nick &middot; {e(lead_info.get("timestamp") or now_iso())}</div>'
+    )
+
+    inner.append(_email_section("Contact"))
+    phone = lead_info.get("phone")
+    email_addr = lead_info.get("email")
+    inner.append(_email_row(
+        "Phone",
+        f'<a href="tel:{e(phone)}" style="color:{REALTIQ_NAVY};text-decoration:none;">{e(phone)}</a>' if phone else "not provided",
+    ))
+    inner.append(_email_row(
+        "Email",
+        f'<a href="mailto:{e(email_addr)}" style="color:{REALTIQ_NAVY};text-decoration:none;">{e(email_addr)}</a>' if email_addr else "not provided",
+    ))
+
+    inner.append(_email_section("What they want"))
+    inner.append(_email_row("Route", e(lead_info.get("route") or "unknown")))
+    inner.append(_email_row("Location preference", e(lead_info.get("location_preference") or "unknown")))
+    inner.append(_email_row("Time preference", e(lead_info.get("time_preference") or "unknown")))
+    inner.append(_email_row("Concerns", e(concerns_text or "none captured")))
+
+    if lead_info.get("handoff_summary"):
+        inner.append(_email_section("Summary"))
+        inner.append(f'<div style="font-size:14px;color:#334155;line-height:1.55;padding-top:4px;">{e(lead_info["handoff_summary"])}</div>')
+
+    if lead_info.get("raw_message"):
+        inner.append(_email_section("Their latest message"))
+        inner.append(
+            f'<div style="background:#f8fafc;border-left:3px solid {REALTIQ_AMBER};border-radius:0 8px 8px 0;'
+            f'padding:12px 14px;font-size:14px;color:#334155;line-height:1.55;font-style:italic;">'
+            f'&ldquo;{e(lead_info["raw_message"])}&rdquo;</div>'
+        )
+
+    inner.append(_email_button("Open the conversation", f"{PUBLIC_BASE_URL}/admin"))
+    if email_addr:
+        inner.append(
+            '<div style="font-size:12px;color:#94a3b8;padding-top:8px;">Tip: replying to this email replies straight to the prospect.</div>'
+        )
+
+    return _email_shell(
+        kind,
+        "".join(inner),
+        "Sent the moment a visitor left their contact details.",
+    )
 
 
 def format_report_sms(stats: dict) -> str:
@@ -4135,7 +4363,7 @@ def format_report_sms(stats: dict) -> str:
     )
 
 
-def send_email_resend(subject: str, body: str, recipients: list) -> bool:
+def send_email_resend(subject: str, body: str, recipients: list, html: str | None = None) -> bool:
     """Generic Resend send for owner reports (separate from the lead-alert path)."""
     if not (LEAD_SUMMARY_RESEND_API_KEY and LEAD_SUMMARY_EMAIL_FROM and recipients):
         return False
@@ -4145,6 +4373,8 @@ def send_email_resend(subject: str, body: str, recipients: list) -> bool:
         "subject": subject,
         "text": body,
     }
+    if html:
+        payload["html"] = html
     request = urllib.request.Request(
         "https://api.resend.com/emails",
         data=json.dumps(payload).encode("utf-8"),
@@ -4169,7 +4399,7 @@ def send_weekly_report(days: int = 7, recipients: list | None = None, include_sm
     sent_sms = False
     errors = []
     try:
-        sent_email = send_email_resend(report_subject(), body, to_list)
+        sent_email = send_email_resend(report_subject(), body, to_list, html=format_report_html(stats))
     except Exception as exc:
         errors.append(f"email:{str(exc)[:120]}")
     if include_sms and (lead_summary_telegram_configured() or lead_summary_twilio_configured()):
@@ -4308,6 +4538,36 @@ pre{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:14px;w
     });
   }
 </script></body></html>"""
+
+
+BRANDING_DIR = Path(__file__).parent / "branding"
+
+
+@app.get("/favicon.ico")
+async def favicon_ico():
+    path = BRANDING_DIR / "favicon.ico"
+    if path.exists():
+        return Response(content=path.read_bytes(), media_type="image/x-icon",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    return Response(status_code=404)
+
+
+@app.get("/favicon.svg")
+async def favicon_svg():
+    path = BRANDING_DIR / "realtiq-mark-amber.svg"
+    if path.exists():
+        return Response(content=path.read_bytes(), media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    return Response(status_code=404)
+
+
+@app.get("/apple-touch-icon.png")
+async def apple_touch_icon():
+    path = BRANDING_DIR / "apple-touch-icon.png"
+    if path.exists():
+        return Response(content=path.read_bytes(), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    return Response(status_code=404)
 
 
 @app.get("/wa-onboard")
@@ -5541,6 +5801,7 @@ def send_lead_summary_email(lead_info: dict) -> bool:
             "to": recipients,
             "subject": subject,
             "text": body,
+            "html": format_lead_summary_html(lead_info),
         }
         # Let Nick reply straight to the prospect from the alert email.
         if lead_info.get("email"):
@@ -5916,6 +6177,9 @@ ADMIN_HTML = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Outdoor Squad — Admin</title>
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
