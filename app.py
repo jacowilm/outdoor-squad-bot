@@ -8390,12 +8390,12 @@ ADMIN_HTML = """
         return;
       }
       meta.innerHTML = '<strong>+' + esc(thread.session_id.replace('wa-', '')) + '</strong> ' + waWindowBadge(thread)
-        + (thread.muted ? ' <span class="wa-badge muted">Bot muted — you are driving</span>' : '');
+        + (thread.muted ? ' <span class="wa-badge muted">Bot muted, you are driving</span>' : '');
       muteBtn.disabled = false;
       muteBtn.textContent = thread.muted ? 'Hand back to bot' : 'Mute bot';
       const canReply = !!thread.window_open;
       input.disabled = !canReply; send.disabled = !canReply;
-      input.placeholder = canReply ? 'Reply as Nick…' : 'Window closed — WhatsApp only allows template messages now';
+      input.placeholder = canReply ? 'Reply as Nick…' : 'Window closed. WhatsApp only allows template messages now';
       document.getElementById('waMessages').innerHTML = waThreadMessages(thread.session_id).map(function(m) {
         const who = m.role === 'user' ? 'them' : 'bot';
         return '<div class="msg ' + esc(m.role || '') + '"><div class="msg-role">' + esc(who) + '</div>'
