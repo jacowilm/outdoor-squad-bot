@@ -7277,7 +7277,6 @@ LOGIN_HTML = """
 <body>
   <form class="card" method="post" action="/login" autocomplete="on">
     <div class="brand">
-      <img src="/favicon.svg" alt="">
       <div class="wordmark">realti<span class="q">q</span><span class="q">.</span></div>
     </div>
     <p class="sub">Robo-Nick console · The Outdoor Squad</p>
@@ -7771,7 +7770,6 @@ ADMIN_HTML = """
   <div class="topbar">
     <div class="topbar-inner">
       <div class="brand">
-        <img class="brand-mark" src="/favicon.svg" alt="Realtiq">
         <div class="brand-text">
           <div class="wordmark">realti<span class="q">q</span><span class="q">.</span></div>
           <div class="eyebrow">Robo-Nick · The Outdoor Squad</div>
