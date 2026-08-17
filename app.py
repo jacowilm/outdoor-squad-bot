@@ -4164,9 +4164,25 @@ def build_report_stats(days: int = 7) -> dict:
             detail = lead.get("route") or "enquiry"
             lead_lines.append(f"{label} — {detail}")
 
+    # WhatsApp channel (stage 1): wa-* sessions live outside the widget-*
+    # filter above on purpose — separate channel, separate honest numbers.
+    wa_events = [
+        e for e in read_events()
+        if _event_ts(e) >= cutoff and str(e.get("session_id") or "").startswith("wa-")
+        and e.get("session_id") != "wa-system"
+    ]
+    wa_conversations = {e.get("session_id") for e in wa_events if e.get("event_type") == "conversation_started"}
+    wa_messages = sum(1 for e in wa_events if e.get("event_type") == "message_received")
+    wa_leads = {e.get("session_id") for e in wa_events if e.get("event_type") == "lead_captured"}
+    wa_manual_replies = sum(1 for e in wa_events if e.get("event_type") == "wa_manual_reply_sent")
+
     return {
         "window_days": days,
         "since": cutoff,
+        "wa_conversations": len(wa_conversations),
+        "wa_messages": wa_messages,
+        "wa_leads": len(wa_leads),
+        "wa_manual_replies": wa_manual_replies,
         "widget_impressions": impressions,
         "raw_page_loads": page_loads,
         "widget_opened_sessions": len(opened),
@@ -4263,6 +4279,15 @@ def format_report_text(stats: dict) -> str:
                 f"- {week['week_start']} to {week['week_end']}: {week['real_visitors']} real visitor(s)"
             )
 
+    if stats.get("wa_conversations") or stats.get("wa_messages"):
+        lines += [
+            "",
+            "WHATSAPP (new channel)",
+            f"- Conversations: {stats.get('wa_conversations', 0)}",
+            f"- Messages received: {stats.get('wa_messages', 0)}",
+            f"- Leads captured: {stats.get('wa_leads', 0)}",
+            f"- Manual replies you sent: {stats.get('wa_manual_replies', 0)}",
+        ]
     shipped = stats.get("shipped_lines") or []
     if shipped:
         lines += ["", "WENT LIVE THIS WEEK"] + [f"- {line}" for line in shipped]
@@ -4654,6 +4679,11 @@ def _start_weekly_report_scheduler() -> None:
         threading.Thread(target=_weekly_report_loop, daemon=True, name="weekly-report").start()
 
 
+@app.on_event("startup")
+def _start_wa_nudge() -> None:
+    _start_wa_nudge_scheduler()
+
+
 # ── WhatsApp Coexistence scaffolding (stage 1) ──────────────────────────────
 # The linking page Jacobo opens at the in-person session, plus the webhook the
 # Cloud API talks to. Built ahead of Nick's app invite so the pre-flight is a
@@ -4938,6 +4968,13 @@ async def twilio_wa_webhook(request: Request):
         return _twiml_message(None)
     session_id = sanitize_session_id("wa-" + re.sub(r"\D", "", sender))
 
+    if not wa_channel_enabled():
+        # Nick's kill switch: the channel is off, so the bot says nothing and
+        # alerts nobody. The inbound is still logged for continuity.
+        log_chat_message(session_id, "user", str(form.get("Body", ""))[:MAX_MESSAGE_LEN])
+        log_event("wa_channel_off_skip", session_id=session_id, channel="whatsapp")
+        return _twiml_message(None)
+
     # Dedupe retried deliveries of the same message.
     message_sid = str(form.get("MessageSid", ""))[:64]
     if message_sid:
@@ -4986,6 +5023,7 @@ async def twilio_wa_webhook(request: Request):
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
             if has_contact_details(message) and not human_request_handled:
                 notify_lead_summary_async(lead_info, reason="wa_muted_contact_capture")
+                push_wa_lead_async(lead_info)
         return _twiml_message(None)
 
     if should_use_local_tone_handler(message, session_id):
@@ -5000,6 +5038,7 @@ async def twilio_wa_webhook(request: Request):
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
             if has_contact_details(message) and not human_request_handled:
                 notify_lead_summary_async(lead_info, reason="wa_local_tone_contact_capture")
+                push_wa_lead_async(lead_info)
         log_event("local_tone_handler_used", session_id=session_id, channel="whatsapp")
         log_bot_reply(session_id, reply, fallback=False)
         return _twiml_message(reply)
@@ -5016,6 +5055,7 @@ async def twilio_wa_webhook(request: Request):
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
             if has_contact_details(message) and not human_request_handled:
                 notify_lead_summary_async(lead_info, reason="wa_ai_contact_capture")
+                push_wa_lead_async(lead_info)
         log_event("wa_reply_sent", session_id=session_id, channel="whatsapp", ai_provider=ai_provider)
         log_bot_reply(session_id, reply, fallback=False)
         return _twiml_message(reply)
@@ -5050,6 +5090,384 @@ async def wa_mute_endpoint(request: Request, _: str = Depends(require_admin)):
     set_wa_mute(session_id, minutes)
     log_event("wa_bot_muted", session_id=session_id, channel="whatsapp", minutes=minutes)
     return JSONResponse({"ok": True, "muted": True, "minutes": minutes})
+
+
+# ── WhatsApp channel state, outbound sending, nudge, Momence push ────────────
+# Small key/value state shared across deploys: Supabase settings table when
+# available, a local JSON file otherwise (dev/tests). Holds the kill switch,
+# the rotating Momence refresh token, and per-thread nudge markers.
+WA_STATE_FILE = Path(os.environ.get("OUTDOOR_SQUAD_WA_STATE_FILE", "wa_state.json"))
+_WA_SETTING_PREFIX = "wa::"
+
+
+def _wa_state_file_load() -> dict:
+    try:
+        with WA_STATE_FILE.open() as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def get_wa_setting(key: str, default: str = "") -> str:
+    if supabase_enabled():
+        try:
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["settings"],
+                params={"select": "value", "key": f"eq.{_WA_SETTING_PREFIX}{key}", "limit": "1"},
+            )
+            if rows:
+                return str(rows[0].get("value") or default)
+        except Exception:
+            pass  # fall through to the file so a Supabase blip is not an outage
+    return str(_wa_state_file_load().get(key, default))
+
+
+def set_wa_setting(key: str, value: str) -> None:
+    if supabase_enabled():
+        try:
+            supabase_request(
+                "POST",
+                SUPABASE_TABLES["settings"],
+                json_body={"key": f"{_WA_SETTING_PREFIX}{key}", "value": value, "updated_at": now_iso()},
+                prefer="resolution=merge-duplicates",
+            )
+        except Exception:
+            pass
+    data = _wa_state_file_load()
+    data[key] = value
+    try:
+        with WA_STATE_FILE.open("w") as handle:
+            json.dump(data, handle)
+    except OSError:
+        pass
+
+
+def wa_channel_enabled() -> bool:
+    """Nick's kill switch. Default ON; '0' turns the whole channel silent."""
+    return get_wa_setting("channel_enabled", "1") != "0"
+
+
+def send_whatsapp_via_twilio(to_digits: str, body: str) -> tuple[bool, str]:
+    """Outbound WhatsApp via Twilio REST. Returns (ok, message_sid_or_error).
+    Used for manual replies and the follow-up nudge — inbound conversation
+    replies ride TwiML and never touch this path."""
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM):
+        return False, "twilio sending not configured"
+    payload = urllib.parse.urlencode({
+        "From": f"whatsapp:{TWILIO_FROM}",
+        "To": f"whatsapp:+{re.sub(r'[^0-9]', '', to_digits)}",
+        "Body": body[:1600],
+    }).encode()
+    request = urllib.request.Request(
+        f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
+        data=payload,
+        headers={
+            "Authorization": "Basic "
+            + base64.b64encode(f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}".encode()).decode(),
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode())
+        return True, str(data.get("sid", ""))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:300]
+        return False, f"HTTP {exc.code}: {detail}"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {str(exc)[:200]}"
+
+
+def wa_last_inbound_at(session_id: str) -> datetime | None:
+    """Newest user-message timestamp for a thread — the anchor of WhatsApp's
+    24-hour customer service window."""
+    newest = None
+    for row in read_conversation_logs():
+        if row.get("session_id") != session_id or row.get("role") != "user":
+            continue
+        ts = str(row.get("timestamp", ""))[:26].rstrip("Z")
+        try:
+            parsed = datetime.fromisoformat(ts.split("+")[0])
+        except ValueError:
+            continue
+        if newest is None or parsed > newest:
+            newest = parsed
+    return newest
+
+
+def wa_window_state(session_id: str, now: datetime | None = None) -> dict:
+    last_in = wa_last_inbound_at(session_id)
+    if last_in is None:
+        return {"window_open": False, "minutes_remaining": 0, "last_inbound_at": None}
+    # Same clock as now_iso() writes into the logs (naive local time):
+    # mixing utcnow here skews every window by the host TZ offset.
+    elapsed = ((now or datetime.now()) - last_in).total_seconds()
+    remaining = max(0, int((24 * 3600 - elapsed) // 60))
+    return {
+        "window_open": remaining > 0,
+        "minutes_remaining": remaining,
+        "last_inbound_at": last_in.isoformat(),
+    }
+
+
+@app.post("/api/wa/kill")
+async def wa_kill_switch(request: Request, _: str = Depends(require_admin)):
+    """The stage-1 kill switch: Nick can turn the WhatsApp channel off himself."""
+    body = await request.json()
+    enabled = bool(body.get("enabled", True))
+    set_wa_setting("channel_enabled", "1" if enabled else "0")
+    log_event("wa_channel_toggled", session_id="wa-system", enabled=enabled)
+    return JSONResponse({"ok": True, "enabled": enabled})
+
+
+@app.post("/api/wa/reply")
+async def wa_manual_reply(request: Request, _: str = Depends(require_admin)):
+    """Manual reply from the dashboard. Sending is REST (needs Twilio creds),
+    and the moment it succeeds the bot is muted in that thread until handed
+    back — the stage-1 promise, enforced server-side rather than by UI hope."""
+    body = await request.json()
+    session_id = sanitize_session_id(body.get("session_id", ""))
+    message = str(body.get("message", "")).strip()
+    if not session_id.startswith("wa-"):
+        return JSONResponse({"ok": False, "error": "session_id must be a wa- session"}, status_code=400)
+    if not message:
+        return JSONResponse({"ok": False, "error": "empty message"}, status_code=400)
+
+    window = wa_window_state(session_id)
+    if not window["window_open"]:
+        # Free-form sends outside the 24h window fail at WhatsApp with a
+        # template-required error; surface that honestly before spending a call.
+        return JSONResponse(
+            {"ok": False, "error": "outside_24h_window",
+             "detail": "WhatsApp only allows free-form replies within 24h of the "
+                       "customer's last message. This thread's window has closed; "
+                       "an approved template would be required."},
+            status_code=422,
+        )
+
+    ok, detail = send_whatsapp_via_twilio(session_id.removeprefix("wa-"), message)
+    if not ok:
+        log_event("wa_manual_reply_error", session_id=session_id, channel="whatsapp", error=detail[:200])
+        return JSONResponse({"ok": False, "error": detail}, status_code=502)
+
+    history = load_conversation(session_id)
+    history.append({"role": "assistant", "content": message})
+    persist_conversation(session_id)
+    log_chat_message(session_id, "assistant", message)
+    set_wa_mute(session_id, 24 * 60)  # quiet until handed back (or 24h cap)
+    log_event("wa_manual_reply_sent", session_id=session_id, channel="whatsapp", message_sid=detail)
+    return JSONResponse({"ok": True, "message_sid": detail, "muted": True})
+
+
+@app.get("/api/wa/conversations")
+async def wa_conversations(_: str = Depends(require_admin)):
+    """Dashboard feed: every WhatsApp thread with its 24h-window state and
+    mute flag — the per-conversation indicator promised in stage 1."""
+    threads: dict[str, dict] = {}
+    for row in read_conversation_logs():
+        sid = str(row.get("session_id", ""))
+        if not sid.startswith("wa-"):
+            continue
+        entry = threads.setdefault(sid, {"session_id": sid, "message_count": 0, "last_message": None})
+        entry["message_count"] += 1
+        ts = str(row.get("timestamp", ""))
+        if entry["last_message"] is None or ts > entry["last_message"]["timestamp"]:
+            entry["last_message"] = {
+                "timestamp": ts,
+                "role": row.get("role"),
+                "content": str(row.get("content", ""))[:280],
+            }
+    for sid, entry in threads.items():
+        entry.update(wa_window_state(sid))
+        entry["muted"] = wa_muted(sid)
+    return JSONResponse({
+        "channel_enabled": wa_channel_enabled(),
+        "conversations": sorted(
+            threads.values(),
+            key=lambda t: (t["last_message"] or {}).get("timestamp", ""),
+            reverse=True,
+        ),
+    })
+
+
+# ── Follow-up nudge (the "single follow-up nudge" on the invoice) ────────────
+WA_NUDGE_MINUTES = int(os.environ.get("OUTDOOR_SQUAD_WA_NUDGE_MINUTES", "90"))
+WA_NUDGE_TEXT = (
+    "No stress if now's not the time — I'm here whenever you're ready. "
+    "Want me to send the free trial link, or answer anything else?"
+)
+
+
+def wa_sessions_needing_nudge(now: datetime | None = None) -> list[str]:
+    """Pure selection logic, separated from the thread for testability.
+    A thread earns its ONE nudge when: the bot spoke last, the visitor has
+    been silent for WA_NUDGE_MINUTES, the 24h window is still open, the
+    thread isn't muted, and it was never nudged before."""
+    if WA_NUDGE_MINUTES <= 0 or not wa_channel_enabled():
+        return []
+    now = now or datetime.now()
+    latest: dict[str, dict] = {}
+    for row in read_conversation_logs():
+        sid = str(row.get("session_id", ""))
+        if not sid.startswith("wa-"):
+            continue
+        ts = str(row.get("timestamp", ""))
+        if sid not in latest or ts > latest[sid]["timestamp"]:
+            latest[sid] = {"timestamp": ts, "role": row.get("role")}
+    due = []
+    for sid, last in latest.items():
+        if last["role"] != "assistant":
+            continue
+        if get_wa_setting(f"nudged:{sid}") == "1":
+            continue
+        if wa_muted(sid):
+            continue
+        try:
+            last_ts = datetime.fromisoformat(last["timestamp"][:26].rstrip("Z").split("+")[0])
+        except ValueError:
+            continue
+        silent_minutes = (now - last_ts).total_seconds() / 60
+        if silent_minutes < WA_NUDGE_MINUTES:
+            continue
+        if not wa_window_state(sid, now)["window_open"]:
+            continue
+        due.append(sid)
+    return due
+
+
+def _wa_nudge_loop() -> None:
+    while True:
+        time.sleep(600)
+        try:
+            for sid in wa_sessions_needing_nudge():
+                ok, detail = send_whatsapp_via_twilio(sid.removeprefix("wa-"), WA_NUDGE_TEXT)
+                # Mark even on failure: one attempt per thread, never a loop
+                # that re-pesters the same person every ten minutes.
+                set_wa_setting(f"nudged:{sid}", "1")
+                if ok:
+                    history = load_conversation(sid)
+                    history.append({"role": "assistant", "content": WA_NUDGE_TEXT})
+                    persist_conversation(sid)
+                    log_chat_message(sid, "assistant", WA_NUDGE_TEXT)
+                    log_event("wa_nudge_sent", session_id=sid, channel="whatsapp")
+                else:
+                    log_event("wa_nudge_error", session_id=sid, channel="whatsapp", error=detail[:200])
+        except Exception:
+            pass
+
+
+def _start_wa_nudge_scheduler() -> None:
+    if WA_NUDGE_MINUTES > 0 and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM:
+        threading.Thread(target=_wa_nudge_loop, daemon=True).start()
+
+
+# ── Momence lead push (promised in stage 1, no extra charge) ─────────────────
+MOMENCE_V2_BASE = os.environ.get("MOMENCE_V2_BASE", "https://api.momence.com").strip().rstrip("/")
+MOMENCE_V2_CLIENT_ID = os.environ.get("MOMENCE_V2_CLIENT_ID", "").strip()
+MOMENCE_V2_CLIENT_SECRET = os.environ.get("MOMENCE_V2_CLIENT_SECRET", "").strip()
+MOMENCE_SEED_REFRESH_TOKEN = os.environ.get("MOMENCE_V2_REFRESH_TOKEN", "").strip()
+MOMENCE_WA_TAG_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_WA_TAG_ID", "").strip()
+
+
+def momence_configured() -> bool:
+    return bool(MOMENCE_V2_CLIENT_ID and MOMENCE_V2_CLIENT_SECRET
+                and (MOMENCE_SEED_REFRESH_TOKEN or get_wa_setting("momence_refresh_token")))
+
+
+def _momence_access_token() -> str | None:
+    """OAuth2 refresh. Momence ROTATES the refresh token on every use, so the
+    fresh one is persisted immediately — losing it locks us out until Nick
+    re-consents. The env var only seeds the very first exchange."""
+    refresh = get_wa_setting("momence_refresh_token") or MOMENCE_SEED_REFRESH_TOKEN
+    if not refresh:
+        return None
+    payload = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh,
+        "client_id": MOMENCE_V2_CLIENT_ID,
+        "client_secret": MOMENCE_V2_CLIENT_SECRET,
+    }).encode()
+    request = urllib.request.Request(
+        f"{MOMENCE_V2_BASE}/api/v2/auth/token",
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = json.loads(response.read().decode())
+    except Exception as exc:
+        log_event("momence_auth_error", session_id="wa-system", error=str(exc)[:200])
+        return None
+    new_refresh = data.get("refreshToken") or data.get("refresh_token")
+    if new_refresh:
+        set_wa_setting("momence_refresh_token", str(new_refresh))
+    return data.get("accessToken") or data.get("access_token")
+
+
+def push_wa_lead_to_momence(lead_info: dict) -> None:
+    """Create the captured contact in Momence so it enters Nick's nurture
+    sequences. Best-effort and fully logged: the payload shape is calibrated
+    against the documented create endpoint but MUST be proven with a real
+    test lead before go-live (promised to Nick in writing, 11 Aug)."""
+    if not momence_configured():
+        log_event("momence_push_skipped", session_id=lead_info.get("session_id", "wa-system"),
+                  reason="not configured")
+        return
+    token = _momence_access_token()
+    if not token:
+        return
+    name = str(lead_info.get("name") or "").strip()
+    first, _, last = name.partition(" ")
+    payload = {
+        "firstName": first or "WhatsApp",
+        "lastName": last or "Lead",
+        "email": lead_info.get("email") or None,
+        "phoneNumber": lead_info.get("phone") or None,
+    }
+    payload = {k: v for k, v in payload.items() if v}
+    request = urllib.request.Request(
+        f"{MOMENCE_V2_BASE}/api/v2/host/members",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                 "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = json.loads(response.read().decode() or "{}")
+        member_id = data.get("id") or data.get("memberId")
+        log_event("momence_lead_pushed", session_id=lead_info.get("session_id", "wa-system"),
+                  member_id=str(member_id)[:40])
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:300]
+        log_event("momence_push_error", session_id=lead_info.get("session_id", "wa-system"),
+                  error=f"HTTP {exc.code}: {detail}")
+        return
+    except Exception as exc:
+        log_event("momence_push_error", session_id=lead_info.get("session_id", "wa-system"),
+                  error=str(exc)[:200])
+        return
+    if member_id and MOMENCE_WA_TAG_ID:
+        tag_request = urllib.request.Request(
+            f"{MOMENCE_V2_BASE}/api/v2/host/members/{member_id}/tags/{MOMENCE_WA_TAG_ID}",
+            data=b"{}",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(tag_request, timeout=15)
+            log_event("momence_lead_tagged", session_id=lead_info.get("session_id", "wa-system"))
+        except Exception as exc:
+            log_event("momence_tag_error", session_id=lead_info.get("session_id", "wa-system"),
+                      error=str(exc)[:200])
+
+
+def push_wa_lead_async(lead_info: dict) -> None:
+    threading.Thread(target=push_wa_lead_to_momence, args=(dict(lead_info),), daemon=True).start()
 
 
 @app.get("/api/storage-health")
@@ -5247,7 +5665,7 @@ async def change_admin_password(payload: dict, _: str = Depends(require_admin)):
     try:
         store_admin_password(new)
     except Exception:
-        raise HTTPException(status_code=503, detail="Could not save the new password. Nothing was changed — try again.")
+        raise HTTPException(status_code=503, detail="Could not save the new password. Nothing was changed, try again.")
     # The session secret rotates with the password, killing every other session.
     # Re-issue this browser's cookie so the owner stays signed in.
     response = JSONResponse({"ok": True})
@@ -7291,7 +7709,7 @@ ADMIN_HTML = """
   <div class="modal-backdrop" id="pwModal" hidden>
     <div class="modal" role="dialog" aria-labelledby="pwTitle">
       <h3 id="pwTitle">Change password</h3>
-      <p class="modal-sub">Pick something only you know — at least 10 characters. You'll stay signed in here.</p>
+      <p class="modal-sub">Pick something only you know, at least 10 characters. You'll stay signed in here.</p>
       <label for="pwCurrent">Current password</label>
       <input type="password" id="pwCurrent" autocomplete="current-password">
       <label for="pwNew">New password</label>
@@ -7564,11 +7982,11 @@ ADMIN_HTML = """
             window.setTimeout(close, 2200);
           } else {
             msg.className = 'modal-msg err';
-            msg.textContent = body.detail || 'Something went wrong — password unchanged.';
+            msg.textContent = body.detail || 'Something went wrong. Password unchanged.';
           }
         } catch (e) {
           msg.className = 'modal-msg err';
-          msg.textContent = 'Network error — password unchanged.';
+          msg.textContent = 'Network error. Password unchanged.';
         }
         this.disabled = false;
       });

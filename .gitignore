@@ -12,3 +12,4 @@ local-demo.log
 
 # Generated clean client repo (build via handoff/build-clean-repo.sh)
 handoff/client-repo/
+.gstack/
