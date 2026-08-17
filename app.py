@@ -94,6 +94,9 @@ _ADMIN_PATH_PREFIXES = (
     "/logout",
     "/api/admin",
     "/api/momence",
+    # The install page is public, but it links straight into the console, so keep
+    # it out of frames like the rest of the owner surfaces.
+    "/install",
     # Added 2026-08-17: the retired public previews are admin surfaces now.
     "/widget-preview",
     "/bubble-options",
@@ -4944,6 +4947,135 @@ async def apple_touch_icon():
     return Response(status_code=404)
 
 
+# ---------------------------------------------------------------------------
+# Home-screen app (PWA)
+#
+# The manifest and icons are PUBLIC on purpose. They carry no secrets, and the
+# alternative bites: a manifest is fetched with credentials omitted by default,
+# so an auth-gated manifest simply never loads and the install silently offers
+# a plain bookmark instead of an app.
+#
+# This differs from the Realtiq Desk, whose access is a URL token and whose
+# manifest therefore had to smuggle that token through start_url. Here access is
+# a password plus a session cookie, so start_url is the bare dashboard: an
+# installed app gets its own cookie jar, lands on the login page once, and stays
+# signed in from then on. Nothing sensitive rides in the install link.
+# ---------------------------------------------------------------------------
+APP_ICON_FILES = {
+    "/icon-192.png": "icon-192.png",
+    "/icon-512.png": "icon-512.png",
+    "/icon-maskable-512.png": "icon-maskable-512.png",
+}
+
+
+@app.get("/icon-192.png")
+async def icon_192():
+    return _serve_branding_png("icon-192.png")
+
+
+@app.get("/icon-512.png")
+async def icon_512():
+    return _serve_branding_png("icon-512.png")
+
+
+@app.get("/icon-maskable-512.png")
+async def icon_maskable():
+    return _serve_branding_png("icon-maskable-512.png")
+
+
+def _serve_branding_png(name: str) -> Response:
+    path = BRANDING_DIR / name
+    if path.exists():
+        return Response(content=path.read_bytes(), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    return Response(status_code=404)
+
+
+@app.get("/app.webmanifest")
+async def app_manifest():
+    manifest = {
+        "name": "Robo-Nick",
+        "short_name": "Robo-Nick",
+        "description": "Leads, conversations and weekly numbers for The Outdoor Squad.",
+        "start_url": "/admin",
+        "scope": "/",
+        "display": "standalone",
+        "orientation": "portrait-primary",
+        "background_color": REALTIQ_NAVY,
+        "theme_color": REALTIQ_NAVY,
+        "icons": [
+            {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        ],
+    }
+    return JSONResponse(
+        manifest,
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+# Network-only, with one job beyond installability: never show a blank screen.
+# A standalone app has no address bar, so an unhandled offline navigation leaves
+# the owner staring at the navy splash with no way out (this exact trap cost a
+# debugging session on the Desk). Dashboard data is deliberately NOT cached — a
+# stale lead count is worse than an honest "no connection".
+SERVICE_WORKER_JS = """
+const OFFLINE_PAGE = `<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>No connection</title>
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0a0e1a; color:#eef1f8; text-align:center; padding:32px;
+         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+  .w { max-width:300px }
+  .m { font-size:1.5rem; font-weight:800; letter-spacing:-.02em; margin-bottom:14px }
+  .m .q { color:#ffd070 }
+  p { color:rgba(238,241,248,.6); font-size:.95rem; line-height:1.55; margin:0 0 20px }
+  button { background:#ffd070; color:#0a0e1a; border:0; border-radius:8px; padding:11px 20px;
+           font:inherit; font-size:.95rem; font-weight:700; cursor:pointer }
+</style>
+<div class="w">
+  <div class="m">realti<span class="q">q</span><span class="q">.</span></div>
+  <p>No connection right now. Your leads are safe on the server, this phone just can't reach it.</p>
+  <button onclick="location.reload()">Try again</button>
+</div>`;
+
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (event) => {
+  // Only page navigations are handled; everything else goes straight to the
+  // network untouched, so nothing about the live data is ever served from cache.
+  if (event.request.mode !== 'navigate') return;
+  event.respondWith(
+    fetch(event.request).catch(
+      () => new Response(OFFLINE_PAGE, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+    )
+  );
+});
+"""
+
+
+@app.get("/sw.js")
+async def service_worker():
+    return Response(
+        content=SERVICE_WORKER_JS,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+    )
+
+
+@app.get("/install", response_class=HTMLResponse)
+async def install_page():
+    """Public setup page: how to put the dashboard on a phone's home screen.
+
+    Public because it has to be reachable before signing in — it is the page the
+    QR code opens — and because it gives nothing away that /admin's 401 doesn't.
+    """
+    return HTMLResponse(INSTALL_HTML)
+
+
 @app.get("/wa-onboard")
 async def wa_onboard(_: str = Depends(require_admin)):
     """The Embedded Signup launcher for the in-person linking session."""
@@ -7448,16 +7580,143 @@ def save_lead(lead_info: dict):
     LEADS_FILE.write_text(json.dumps(leads[-5000:], indent=2))
 
 
+INSTALL_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Put Robo-Nick on your phone</title>
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/app.webmanifest">
+  <meta name="theme-color" content="#0a0e1a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Robo-Nick">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0e1a;
+      background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255,208,112,.13), transparent);
+      color: #eef1f8;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+      padding: calc(28px + env(safe-area-inset-top)) 20px calc(40px + env(safe-area-inset-bottom));
+    }
+    .wrap { max-width: 460px; margin: 0 auto; }
+    .top { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
+    .top img { width: 62px; height: 62px; border-radius: 14px; display: block; }
+    .wordmark { font-size: 1.35rem; font-weight: 800; letter-spacing: -.02em; }
+    .wordmark .q { color: #ffd070; }
+    .top .sub { color: rgba(238,241,248,.55); font-size: .82rem; margin-top: 2px; }
+    h1 { font-size: 1.55rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.2; margin: 0 0 10px; }
+    .lede { color: rgba(238,241,248,.72); font-size: 1rem; line-height: 1.6; margin: 0 0 26px; }
+    .card {
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 14px;
+      padding: 20px 20px 18px;
+      margin-bottom: 14px;
+    }
+    .card h2 {
+      font-size: .74rem; letter-spacing: .16em; text-transform: uppercase;
+      color: #ffd070; margin: 0 0 14px; font-weight: 700;
+    }
+    ol { margin: 0; padding-left: 20px; }
+    li { margin-bottom: 11px; line-height: 1.55; color: rgba(238,241,248,.9); }
+    li:last-child { margin-bottom: 0; }
+    li b { color: #fff; }
+    .note {
+      background: rgba(255,208,112,.09);
+      border: 1px solid rgba(255,208,112,.22);
+      border-radius: 12px; padding: 15px 17px;
+      font-size: .93rem; line-height: 1.6; color: rgba(238,241,248,.88);
+      margin-bottom: 22px;
+    }
+    .note b { color: #ffd070; }
+    .cta {
+      display: block; text-align: center; text-decoration: none;
+      background: #ffd070; color: #0a0e1a;
+      border-radius: 10px; padding: 15px;
+      font-size: 1rem; font-weight: 700;
+    }
+    .foot { text-align: center; color: rgba(238,241,248,.35); font-size: .74rem; margin-top: 24px; }
+    .foot .q { color: rgba(255,208,112,.65); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <img src="/icon-192.png" alt="">
+      <div>
+        <div class="wordmark">realti<span class="q">q</span><span class="q">.</span></div>
+        <div class="sub">Robo-Nick &middot; The Outdoor Squad</div>
+      </div>
+    </div>
+
+    <h1>Put your dashboard on your home screen</h1>
+    <p class="lede">Two taps and it sits next to your other apps, opens full screen with no browser bars, and stays signed in.</p>
+
+    <div class="card">
+      <h2>iPhone &amp; iPad</h2>
+      <ol>
+        <li>You need to be in <b>Safari</b> for this (it doesn't work from Chrome on iPhone).</li>
+        <li>Tap the <b>Share</b> button at the bottom of the screen, the square with the arrow pointing up.</li>
+        <li>Scroll down the list and tap <b>Add to Home Screen</b>.</li>
+        <li>Tap <b>Add</b> in the top right.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>Android</h2>
+      <ol>
+        <li>In <b>Chrome</b>, tap the <b>three dots</b> in the top right.</li>
+        <li>Tap <b>Add to Home screen</b>, or <b>Install app</b> if that's what it says.</li>
+        <li>Confirm with <b>Install</b>.</li>
+      </ol>
+    </div>
+
+    <div class="note">
+      <b>It will ask you to sign in once.</b> The app keeps its own login, separate from your browser, so the first time you open it you'll get the sign-in screen. After that it stays signed in and goes straight to your numbers.
+    </div>
+
+    <a class="cta" href="/admin">Open the dashboard</a>
+    <div class="foot">Robo-Nick &middot; a realti<span class="q">q</span> system</div>
+  </div>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
+    }
+  </script>
+</body>
+</html>
+"""
+
+
 LOGIN_HTML = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Sign in — Robo-Nick Console</title>
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/app.webmanifest">
+  <meta name="theme-color" content="#0a0e1a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Robo-Nick">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@700&display=swap" rel="stylesheet">
@@ -7549,6 +7808,13 @@ LOGIN_HTML = """
     <button type="submit">Sign in</button>
     <div class="foot">Robo-Nick · a realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg> system</div>
   </form>
+  <script>
+    // Registered here too, not just on /install: whichever page the owner lands
+    // on first should make the app installable.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
+    }
+  </script>
 </body>
 </html>
 """
@@ -7559,11 +7825,17 @@ ADMIN_HTML = """
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Robo-Nick Console · Realtiq</title>
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/app.webmanifest">
+  <meta name="theme-color" content="#0a0e1a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Robo-Nick">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@700&display=swap" rel="stylesheet">
@@ -7954,6 +8226,45 @@ ADMIN_HTML = """
       .list-pane { max-height: 320px; }
       .search { min-width: 100%; }
       .topbar-meta { width: 100%; margin-left: 0; }
+    }
+
+    /* ── Phone / installed app ────────────────────────────────────
+       Standalone mode has no browser chrome, so the header sits under the
+       status bar and the footer under the home indicator unless we pad for
+       the safe areas ourselves. */
+    .topbar { padding-top: env(safe-area-inset-top); }
+    main { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+
+    @media (max-width: 700px) {
+      /* Never break a control's label across two lines. */
+      .topbar-link { white-space: nowrap; padding: 7px 11px; font-size: .78rem; }
+      .topbar-meta { gap: 8px; }
+
+      /* Six columns don't fit a phone: drop the header and restack each lead
+         as a labelled card. */
+      .lead-table thead { display: none; }
+      .lead-table, .lead-table tbody, .lead-table tr, .lead-table td { display: block; width: 100%; }
+      .lead-table tr { padding: 13px 15px; border-bottom: 1px solid var(--line); }
+      .lead-table tr:last-child { border-bottom: 0; }
+      .lead-table td {
+        padding: 4px 0;
+        display: grid;
+        grid-template-columns: 84px minmax(0, 1fr);
+        gap: 12px;
+        align-items: baseline;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .lead-table td::before {
+        content: attr(data-label);
+        font-size: .64rem;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 700;
+      }
+      /* Nothing to show is worse than noise on a small screen. */
+      .lead-table td[data-empty="1"] { display: none; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition-duration: 0ms !important; }
@@ -8402,18 +8713,27 @@ ADMIN_HTML = """
           + '</div></div>';
         return;
       }
+      // data-label on every cell: under 700px the CSS drops the header row and
+      // restacks each lead as a labelled card, because six columns on a phone
+      // clipped Contact and Context off the right edge — the two things you
+      // actually open this on your phone to read.
       wrap.innerHTML = ''
-        + '<div class="table-wrap"><table>'
+        + '<div class="table-wrap"><table class="lead-table">'
         + '<thead><tr><th>When</th><th>Name</th><th>Contact</th><th>Route</th><th>Context</th><th>Session</th></tr></thead>'
         + '<tbody>'
         + leads.slice().reverse().map(function(lead) {
+            const contact = lead.email || lead.phone || '';
+            // A phone can act on a contact: make it dialable/mailable.
+            const contactCell = contact
+              ? '<a href="' + (lead.email ? 'mailto:' : 'tel:') + encodeURIComponent(contact) + '">' + esc(contact) + '</a>'
+              : '<span class="dim">–</span>';
             return '<tr>'
-              + '<td class="nowrap mono">' + esc(fmtDate(lead.timestamp)) + '</td>'
-              + '<td>' + esc(lead.name || '–') + '</td>'
-              + '<td class="mono">' + esc(lead.email || lead.phone || '–') + '</td>'
-              + '<td>' + badgeFor(lead.route) + '</td>'
-              + '<td>' + esc(lead.handoff_summary || '–') + '</td>'
-              + '<td class="mono">' + esc(lead.session_id || '–') + '</td>'
+              + '<td class="nowrap mono" data-label="When">' + esc(fmtDate(lead.timestamp)) + '</td>'
+              + '<td data-label="Name">' + esc(lead.name || '–') + '</td>'
+              + '<td class="mono" data-label="Contact">' + contactCell + '</td>'
+              + '<td data-label="Route">' + badgeFor(lead.route) + '</td>'
+              + '<td data-label="Context"' + (lead.handoff_summary ? '' : ' data-empty="1"') + '>' + esc(lead.handoff_summary || '–') + '</td>'
+              + '<td class="mono" data-label="Session"' + (lead.session_id ? '' : ' data-empty="1"') + '>' + esc(lead.session_id || '–') + '</td>'
             + '</tr>';
           }).join('')
         + '</tbody></table></div>';
@@ -8680,6 +9000,10 @@ ADMIN_HTML = """
         }
         this.disabled = false;
       });
+    }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
     }
 
     initTabs();
