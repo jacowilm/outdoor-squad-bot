@@ -70,5 +70,9 @@
   {
     "date": "2026-08-17",
     "line": "You can now change your dashboard password yourself (top-right, “Change password”)"
+  },
+  {
+    "date": "2026-08-17",
+    "line": "Security hardening pass on the dashboard sign-in (audit fixes)"
   }
 ]

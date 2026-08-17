@@ -39,7 +39,7 @@ Goal: deliver a polished website-embeddable chatbot that Nicholas/Lyn can manage
 - Include an explicit cost/ownership note: hosting/API costs are Nicholas/The Outdoor Squad responsibility, not Jacobo/AI Sprints.
 
 ## Production preflight
-- For review, set `OUTDOOR_SQUAD_DEPLOYMENT_MODE=review`; `GET /api/health` must show `ai_configured: true`, `admin_configured: true`, and `review_hosted_by_ai_sprints: true`.
+- For review, set `OUTDOOR_SQUAD_DEPLOYMENT_MODE=review`; `GET /api/health` must show `ai_configured: true`, `admin_configured: true`, and `review_hosted_by_realtiq: true`.
 - For final handoff, set `OUTDOOR_SQUAD_DEPLOYMENT_MODE=handoff`; `GET /api/health` must show `handoff_ready: true`, `owner_key_configured: true` (a Nicholas/Outdoor Squad-owned `OUTDOOR_SQUAD_*` provider key is set), `admin_configured: true`, and `trial_link_configured: true`.
   - Note (2026-06-09 security pass): `/api/health` was trimmed to non-secret booleans, so `api_key_source(s)`, model IDs, and the owner email/phone are no longer exposed publicly. `owner_key_configured` + `handoff_ready` now carry the "client-owned key is in place and everything is ready" signal.
 - Anthropic (Claude Haiku) is the current primary provider with OpenAI as failover; both should be Nicholas/Outdoor Squad-owned `OUTDOOR_SQUAD_*` keys with a monthly spend cap set on each account. If only the generic `OPENAI_API_KEY`/`GEMINI_API_KEY` dev fallbacks are set, `owner_key_configured` stays false — treat that as a development/test setup unless Jacobo has explicitly sold ongoing hosting/support.

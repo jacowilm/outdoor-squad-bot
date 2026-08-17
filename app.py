@@ -11,6 +11,7 @@ import collections
 import csv
 import fcntl
 import hashlib
+import html
 import hmac
 import io
 import ipaddress
@@ -81,16 +82,32 @@ app.add_middleware(
 # Owner/admin surfaces that render inlined leads PII + transcripts and must not
 # be framed or MIME-sniffed. The embeddable widget is script-injected (never
 # framed), so frame-protection here doesn't affect it.
-_ADMIN_PATH_PREFIXES = ("/admin", "/api/leads", "/api/metrics", "/api/conversation")
+_ADMIN_PATH_PREFIXES = (
+    "/admin",
+    "/api/leads",
+    "/api/metrics",
+    "/api/conversation",
+    # Added 2026-08-17: the sign-in form, the sign-out action and the Momence
+    # consent page are all owner surfaces that were left framable because they
+    # postdate (or were missed by) the 2026-07-02 pass.
+    "/login",
+    "/logout",
+    "/api/admin",
+    "/api/momence",
+)
 
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    """Defence-in-depth response headers. nosniff + Referrer-Policy everywhere;
-    anti-clickjacking on the owner/admin surfaces only (2026-07-02 audit)."""
+    """Defence-in-depth response headers. nosniff + Referrer-Policy + HSTS
+    everywhere; anti-clickjacking on the owner/admin surfaces (2026-07-02 audit,
+    extended 2026-08-17)."""
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # HSTS: without it, an on-path attacker can strip TLS on a first plaintext
+    # request and capture the session cookie or Basic credentials.
+    response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     if any(request.url.path.startswith(p) for p in _ADMIN_PATH_PREFIXES):
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
@@ -3247,44 +3264,93 @@ def prune_conversation_cache(preserve: str | None = None) -> None:
 # invalidated the moment the password changes.
 # ---------------------------------------------------------------------------
 ADMIN_SETTINGS_PASSWORD_KEY = "admin_password_hash"
+ADMIN_SETTINGS_EPOCH_KEY = "session_epoch"
 ADMIN_SESSION_COOKIE = "rq_admin_session"
 ADMIN_SESSION_TTL_SECONDS = 30 * 24 * 3600
 ADMIN_HASH_CACHE_TTL_SECONDS = 60.0
 _PBKDF2_ITERATIONS = 390_000
 
-_admin_hash_cache = {"value": None, "loaded_at": 0.0, "ever_loaded": False}
+_admin_hash_cache = {"value": None, "epoch": "", "loaded_at": 0.0, "ever_loaded": False}
 _admin_hash_lock = threading.Lock()
 
 
-def _read_stored_admin_hash() -> str | None:
+def _read_admin_settings() -> tuple[str | None, str]:
+    """(password hash, session epoch) in ONE read, so folding the epoch into the
+    session secret costs no extra round trip and adds no new failure mode."""
     rows = supabase_request(
         "GET",
         SUPABASE_TABLES["settings"],
-        params={"select": "value", "key": f"eq.{ADMIN_SETTINGS_PASSWORD_KEY}", "limit": "1"},
+        params={
+            "select": "key,value",
+            "key": f"in.({ADMIN_SETTINGS_PASSWORD_KEY},{ADMIN_SETTINGS_EPOCH_KEY})",
+            "limit": "2",
+        },
     )
-    if rows:
-        return rows[0].get("value") or None
-    return None
+    values = {row.get("key"): row.get("value") for row in (rows or [])}
+    return (values.get(ADMIN_SETTINGS_PASSWORD_KEY) or None, values.get(ADMIN_SETTINGS_EPOCH_KEY) or "")
+
+
+class PasswordStateUnavailable(Exception):
+    """We cannot determine whether the owner has set a custom password.
+
+    Callers MUST fail closed. Treating this as "no custom password set" would
+    silently re-enable the retired env-default credential.
+    """
 
 
 def get_admin_password_hash() -> str | None:
-    """Owner-set password hash, or None while the env default is still active."""
+    """Owner-set password hash, or None while the env default is still active.
+
+    Raises PasswordStateUnavailable when the settings store is unreachable and no
+    cached answer exists (i.e. a freshly started process during a Supabase
+    outage). Returning None there would be a fail-OPEN: after the owner changes
+    their password, the env default would start working again until Supabase came
+    back, resurrecting the exact credential we told them was retired.
+    """
+    return _load_admin_settings()[0]
+
+
+def get_session_epoch() -> str:
+    """Opaque marker rotated on sign-out; mixed into the session secret so signing
+    out invalidates outstanding cookies instead of only clearing the local one."""
+    return _load_admin_settings()[1]
+
+
+def _load_admin_settings() -> tuple[str | None, str]:
     if not supabase_enabled():
-        return None
+        return (None, "")
     now = time.time()
     with _admin_hash_lock:
         if _admin_hash_cache["ever_loaded"] and now - _admin_hash_cache["loaded_at"] < ADMIN_HASH_CACHE_TTL_SECONDS:
-            return _admin_hash_cache["value"]
+            return (_admin_hash_cache["value"], _admin_hash_cache["epoch"])
     try:
-        value = _read_stored_admin_hash()
+        value, epoch = _read_admin_settings()
     except Exception:
-        # Supabase unreachable: keep the last known answer instead of silently
-        # re-enabling the env default password.
+        # Serve a stale cached answer rather than guessing; if we have never had
+        # one, refuse to answer at all.
         with _admin_hash_lock:
-            return _admin_hash_cache["value"] if _admin_hash_cache["ever_loaded"] else None
+            if _admin_hash_cache["ever_loaded"]:
+                return (_admin_hash_cache["value"], _admin_hash_cache["epoch"])
+        raise PasswordStateUnavailable()
     with _admin_hash_lock:
-        _admin_hash_cache.update(value=value, loaded_at=time.time(), ever_loaded=True)
-    return value
+        _admin_hash_cache.update(value=value, epoch=epoch, loaded_at=time.time(), ever_loaded=True)
+    return (value, epoch)
+
+
+@app.on_event("startup")
+def _warm_admin_password_cache() -> None:
+    """Load the password state at boot so the fail-closed window above is tiny.
+
+    supabase_request already retries GETs three times with backoff; if all of
+    them fail the first real auth attempt retries, and until one succeeds admin
+    auth fails closed with a 503 rather than accepting the env default.
+    """
+    if not supabase_enabled():
+        return
+    try:
+        get_admin_password_hash()
+    except Exception:
+        pass
 
 
 def hash_admin_password(password: str) -> str:
@@ -3323,9 +3389,26 @@ def store_admin_password(password: str) -> None:
         _admin_hash_cache.update(value=new_hash, loaded_at=time.time(), ever_loaded=True)
 
 
+def rotate_session_epoch() -> None:
+    """Invalidate every outstanding session cookie."""
+    new_epoch = secrets.token_hex(8)
+    supabase_request(
+        "POST",
+        SUPABASE_TABLES["settings"],
+        json_body={"key": ADMIN_SETTINGS_EPOCH_KEY, "value": new_epoch, "updated_at": now_iso()},
+        prefer="resolution=merge-duplicates",
+    )
+    with _admin_hash_lock:
+        _admin_hash_cache.update(epoch=new_epoch, loaded_at=time.time(), ever_loaded=True)
+
+
 def _session_secret() -> bytes:
-    basis = get_admin_password_hash() or ADMIN_PASSWORD or ""
-    return hashlib.sha256(b"rq-admin-session:" + basis.encode()).digest()
+    stored, epoch = _load_admin_settings()
+    basis = stored or ADMIN_PASSWORD or ""
+    # Epoch included so sign-out can revoke outstanding tokens (the token itself is
+    # stateless, so without this "Sign out" only cleared the local cookie and a
+    # copied cookie stayed valid for its full 30 days). 2026-08-17 audit (L3).
+    return hashlib.sha256(b"rq-admin-session:" + basis.encode() + b":" + epoch.encode()).digest()
 
 
 def issue_session_token() -> str:
@@ -3337,6 +3420,16 @@ def issue_session_token() -> str:
 def session_token_valid(token: str | None) -> bool:
     if not token or "." not in token:
         return False
+    # With no password configured anywhere the secret would degenerate to a
+    # constant (sha256 of the bare prefix), making cookies forgeable by anyone who
+    # knows the scheme. require_admin already 503s first, but don't rely on caller
+    # order for this. 2026-08-17 audit (I3).
+    if not ADMIN_PASSWORD:
+        try:
+            if get_admin_password_hash() is None:
+                return False
+        except PasswordStateUnavailable:
+            return False
     expires_raw, _, sig = token.partition(".")
     try:
         expires = int(expires_raw)
@@ -3344,7 +3437,13 @@ def session_token_valid(token: str | None) -> bool:
         return False
     if expires < time.time():
         return False
-    expected = hmac.new(_session_secret(), f"admin:{expires}".encode(), hashlib.sha256).hexdigest()
+    try:
+        secret = _session_secret()
+    except PasswordStateUnavailable:
+        # Can't derive the secret, so we can't tell a real cookie from a forged
+        # one. Reject (the owner re-signs in once storage is back).
+        return False
+    expected = hmac.new(secret, f"admin:{expires}".encode(), hashlib.sha256).hexdigest()
     return secrets.compare_digest(sig, expected)
 
 
@@ -3366,9 +3465,12 @@ _login_failures: dict[str, collections.deque] = {}
 _login_failures_lock = threading.Lock()
 
 
-def _client_ip(request: Request) -> str:
-    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    return forwarded or (request.client.host if request.client else "unknown")
+# Login attempts are keyed on client_ip() — the `cf-connecting-ip` resolver, which
+# Cloudflare guarantees is unspoofable. An earlier version of this file keyed on the
+# leftmost X-Forwarded-For entry, which Cloudflare APPENDS to rather than strips:
+# rotating a fake XFF per request bypassed the limiter completely (10/10 attempts
+# with no 429, verified live against prod 2026-08-17). Never reintroduce an
+# XFF-position-based client identity here; see client_ip()'s docstring.
 
 
 def _too_many_login_attempts(ip: str) -> bool:
@@ -3385,9 +3487,15 @@ def _too_many_login_attempts(ip: str) -> bool:
 def _register_failed_login(ip: str) -> None:
     with _login_failures_lock:
         _login_failures.setdefault(ip, collections.deque(maxlen=LOGIN_MAX_ATTEMPTS)).append(time.time())
-        # Bound the dict itself so a spray of spoofed IPs can't grow it forever.
-        if len(_login_failures) > 2000:
-            _login_failures.clear()
+        # Bound the dict so a spray of source IPs can't grow it forever. Evict the
+        # least-recently-failed entries rather than clearing the whole map: a
+        # blanket clear() would also wipe an in-progress attacker's counter, so
+        # filling the map became a way to reset your own lockout.
+        overflow = len(_login_failures) - 2000
+        if overflow > 0:
+            stalest = sorted(_login_failures, key=lambda k: _login_failures[k][-1])[:overflow]
+            for key in stalest:
+                _login_failures.pop(key, None)
 
 
 def require_admin(request: Request, credentials: HTTPBasicCredentials | None = Depends(security)) -> str:
@@ -3398,9 +3506,30 @@ def require_admin(request: Request, credentials: HTTPBasicCredentials | None = D
             detail="Admin password is not configured on this deployment.",
         )
     if credentials is not None:
+        # Basic auth is throttled exactly like the login form. Without this, every
+        # admin-gated route was an unthrottled password oracle: /login enforced a
+        # lockout while `curl -u user:guess /admin` could be looped forever.
+        # 2026-08-17 audit (M4).
+        ip = client_ip(request)
+        if _too_many_login_attempts(ip):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed attempts. Try again in a few minutes.",
+            )
+        # Both checks always run: short-circuiting on the username skipped PBKDF2
+        # and made a wrong username measurably faster than a wrong password, which
+        # leaks whether a username is valid. 2026-08-17 audit (L1).
         username_ok = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
-        if username_ok and verify_admin_password(credentials.password):
+        try:
+            password_ok = verify_admin_password(credentials.password)
+        except PasswordStateUnavailable:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Cannot verify credentials right now (password store unreachable). Try again shortly.",
+            )
+        if username_ok and password_ok:
             return credentials.username
+        _register_failed_login(ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect admin credentials",
@@ -4401,11 +4530,17 @@ def _email_button(label: str, url: str) -> str:
 
 
 def _html_escape(value) -> str:
+    # Quotes included: results land inside href="tel:..." / href="mailto:..."
+    # attributes, so an unescaped quote would break out of the attribute. Today
+    # PHONE_RE/EMAIL_RE can't emit one, but that's an accident of those regexes
+    # rather than a property of this function. 2026-08-17 audit (I4).
     return (
         str(value)
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
     )
 
 
@@ -5390,11 +5525,14 @@ async def wa_manual_reply(request: Request, _: str = Depends(require_admin)):
     return JSONResponse({"ok": True, "message_sid": detail, "muted": True})
 
 
-@app.get("/api/wa/conversations")
-async def wa_conversations(_: str = Depends(require_admin)):
-    """Dashboard feed: every WhatsApp thread with its 24h-window state and
-    mute flag — the per-conversation indicator promised in stage 1."""
+def wa_dashboard_payload() -> dict:
+    """Every WhatsApp thread with its 24h-window state and mute flag — the
+    per-conversation indicator promised in stage 1. Single pass over the logs:
+    the window is computed from the newest user turn seen in the SAME sweep
+    (review finding: calling wa_window_state per thread re-fetched the whole
+    log store once per conversation)."""
     threads: dict[str, dict] = {}
+    last_user_ts: dict[str, datetime] = {}
     for row in read_conversation_logs():
         sid = str(row.get("session_id", ""))
         if not sid.startswith("wa-"):
@@ -5408,17 +5546,36 @@ async def wa_conversations(_: str = Depends(require_admin)):
                 "role": row.get("role"),
                 "content": str(row.get("content", ""))[:280],
             }
+        if row.get("role") == "user":
+            parsed = _parse_any_ts(ts)
+            if parsed and (sid not in last_user_ts or parsed > last_user_ts[sid]):
+                last_user_ts[sid] = parsed
+    now = datetime.now()
     for sid, entry in threads.items():
-        entry.update(wa_window_state(sid))
+        last_in = last_user_ts.get(sid)
+        if last_in is None:
+            entry.update({"window_open": False, "minutes_remaining": 0, "last_inbound_at": None})
+        else:
+            elapsed = (now - last_in).total_seconds()
+            entry.update({
+                "window_open": elapsed < 24 * 3600,
+                "minutes_remaining": max(0, int((24 * 3600 - elapsed) // 60)),
+                "last_inbound_at": last_in.isoformat(),
+            })
         entry["muted"] = wa_muted(sid)
-    return JSONResponse({
+    return {
         "channel_enabled": wa_channel_enabled(),
         "conversations": sorted(
             threads.values(),
             key=lambda t: (t["last_message"] or {}).get("timestamp", ""),
             reverse=True,
         ),
-    })
+    }
+
+
+@app.get("/api/wa/conversations")
+async def wa_conversations(_: str = Depends(require_admin)):
+    return JSONResponse(wa_dashboard_payload())
 
 
 # ── Follow-up nudge (the "single follow-up nudge" on the invoice) ────────────
@@ -5620,6 +5777,10 @@ async def storage_diag(_: str = Depends(require_admin)):
         "supabase_enabled": supabase_enabled(),
         "supabase_url_host": (SUPABASE_URL.split("//")[-1][:40] if SUPABASE_URL else None),
         "service_key_len": len(SUPABASE_KEY) if SUPABASE_KEY else 0,
+        # Moved off the public /api/health, which was leaking the project host and
+        # table path to anonymous callers. 2026-08-17 audit (I1).
+        "supabase_last_error": _supabase_last_error,
+        "supabase_last_ok": _supabase_last_ok,
     }
     if not supabase_enabled():
         out["note"] = "supabase not enabled; using local files"
@@ -5747,6 +5908,7 @@ async def admin_dashboard(_: str = Depends(require_admin)):
         "leads": read_leads(),
         "logs": read_conversation_logs(120),
         "transcripts": grouped_transcripts(500),
+        "wa": wa_dashboard_payload(),
     }
     # html_safe_json (not plain json.dumps): a visitor's chat message containing
     # "</script>" would otherwise break out of this inline <script> and run in the
@@ -5763,17 +5925,39 @@ async def login_page(request: Request):
 
 @app.post("/login")
 async def login_submit(request: Request):
-    # Parsed by hand (urlencoded) so we don't need the python-multipart package.
-    ip = _client_ip(request)
+    ip = client_ip(request)
     if _too_many_login_attempts(ip):
         return HTMLResponse(
             LOGIN_HTML.replace("__LOGIN_ERROR__", '<div class="error">Too many attempts. Wait a few minutes and try again.</div>'),
             status_code=429,
         )
-    form = urllib.parse.parse_qs((await request.body()).decode("utf-8", "replace"))
+    # Hand-parsed urlencoded body (avoids a python-multipart dependency), capped so
+    # a huge POST can't burn memory/CPU in parse_qs before auth has happened.
+    raw_body = await request.body()
+    if len(raw_body) > 8192:
+        _register_failed_login(ip)
+        return HTMLResponse(
+            LOGIN_HTML.replace("__LOGIN_ERROR__", '<div class="error">Wrong username or password.</div>'),
+            status_code=401,
+        )
+    form = urllib.parse.parse_qs(raw_body.decode("utf-8", "replace"))
     username = (form.get("username") or [""])[0].strip()
     password = (form.get("password") or [""])[0]
-    if ADMIN_PASSWORD and secrets.compare_digest(username, ADMIN_USERNAME) and verify_admin_password(password):
+    try:
+        # Deliberately NOT short-circuited on the username (see require_admin / L1):
+        # PBKDF2 runs either way so response time doesn't reveal a valid username.
+        username_ok = bool(ADMIN_PASSWORD) and secrets.compare_digest(username, ADMIN_USERNAME)
+        password_ok = verify_admin_password(password)
+        credentials_ok = username_ok and password_ok
+    except PasswordStateUnavailable:
+        return HTMLResponse(
+            LOGIN_HTML.replace(
+                "__LOGIN_ERROR__",
+                '<div class="error">Can\'t reach the password store right now. Try again in a moment.</div>',
+            ),
+            status_code=503,
+        )
+    if credentials_ok:
         response = RedirectResponse("/admin", status_code=303)
         _set_session_cookie(response)
         return response
@@ -5784,18 +5968,52 @@ async def login_submit(request: Request):
     )
 
 
-@app.get("/logout")
+@app.post("/logout")
 async def logout():
+    # POST, not GET: a GET logout is triggerable cross-site by any <img> tag, so a
+    # random page could sign the owner out. The dashboard posts a small form.
+    if supabase_enabled():
+        try:
+            rotate_session_epoch()
+        except Exception:
+            # Best effort: the cookie is cleared below regardless, which is what
+            # the person in front of the browser asked for. Other sessions (if any)
+            # simply survive, exactly as they did before revocation existed.
+            log_event("admin_session_revoke_failed", session_id="system")
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(ADMIN_SESSION_COOKIE, path="/")
     return response
 
 
+def _require_same_origin(request: Request) -> None:
+    """Belt-and-braces CSRF check on cookie-authenticated state changes.
+
+    SameSite=Lax already stops cross-site POSTs from carrying the session cookie,
+    and the JSON body means an HTML form can't reach this endpoint at all. This
+    adds an explicit origin check so the protection doesn't rest solely on those
+    two implicit properties.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return  # non-browser callers (curl/scripts on Basic auth) send no Origin
+    expected = {PUBLIC_BASE_URL, str(request.base_url).rstrip("/")}
+    if origin.rstrip("/") not in expected:
+        raise HTTPException(status_code=403, detail="Cross-origin request refused.")
+
+
 @app.post("/api/admin/change-password")
-async def change_admin_password(payload: dict, _: str = Depends(require_admin)):
+async def change_admin_password(payload: dict, request: Request, _: str = Depends(require_admin)):
+    _require_same_origin(request)
     current = str(payload.get("current_password") or "")
     new = str(payload.get("new_password") or "")
-    if not verify_admin_password(current):
+    try:
+        current_ok = verify_admin_password(current)
+    except PasswordStateUnavailable:
+        raise HTTPException(
+            status_code=503,
+            detail="Can't reach the password store right now. Nothing was changed, try again shortly.",
+        )
+    if not current_ok:
         raise HTTPException(status_code=403, detail="Current password is incorrect.")
     if len(new) < 10:
         raise HTTPException(status_code=422, detail="New password must be at least 10 characters.")
@@ -5839,8 +6057,13 @@ async def momence_oauth_callback(request: Request, _: str = Depends(require_admi
     x-www-form-urlencoded, and there is no client_credentials grant, so the only
     route to a long-lived credential is this one-time interactive consent.
     """
+    # `code` stays RAW: it is never rendered, only posted back to Momence's token
+    # endpoint (escaping it would corrupt the exchange). Anything that IS rendered
+    # by page() below must be escaped first — page() concatenates raw HTML, so
+    # `?error=<script>...` was a reflected XSS running in the authenticated
+    # owner's origin with read access to /api/leads. 2026-08-17 audit.
     code = request.query_params.get("code", "")
-    err = request.query_params.get("error")
+    err = html.escape(request.query_params.get("error") or "", quote=True)
 
     def page(title: str, body: str) -> HTMLResponse:
         return HTMLResponse(
@@ -5902,10 +6125,13 @@ async def momence_oauth_callback(request: Request, _: str = Depends(require_admi
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")[:300]
         log_event("momence_oauth_error", session_id="system", error=f"{exc.code}: {detail}")
-        return page("Token exchange failed", f"<p>HTTP {exc.code}</p><pre>{detail}</pre>")
+        return page(
+            "Token exchange failed",
+            f"<p>HTTP {exc.code}</p><pre>{html.escape(detail, quote=True)}</pre>",
+        )
     except Exception as exc:
         log_event("momence_oauth_error", session_id="system", error=str(exc)[:200])
-        return page("Token exchange failed", f"<pre>{str(exc)[:300]}</pre>")
+        return page("Token exchange failed", f"<pre>{html.escape(str(exc)[:300], quote=True)}</pre>")
 
     refresh = data.get("refreshToken") or data.get("refresh_token") or ""
     if refresh:
@@ -5919,8 +6145,8 @@ async def momence_oauth_callback(request: Request, _: str = Depends(require_admi
         "Momence connected",
         "<p>Tokens obtained. Copy the refresh token into the environment as "
         "<code>MOMENCE_V2_REFRESH_TOKEN</code> — this is the only time it is shown.</p>"
-        f"<pre>{refresh}</pre>"
-        f"<p>Refresh token expires: <strong>{expires}</strong>. "
+        f"<pre>{html.escape(str(refresh), quote=True)}</pre>"
+        f"<p>Refresh token expires: <strong>{html.escape(str(expires), quote=True)}</strong>. "
         "Re-run this consent before then or the integration stops silently.</p>",
     )
 
@@ -5969,7 +6195,7 @@ async def health():
         "ok": True,
         "review_build": APP_REVIEW_BUILD,
         "deployment_mode": DEPLOYMENT_MODE,
-        "review_hosted_by_ai_sprints": review_hosted,
+        "review_hosted_by_realtiq": review_hosted,
         "review_ready": review_ready,
         "handoff_ready": handoff_ready,
         "storage_backend": (
@@ -5980,7 +6206,11 @@ async def health():
         # True/False once an op has run; null before the first op. False here means
         # leads/events are NOT persisting durably — the owner should see it.
         "supabase_reachable": _supabase_last_ok,
-        "supabase_last_error": _supabase_last_error,
+        # Deliberately NOT the error string: it is an httpx message containing the
+        # Supabase project host and table path, and this endpoint is public. The
+        # full text stays available on the admin-gated /api/storage-health.
+        # 2026-08-17 audit (I1).
+        "supabase_error_present": bool(_supabase_last_error),
         "ai_configured": bool(providers),
         "admin_configured": admin_configured,
         "trial_link_configured": trial_link_configured,
@@ -7764,6 +7994,16 @@ ADMIN_HTML = """
       .search { min-width: 100%; }
       .topbar-meta { width: 100%; margin-left: 0; }
     }
+    .wa-badge { display:inline-block; font-size:11px; font-weight:600; border-radius:999px; padding:2px 9px; margin-left:6px; }
+    .wa-badge.open { background:#ECFDF5; color:#047857; }
+    .wa-badge.closed { background:#F1F5F9; color:#64748B; }
+    .wa-badge.muted { background:#FEF3C7; color:#B45309; }
+    .wa-switch { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:#334155; cursor:pointer; }
+    .wa-replybar { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line, #E2E8F0); }
+    .wa-replybar input { flex:1; border:1px solid #CBD5E1; border-radius:8px; padding:10px 12px; font-size:14px; }
+    .wa-replybar input:disabled { background:#F8FAFC; color:#94A3B8; }
+    .wa-note { padding:0 12px 12px; font-size:12px; color:#64748B; min-height:18px; }
+    .wa-note.err { color:#B91C1C; }
   </style>
 </head>
 <body>
@@ -7780,7 +8020,9 @@ ADMIN_HTML = """
         <span id="lastUpdated">—</span>
         <a class="topbar-link" href="/admin">Refresh</a>
         <button class="topbar-link" id="changePwBtn" type="button">Change password</button>
-        <a class="topbar-link" href="/logout">Sign out</a>
+        <form method="post" action="/logout" style="margin:0;display:inline;">
+          <button class="topbar-link" type="submit">Sign out</button>
+        </form>
       </div>
     </div>
   </div>
@@ -7790,6 +8032,7 @@ ADMIN_HTML = """
       <button class="tab active" data-tab="overview" type="button">Overview</button>
       <button class="tab" data-tab="leads" type="button">Leads <span class="tab-count" id="leadsCount">0</span></button>
       <button class="tab" data-tab="transcripts" type="button">Transcripts <span class="tab-count" id="transcriptsCount">0</span></button>
+      <button class="tab" data-tab="whatsapp" type="button">WhatsApp <span class="tab-count" id="waCount">0</span></button>
     </div>
   </div>
 
@@ -7814,6 +8057,38 @@ ADMIN_HTML = """
         </div>
       </div>
       <div id="leads"></div>
+    </section>
+
+    <section class="panel" data-panel="whatsapp">
+      <div class="section-head">
+        <div class="section-head-left">
+          <h2 class="section-title">WhatsApp</h2>
+          <p class="section-sub">Robo-Nick's WhatsApp threads. Reply here yourself and the bot goes quiet in that thread until you hand it back.</p>
+        </div>
+        <div class="section-head-actions">
+          <label class="wa-switch">
+            <input type="checkbox" id="waChannelToggle" checked>
+            <span id="waChannelLabel">Channel on</span>
+          </label>
+        </div>
+      </div>
+      <div class="transcript-grid">
+        <div class="session-list" id="waThreads"></div>
+        <div class="transcript-panel">
+          <div class="transcript-head">
+            <div class="transcript-head-meta" id="waMeta">Select a conversation on the left.</div>
+            <div class="transcript-actions">
+              <button class="btn ghost" id="waMuteBtn" type="button" disabled>Mute bot</button>
+            </div>
+          </div>
+          <div class="messages" id="waMessages"></div>
+          <form class="wa-replybar" id="waReplyForm">
+            <input id="waReplyInput" placeholder="Reply as Nick…" autocomplete="off" disabled>
+            <button class="btn primary" id="waReplySend" type="submit" disabled>Send</button>
+          </form>
+          <div class="wa-note" id="waNote"></div>
+        </div>
+      </div>
     </section>
 
     <section class="panel" data-panel="transcripts">
@@ -8052,6 +8327,159 @@ ADMIN_HTML = """
         + '</tbody></table></div>';
     }
 
+    // ── WhatsApp tab ────────────────────────────────────────────────────
+    let waSelectedId = null;
+
+    function waData() { return (window.__OS_ADMIN_DATA__ || {}).wa || { channel_enabled: true, conversations: [] }; }
+
+    function waThreadMessages(sid) {
+      const t = (window.__OS_ADMIN_DATA__.transcripts || []).find(function(s) { return s.session_id === sid; });
+      return t ? (t.messages || []) : [];
+    }
+
+    function waWindowBadge(thread) {
+      if (thread.window_open) {
+        const h = Math.floor(thread.minutes_remaining / 60), m = thread.minutes_remaining % 60;
+        return '<span class="wa-badge open">Window open · ' + h + 'h ' + m + 'm left</span>';
+      }
+      return '<span class="wa-badge closed">Window closed · template only</span>';
+    }
+
+    function renderWaThreads() {
+      const wa = waData();
+      const threads = wa.conversations || [];
+      document.getElementById('waCount').textContent = num(threads.length);
+      const toggle = document.getElementById('waChannelToggle');
+      toggle.checked = !!wa.channel_enabled;
+      document.getElementById('waChannelLabel').textContent = wa.channel_enabled ? 'Channel on' : 'Channel OFF, bot silent';
+      if (!waSelectedId && threads.length) waSelectedId = threads[0].session_id;
+      const wrap = document.getElementById('waThreads');
+      wrap.innerHTML = threads.length ? threads.map(function(t) {
+        const active = t.session_id === waSelectedId ? ' active' : '';
+        const last = t.last_message || {};
+        return '<button class="session-row' + active + '" type="button" data-wa-session="' + esc(t.session_id) + '">'
+          + '<div class="session-avatar">' + esc(initials(t.session_id)) + '</div>'
+          + '<div class="session-meta">'
+          +   '<span class="session-id">+' + esc(t.session_id.replace('wa-', '')) + '</span>'
+          +   '<div class="session-time">' + esc(fmtRelative(last.timestamp)) + ' · ' + esc(t.message_count || 0) + ' msgs'
+          +     (t.muted ? ' <span class="wa-badge muted">Bot muted</span>' : '') + '</div>'
+          +   '<div class="session-preview">' + esc(last.content || '') + '</div>'
+          + '</div>'
+          + '</button>';
+      }).join('') : '<div class="empty">No WhatsApp conversations yet. They appear here the moment the number goes live.</div>';
+      wrap.querySelectorAll('[data-wa-session]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          waSelectedId = btn.getAttribute('data-wa-session');
+          renderWaThreads(); renderWaDetail();
+        });
+      });
+    }
+
+    function renderWaDetail() {
+      const thread = (waData().conversations || []).find(function(t) { return t.session_id === waSelectedId; });
+      const meta = document.getElementById('waMeta');
+      const muteBtn = document.getElementById('waMuteBtn');
+      const input = document.getElementById('waReplyInput');
+      const send = document.getElementById('waReplySend');
+      const note = document.getElementById('waNote');
+      note.textContent = ''; note.className = 'wa-note';
+      if (!thread) {
+        meta.textContent = 'Select a conversation on the left.';
+        muteBtn.disabled = true; input.disabled = true; send.disabled = true;
+        document.getElementById('waMessages').innerHTML = '';
+        return;
+      }
+      meta.innerHTML = '<strong>+' + esc(thread.session_id.replace('wa-', '')) + '</strong> ' + waWindowBadge(thread)
+        + (thread.muted ? ' <span class="wa-badge muted">Bot muted — you are driving</span>' : '');
+      muteBtn.disabled = false;
+      muteBtn.textContent = thread.muted ? 'Hand back to bot' : 'Mute bot';
+      const canReply = !!thread.window_open;
+      input.disabled = !canReply; send.disabled = !canReply;
+      input.placeholder = canReply ? 'Reply as Nick…' : 'Window closed — WhatsApp only allows template messages now';
+      document.getElementById('waMessages').innerHTML = waThreadMessages(thread.session_id).map(function(m) {
+        const who = m.role === 'user' ? 'them' : 'bot';
+        return '<div class="msg ' + esc(m.role || '') + '"><div class="msg-role">' + esc(who) + '</div>'
+          + '<div class="msg-bubble">' + esc(m.content || '') + '</div>'
+          + '<div class="msg-time">' + esc(fmtRelative(m.timestamp)) + '</div></div>';
+      }).join('') || '<div class="empty">No messages recorded for this thread.</div>';
+    }
+
+    async function waRefresh() {
+      try {
+        const res = await fetch('/api/wa/conversations', { credentials: 'include' });
+        if (res.ok) {
+          window.__OS_ADMIN_DATA__.wa = await res.json();
+          renderWaThreads(); renderWaDetail();
+        }
+      } catch (e) {}
+    }
+
+    function waNoteMsg(text, isErr) {
+      const note = document.getElementById('waNote');
+      note.textContent = text;
+      note.className = isErr ? 'wa-note err' : 'wa-note';
+    }
+
+    function initWaActions() {
+      document.getElementById('waChannelToggle').addEventListener('change', async function() {
+        const enabled = this.checked;
+        const res = await fetch('/api/wa/kill', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: enabled })
+        });
+        const body = await res.json().catch(function() { return {}; });
+        if (!res.ok) {
+          this.checked = !enabled;
+          waNoteMsg(body.error || 'Could not change the switch. Nothing was changed.', true);
+          return;
+        }
+        waNoteMsg(enabled ? 'Channel on: Robo-Nick is answering.' : 'Channel off: Robo-Nick is silent. Enquiries are still recorded and you still get alerts.', false);
+        waRefresh();
+      });
+
+      document.getElementById('waMuteBtn').addEventListener('click', async function() {
+        const thread = (waData().conversations || []).find(function(t) { return t.session_id === waSelectedId; });
+        if (!thread) return;
+        const body = thread.muted ? { session_id: thread.session_id, clear: true }
+                                  : { session_id: thread.session_id, minutes: 24 * 60 };
+        const res = await fetch('/api/wa/mute', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if (res.ok) { waRefresh(); } else { waNoteMsg('Could not change the mute.', true); }
+      });
+
+      document.getElementById('waReplyForm').addEventListener('submit', async function(ev) {
+        ev.preventDefault();
+        const input = document.getElementById('waReplyInput');
+        const message = input.value.trim();
+        if (!message || !waSelectedId) return;
+        const send = document.getElementById('waReplySend');
+        send.disabled = true;
+        const res = await fetch('/api/wa/reply', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: waSelectedId, message: message })
+        });
+        const body = await res.json().catch(function() { return {}; });
+        send.disabled = false;
+        if (!res.ok) {
+          waNoteMsg(body.detail || body.error || 'Send failed.', true);
+          return;
+        }
+        input.value = '';
+        // Optimistic append so Nick sees his reply immediately; the durable
+        // copy comes back on the next refresh.
+        const t = (window.__OS_ADMIN_DATA__.transcripts || []).find(function(x) { return x.session_id === waSelectedId; });
+        if (t) t.messages.push({ role: 'assistant', content: message, timestamp: new Date().toISOString() });
+        waNoteMsg('Sent. Robo-Nick is muted in this thread until you hand it back.', false);
+        renderWaDetail();
+        waRefresh();
+      });
+    }
+
     function boot() {
       const data = window.__OS_ADMIN_DATA__ || {};
       const metrics = data.metrics || { outcomes: {} };
@@ -8074,6 +8502,9 @@ ADMIN_HTML = """
       renderLeads(leads);
       renderSessions();
       renderTranscript();
+      renderWaThreads();
+      renderWaDetail();
+      initWaActions();
 
       document.getElementById('search').addEventListener('input', function() {
         renderSessions();
