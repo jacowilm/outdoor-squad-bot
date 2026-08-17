@@ -911,25 +911,26 @@ Conversation rules:
 - Do not sign messages with "Robo-Nick". The widget already shows who is speaking.
 - Do not paste links/phone/email unless the user is ready to book, asks for contact details, or shares contact details.
 - Never claim an email, SMS, reminder, booking confirmation, meal plan delivery, or notification was sent unless this app actually did it.
-- Never invent a specific class/session duration (e.g. "45 minutes", "an hour") or a specific equipment inventory (e.g. "we have barbells, trap bars, TRX") — these are NOT in your source material. If asked how long a class runs, say the exact length is on the timetable / the team can confirm. If asked about equipment or what to bring, say all equipment is provided on site and they just bring a drink bottle, towel and mat.
-- If a visitor writes in another language, reply in English (a one-word greeting in their language is fine). Never claim Nick, Lyn, or the team speak that language — you don't know. Offer email (innerwest@outdoorsquad.com.au) so they can sort language directly.
-- There are NO referral bonuses, guest promos, or discounts to "keep an eye out for" — never hint that any exist. Guests and friends use the free 1-Day Trial Pass. Families or groups training together may get value-stacked bonuses (extra sessions, movement screens) after a chat with the team — never money off.
-- If you are not confident about ANY answer, do not improvise — hand off to Humanoid-Nick with a light line ("that one's outside what Robo-Nick can reliably do — Humanoid-Nick kept the improv rights for himself") and ask for a first name + mobile, or give innerwest@outdoorsquad.com.au. A wrong answer is worse than a handoff.
+- Never invent a specific class/session duration (e.g. "45 minutes", "an hour") or a specific equipment inventory (e.g. "we have barbells, trap bars, TRX"). These are NOT in your source material. If asked how long a class runs, say the exact length is on the timetable / the team can confirm. If asked about equipment or what to bring, say all equipment is provided on site and they just bring a drink bottle, towel and mat.
+- If a visitor writes in another language, reply in English (a one-word greeting in their language is fine). Never claim Nick, Lyn, or the team speak that language. You don't know. Offer email (innerwest@outdoorsquad.com.au) so they can sort language directly.
+- There are NO referral bonuses, guest promos, or discounts to "keep an eye out for". Never hint that any exist. Guests and friends use the free 1-Day Trial Pass. Families or groups training together may get value-stacked bonuses (extra sessions, movement screens) after a chat with the team, never money off.
+- If you are not confident about ANY answer, do not improvise: hand off to Humanoid-Nick with a light line ("that one's outside what Robo-Nick can reliably do. Humanoid-Nick kept the improv rights for himself") and ask for a first name + mobile, or give innerwest@outdoorsquad.com.au. A wrong answer is worse than a handoff.
 - NEVER offer to follow up at the prospect's stated delay ("I'll decide next month" → do NOT say "the team can reach out next month"). Intent decays. Capture the contact now and say the team will usually follow up the same day; the decision can take as long as it likes.
 - If someone mentions a doctor-flagged condition or says they're scared/worried about their health: acknowledge the feeling plainly, drop ALL jokes and pop-culture references for that reply, reassure briefly, and offer a human chat with Humanoid-Nick or Lyn.
 - If anyone mentions an eating disorder, disordered eating, anorexia, bulimia, purging, starving, or a child who has stopped eating: this is NOT a sign-up, weight-loss, or meal-plan moment. Do NOT pitch classes, pricing, the meal plan, or weight-loss framing. Warmly acknowledge it, no jokes, and hand off to a caring human (Humanoid-Nick or Lyn) alongside their GP/health professional; you can mention the Butterfly Foundation helpline (1800 33 4673). Offer to take a mobile or give innerwest@outdoorsquad.com.au.
-- If a question involves several people (partner + kids, a whole family), answer for ALL of them — each person's right product and price — not just the last person mentioned.
+- If a question involves several people (partner + kids, a whole family), answer for ALL of them (each person's right product and price), not just the last person mentioned.
 - This app does not send meal plans, SMS reminders, booking confirmations, or notifications by itself. When relevant, say the team can follow up or that you can point the user in the right direction.
 - Make replies easy to scan on a phone
 - Prefer this structure when it fits: quick reaction, direct answer, then one simple next step or question
 - Use line breaks naturally so each idea has room
-- ALWAYS format option lists as a vertical bullet list. Each option = its own line, starting with "- ", then a bold label, then an em-dash, then the description. Example:
-  - **Free trial pass** — easiest way to try one class
-  - **Group classes** — regular, low-pressure sessions for beginners
-  - **SPT** — small-group personal training with programming
+- ALWAYS format option lists as a vertical bullet list. Each option = its own line, starting with "- ", then a bold label, then a colon, then the description. Example:
+  - **Free trial pass**: easiest way to try one class
+  - **Group classes**: regular, low-pressure sessions for beginners
+  - **SPT**: small-group personal training with programming
   Use 3 options, max 4. Never run options together with semicolons. Never put options in standalone paragraphs without a leading dash.
 - When you write a header like "Quick options:", "Training styles:", or "Pricing:", bold it ("**Quick options:**") on its own line followed by a blank line, then the bullet list. Never inline the options after the colon.
 - Vary sentence structure, avoid repeating the same openings or closings
+- Never use an em dash (—) anywhere in a reply. Use a comma, a colon, or two sentences instead.
 - Do not use "Nice" as a default opener. If a previous assistant reply recently started with "Nice", "Perfect", "Love that", or "Good call", choose a different opening or answer directly.
 - Avoid repetitive validation at the start of every message. Often the best opening is the direct answer.
 - Do not always end with a CTA, sometimes a simple helpful answer is better
@@ -1229,7 +1230,7 @@ def clean_agent_reply(reply: str | None) -> str:
     # instructions/scaffolding, don't ship it — return a clean refusal instead.
     if PROMPT_LEAK_RE.search(text):
         return (
-            "Nice try — Robo-Nick keeps its internal setup behind the curtain.\n\n"
+            "Nice try. Robo-Nick keeps its internal setup behind the curtain.\n\n"
             "Happy to help with the actual Outdoor Squad stuff though: trials, prices, "
             "SPT, YTP, injuries, locations, or getting a human to follow up."
         )
@@ -1306,7 +1307,7 @@ def clean_agent_reply(reply: str | None) -> str:
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = guard_operational_claims(text)
-    return format_reply_for_chat(text)
+    return strip_em_dashes(format_reply_for_chat(text))
 
 
 _INLINE_LIST_RE = re.compile(
@@ -1337,7 +1338,7 @@ def expand_inline_lists(text: str) -> str:
         for seg in segments:
             if ":" in seg:
                 label, desc = seg.split(":", 1)
-                bullets.append(f"- **{label.strip()}** — {desc.strip().rstrip('.')}")
+                bullets.append(f"- **{label.strip()}**: {desc.strip().rstrip('.')}")
             else:
                 bullets.append(f"- {seg.strip().rstrip('.')}")
         return f"\n\n**{header}:**\n" + "\n".join(bullets) + "\n\n"
@@ -1426,7 +1427,7 @@ def split_long_paragraph(paragraph: str) -> list[str]:
 _BULLET_LABEL_RE = re.compile(
     r"^(?P<lead>-\s+)"
     r"(?P<label>(?!\*\*)[A-Za-z0-9][^—–:.\n]{1,48}?)"
-    r"(?P<sep>\s+[—–]\s+)"
+    r"(?P<sep>\s+[—–]\s+|:\s+)"
     r"(?P<rest>\S.*)$"
 )
 
@@ -1500,7 +1501,7 @@ def format_reply_for_chat(text: str) -> str:
     # bullet item. The LLM sometimes emits options as separate paragraphs with
     # bold labels but no leading dash; that reads OK but doesn't render as a
     # <ul>. Promoting them to bullets keeps the document semantically a list.
-    _bold_label_para = re.compile(r"^\*\*[^*\n]+\*\*\s+[\-–—:]\s")
+    _bold_label_para = re.compile(r"^\*\*[^*\n]+\*\*(?::\s|\s+[\-–—:]\s)")
     promoted: list[str] = []
     for block in cleaned_blocks:
         if _bold_label_para.match(block):
@@ -1524,6 +1525,27 @@ def format_reply_for_chat(text: str) -> str:
         grouped.append("\n".join(buffer))
 
     return "\n\n".join(block for block in grouped if block).strip()
+
+
+# House rule: customers never see an em dash (they read as machine-written; the
+# prompt already bans them, this is the deterministic backstop for LLM output —
+# the scripted replies are written without them at the source). Digit ranges
+# keep a plain hyphen, "**Label** — desc" bullet separators become a colon,
+# a line-leading dash becomes a bullet marker, anything else becomes a comma.
+_EM_DASH_DIGIT_RANGE_RE = re.compile(r"(?<=\d)[ \t]*—[ \t]*(?=\d)")
+_EM_DASH_AFTER_BOLD_RE = re.compile(r"(?<=\*\*)[ \t]+—+[ \t]+")
+_EM_DASH_LINE_START_RE = re.compile(r"(?m)^—+[ \t]*")
+_EM_DASH_RE = re.compile(r"[ \t]*—+[ \t]*")
+
+
+def strip_em_dashes(text: str) -> str:
+    if "—" not in text:
+        return text
+    text = _EM_DASH_DIGIT_RANGE_RE.sub("-", text)
+    text = _EM_DASH_AFTER_BOLD_RE.sub(": ", text)
+    text = _EM_DASH_LINE_START_RE.sub("- ", text)
+    text = _EM_DASH_RE.sub(", ", text)
+    return re.sub(r"[ \t]+\n", "\n", text)
 
 
 def reply_similarity(left: str, right: str) -> float:
@@ -1558,7 +1580,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
     # generic "drop your mobile" handoff (which the repeat-detector would otherwise hit).
     if is_prompt_injection(clean):
         return (
-            "Still not happening — Robo-Nick doesn’t reveal its internal instructions or system prompt.\n\n"
+            "Still not happening. Robo-Nick doesn’t reveal its internal instructions or system prompt.\n\n"
             "Happy to help with the real stuff though: trials, prices, SPT, YTP, locations, or getting a human to follow up."
         )
     # Keep the eating-disorder handoff reachable on repeat turns too, rather than
@@ -1590,7 +1612,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
     if mentions_pregnancy(clean) or "miscarriage" in clean:
         return (
             "Worth saying again: this one isn’t a Robo-Nick call.\n\n"
-            "Pregnancy training depends on your stage, your history, and what your healthcare team’s said — Humanoid-Nick or Lyn need to scope it in person, not me.\n\n"
+            "Pregnancy training depends on your stage, your history, and what your healthcare team’s said. Humanoid-Nick or Lyn need to scope it in person, not me.\n\n"
             "Easiest move: drop your first name + mobile here and they’ll ring you back. Or email innerwest@outdoorsquad.com.au if you’d rather start that way."
         )
     if mentions_injury(clean) or any(phrase in clean for phrase in ["physio", "surgery"]):
@@ -1598,7 +1620,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
         # The injury handoff must only echo terms from this visitor's message,
         # never cached specifics from another test session.
         name = extract_contact_name(message, session_id=session_id)
-        name_open = f"Righto {name.split()[0]} — " if name else "Righto — "
+        name_open = f"Righto {name.split()[0]}, " if name else "Righto, "
         terms = named_injury_terms(clean)
         specific_issue = ", ".join(terms[:3]) if terms else "injury history"
         return (
@@ -1619,7 +1641,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
         "no consistency", "wasted memberships", "wasted my membership", "drop off again", "fall off",
     ]):
         return (
-            "Honest answer: gyms usually don’t fail because of the equipment — they fail because nobody notices when you stop turning up.\n\n"
+            "Honest answer: gyms usually don’t fail because of the equipment. They fail because nobody notices when you stop turning up.\n\n"
             "What tends to land here is small enough sessions that a coach actually learns your name, outdoor training in your neighbourhood so it doesn’t feel like a chore, and a regular crew that ends up half-friends-half-accountability.\n\n"
             "Want to flag your name + mobile so Humanoid-Nick or Lyn can call about what kept tripping you up at the others?"
         )
@@ -1632,7 +1654,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
         "1 on 1", "1-on-1", "one-on-one", "one on one", "more attention", "actually pay attention",
     ]):
         return (
-            "Heard you the first time — that’s an SPT or 1:1 PT conversation, not group classes.\n\n"
+            "Heard you the first time. That’s an SPT or 1:1 PT conversation, not group classes.\n\n"
             "SPT is max 4 people with personalised programming and assessments; 1:1 PT is $150/session if you want full one-on-one. The 28-Day Kickstarter ($397) is the trial run for the SPT setup.\n\n"
             "Want me to flag SPT or PT so Humanoid-Nick or Lyn can scope your goals on a quick call? Drop your first name + mobile and they’ll take it from here."
         )
@@ -1654,13 +1676,13 @@ def non_repeating_followup(message: str, session_id: str) -> str:
         )
     if any(phrase in clean for phrase in ["unfit", "not fit", "out of shape", "carrying extra", "overweight", "extra weight", "haven't trained", "havent trained", "haven't exercised", "nervous", "anxious", "scared", "intimidated", "embarrassed", "self-conscious", "self conscious", "judged", "keep up", "out of my depth", "too unfit"]):
         return (
-            "Genuinely — being upfront about it is the right starting point, not a problem.\n\n"
-            "Nobody’s expecting polished. The coach scales every movement to where you’re actually at, and the group is far more 'glad you came' than 'who’s this'. Consistency beats motivation — it’s about turning up, not arriving fit.\n\n"
-            "Easiest way to believe me is to feel it. Want me to line up a quiet first session — Camperdown or Redfern?"
+            "Genuinely, being upfront about it is the right starting point, not a problem.\n\n"
+            "Nobody’s expecting polished. The coach scales every movement to where you’re actually at, and the group is far more 'glad you came' than 'who’s this'. Consistency beats motivation: it’s about turning up, not arriving fit.\n\n"
+            "Easiest way to believe me is to feel it. Want me to line up a quiet first session at Camperdown or Redfern?"
         )
     if any(phrase in clean for phrase in ["deal", "deals", "offer", "offers", "promo", "promos", "special", "specials", "discount", "free month", "cheaper", "join today", "sign up today", "sign-up"]):
         return (
-            "No secret promo to chase, honestly — the free trial is the offer: one full coached session, free, no catch.\n\n"
+            "No secret promo to chase, honestly. The free trial is the offer: one full coached session, free, no catch.\n\n"
             "Want me to point you to it, or pass you to Humanoid-Nick or Lyn to talk through the options?"
         )
     # Account/billing admin must outrank the price branch — "update my card
@@ -1669,7 +1691,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
     if any(phrase in clean for phrase in ["billing date", "payment date", "change my billing", "change my payment", "update my payment", "card details", "update my card", "change my card", "new card", "payment method", "credit card", "debit card", "direct debit", "bank details", "pause my membership", "cancel my membership"]):
         return (
             "Although I’m awesome, that is outside my purview.\n\n"
-            "Payment dates, card details, billing changes, pauses and account stuff need Humanoid-Nick, Lyn, or the admin team — cruel human overlords with actual account access.\n\n"
+            "Payment dates, card details, billing changes, pauses and account stuff need Humanoid-Nick, Lyn, or the admin team, cruel human overlords with actual account access.\n\n"
             "Send through your name plus the email or mobile on the membership and they can sort it properly."
         )
     if any(word in clean for word in ["price", "cost", "how much", "membership", "option", "options", "spt", "kickstarter"]):
@@ -1684,7 +1706,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
         if any(w in clean for w in ["how much", "price", "cost", "$"]):
             return (
                 "Short version: free trial $0, Squad Ascent $51/wk unlimited group ($25/wk verified students), 28-Day Kickstarter $397 total, casual drop-in $37.\n\n"
-                "Which lane are you actually weighing up — group or SPT?"
+                "Which lane are you actually weighing up, group or SPT?"
             )
         return (
             "Rather than run through the same options again: are you leaning low-pressure group classes, or more coached SPT?"
@@ -1705,12 +1727,12 @@ def non_repeating_followup(message: str, session_id: str) -> str:
         "self-conscious", "self conscious", "keep up", "slow everyone", "hold everyone",
     ]):
         return (
-            "Genuinely, no — it's not a room full of show-offs waiting to judge you.\n\n"
+            "Genuinely, no. It's not a room full of show-offs waiting to judge you.\n\n"
             "It's a mixed crew, everyone's mid-effort and focused on their own session, and the coach quietly scales things to where you're at. Most first-session nerves are gone by the warm-up.\n\n"
-            "Easiest way to prove it to yourself is a quiet free trial — want me to line one up at Camperdown or Redfern?"
+            "Easiest way to prove it to yourself is a quiet free trial. Want me to line one up at Camperdown or Redfern?"
         )
     return (
-        "Honest answer: that one's outside what Robo-Nick can reliably do — Humanoid-Nick kept the improv rights for himself.\n\n"
+        "Honest answer: that one's outside what Robo-Nick can reliably do. Humanoid-Nick kept the improv rights for himself.\n\n"
         "Drop your first name + mobile and he or Lyn will sort it properly, or grab the free trial whenever you're ready."
     )
 
@@ -1834,10 +1856,10 @@ def recent_assistant_message(session_id: str) -> str:
 
 
 TRIAL_CLOSES = (
-    "Want me to hold a quiet class spot — Camperdown or Redfern?",
+    "Want me to hold a quiet class spot at Camperdown or Redfern?",
     "If you pick Camperdown or Redfern, I can flag the next sensible session for you.",
     "Which fits your week better, Camperdown or Redfern?",
-    "Camperdown or Redfern — which is closer for you to walk into?",
+    "Camperdown or Redfern, which is closer for you to walk into?",
     "Tell me Camperdown or Redfern and I’ll point you at the cleanest first session.",
     "Want me to line up the next quiet class at Camperdown or Redfern for you?",
 )
@@ -1860,7 +1882,7 @@ def trial_close(session_id: str) -> str:
         if candidate.lower() not in history:
             return candidate
     # All have been used — fall through to a neutral one.
-    return "Camperdown or Redfern — whichever is closer is fine."
+    return "Camperdown or Redfern, whichever is closer is fine."
 
 
 TIMETABLE_ENTRIES = [
@@ -1931,7 +1953,7 @@ def timetable_reply(text: str, session_id: str) -> str:
     mentioned_days = [d for d in dict.fromkeys(mentioned_days) if d != "sunday"]
     if asks_sunday and not mentioned_days:
         return (
-            "No Sunday sessions in the current timetable — Saturday is the weekend option.\n\n"
+            "No Sunday sessions in the current timetable. Saturday is the weekend option.\n\n"
             "Saturday has 8:00am Strength'N'Stamina at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown."
         )
 
@@ -1960,13 +1982,13 @@ def timetable_reply(text: str, session_id: str) -> str:
 
     had_filter = bool(mentioned_days or mentioned_locations or mentioned_classes or wants_evening or wants_morning)
     if filtered and had_filter:
-        lines = [f"- {day.title()} {time} — {class_name} ({location})" for day, time, class_name, location in filtered[:8]]
+        lines = [f"- {day.title()} {time}: {class_name} ({location})" for day, time, class_name, location in filtered[:8]]
         if len(filtered) > 8:
             lines.append("- Plus a few more across the full timetable.")
         return (
             "From the current timetable:\n"
             + "\n".join(lines)
-            + f"\n\nFor live availability, use the timetable/free-trial booking view: {TRIAL_LINK} — I won’t invent spots from here."
+            + f"\n\nFor live availability, use the timetable/free-trial booking view: {TRIAL_LINK} (I won’t invent spots from here)."
         )
 
     if had_filter and not filtered:
@@ -1974,19 +1996,19 @@ def timetable_reply(text: str, session_id: str) -> str:
         # nearest facts instead of inventing a slot (Nicholas round-3 blocker).
         parts = []
         if wants_evening and "redfern" in mentioned_locations:
-            parts.append("Redfern doesn't run evening sessions at all — Redfern is mornings: 6am Monday to Friday, plus Saturday 8am.")
-            parts.append("Evenings run at Camperdown: 6:30pm Monday, Tuesday and Wednesday — and membership works across both venues, so you can use Camperdown evenings even if Redfern is your usual spot.")
+            parts.append("Redfern doesn't run evening sessions at all. Redfern is mornings: 6am Monday to Friday, plus Saturday 8am.")
+            parts.append("Evenings run at Camperdown: 6:30pm Monday, Tuesday and Wednesday. Membership works across both venues, so you can use Camperdown evenings even if Redfern is your usual spot.")
         elif mentioned_days and mentioned_locations:
             day_word = mentioned_days[0].title()
             loc_word = mentioned_locations[0].title()
             alternatives = [e for e in TIMETABLE_ENTRIES if e[0] in mentioned_days]
-            alt_lines = "\n".join(f"- {d.title()} {t} — {c} ({l})" for d, t, c, l in alternatives[:5])
+            alt_lines = "\n".join(f"- {d.title()} {t}: {c} ({l})" for d, t, c, l in alternatives[:5])
             parts.append(f"Nothing matches that exact slot at {loc_word} on {day_word} in the current timetable.")
             if alt_lines:
                 parts.append(f"What {day_word} actually has:\n{alt_lines}")
         else:
             parts.append("That exact combination isn't in the current timetable, so I won't guess at it.")
-        parts.append(f"For live availability, the booking view is the source of truth: {TRIAL_LINK} — or the team can confirm directly.")
+        parts.append(f"For live availability, the booking view is the source of truth: {TRIAL_LINK}, or the team can confirm directly.")
         return "\n\n".join(parts)
 
     return (
@@ -2098,10 +2120,10 @@ def eating_disorder_handoff_reply() -> str:
     disorder / disordered-eating disclosure. Person-agnostic so it reads right
     whether the visitor or their child is the one affected."""
     return (
-        "Thanks for telling me that — genuinely, that takes trust.\n\n"
+        "Thanks for telling me that. Genuinely, that takes trust.\n\n"
         "Anything around eating, food, or recovery is really individual and important, "
         "and it’s not something Robo-Nick should try to coach through a chat box. The right "
-        "next step is a proper, caring human conversation — Humanoid-Nick or Lyn can talk it "
+        "next step is a proper, caring human conversation. Humanoid-Nick or Lyn can talk it "
         "through gently and work out what’s safe and supportive, alongside whatever GP or "
         "health professional is involved. If things ever feel urgent, the Butterfly Foundation’s "
         "National Helpline (1800 33 4673) is there for eating-disorder support any day.\n\n"
@@ -2220,7 +2242,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             if nm:
                 first = f", {nm.split()[0]}"
             return (
-                f"Perfect — {pref} it is{first}. The team will reach out shortly to sort your free trial or the best next step.\n\n"
+                f"Perfect, {pref} it is{first}. The team will reach out shortly to sort your free trial or the best next step.\n\n"
                 "Anything else you want to know while you're here, or are you good to go?"
             )
 
@@ -2255,11 +2277,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             nm = last_known_name(session_id)
             tail = f", {nm.split()[0]}" if nm else ""
             return (
-                f"No worries at all{tail} — you're all set. The team will be in touch soon.\n\n"
+                f"No worries at all{tail}, you're all set. The team will be in touch soon.\n\n"
                 "Enjoy that first session, and give it a proper crack."
             )
         return (
-            "No worries at all. I'm here whenever you need — trials, prices, classes, or getting a human to help.\n\n"
+            "No worries at all. I'm here whenever you need: trials, prices, classes, or getting a human to help.\n\n"
             "Come back any time and we'll sort you out."
         )
 
@@ -2267,7 +2289,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # swallowed by an unrelated keyword branch (e.g. "system prompt" -> "pt").
     if is_prompt_injection(clean):
         return (
-            "Nice try. Robo-Nick isn't spilling the internal instructions or system prompt — by Crom, some things stay behind the curtain.\n\n"
+            "Nice try. Robo-Nick isn't spilling the internal instructions or system prompt. By Crom, some things stay behind the curtain.\n\n"
             "I can help with the actual Outdoor Squad stuff though: trials, prices, SPT, YTP, injuries, locations, or getting a human to follow up.\n\n"
             "What brought you here?"
         )
@@ -2292,7 +2314,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         kw in clean for kw in ["send", "email", "get", "sign me up", "sign up", "subscribe", "share", "share it"]
     ):
         has_email_in_msg = bool(re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", message))
-        lines = ["Yep — happy to flag the free 5-day meal plan for you."]
+        lines = ["Yep, happy to flag the free 5-day meal plan for you."]
         if has_email_in_msg:
             lines.append("Got the email on file, so Nick or Lyn can send it through with the rest of the welcome notes.")
         else:
@@ -2309,7 +2331,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(diet in clean for diet in ["vegan", "vegetarian", "plant based", "plant-based", "gluten", "dairy free", "dairy-free", "halal", "kosher", "keto", "pescatarian", "food allergy", "allergies", "intolerance"]) and any(w in clean for w in ["meal", "plan", "food", "diet", "nutrition", "eat"]):
         return (
             "The free lead magnet is a 5-Day High-Protein Australian Meal Plan, so it’s a general template rather than a vegan/gluten-free/specific-diet one.\n\n"
-            "If you eat a particular way, Nick or Lyn can point you at what actually fits rather than me guessing — and on the SPT side there’s proper nutrition support that can be tailored.\n\n"
+            "If you eat a particular way, Nick or Lyn can point you at what actually fits rather than me guessing. On the SPT side there’s proper nutrition support that can be tailored.\n\n"
             "Want me to flag the meal plan to send through (just drop an email), or line up a quick chat with the team about the food side?"
         )
 
@@ -2326,7 +2348,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         "does anyone read these", "will someone read this", "if i leave my mobile", "if i leave my number",
     ]):
         return (
-            "Yep — if you drop your name and mobile here, the team picks it up and follows up, usually same day.\n\n"
+            "Yep, if you drop your name and mobile here, the team picks it up and follows up, usually same day.\n\n"
             "Robo-Nick can handle the easy stuff in the chat, but Humanoid-Nick, Lyn or the team take the actual human follow-up from there.\n\n"
             "If you'd rather not leave details here, email innerwest@outdoorsquad.com.au directly."
         )
@@ -2344,7 +2366,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         "where do you put my details", "where do you put my data", "where do you put my info",
     ]):
         return (
-            "Fair thing to ask, so here's the straight version: chats here are logged so the team can follow up properly. Only Humanoid-Nick, Lyn and the Outdoor Squad team can read them — nothing gets sold, shared, or used for anything beyond getting you sorted.\n\n"
+            "Fair thing to ask, so here's the straight version: chats here are logged so the team can follow up properly. Only Humanoid-Nick, Lyn and the Outdoor Squad team can read them. Nothing gets sold, shared, or used for anything beyond getting you sorted.\n\n"
             "If you leave a name, mobile or email, it goes to the team for follow-up, and your contact details are masked in the stored logs. No shadowy data empire under Camperdown Oval.\n\n"
             "If you'd rather keep details out of the chat, email innerwest@outdoorsquad.com.au directly."
         )
@@ -2361,9 +2383,9 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             # human warmth, hand off (Nicholas round-3: the diabetes answer got a
             # recycled pep talk with a mannequin gag — wrong register entirely).
             return (
-                "That's a genuinely scary thing to hear from a doctor, and wanting to act on it straight away is the right instinct — so you're already doing the hard part.\n\n"
+                "That's a genuinely scary thing to hear from a doctor, and wanting to act on it straight away is the right instinct, so you're already doing the hard part.\n\n"
                 "You don't need a plan today, and you won't be training alone or guessing. The honest first step is a quick chat with Humanoid-Nick or Lyn: they've helped plenty of people start from exactly this conversation, they'll work in line with what your doctor's said, and the first session gets scaled to wherever you're at now.\n\n"
-                "Drop your first name + mobile and they'll call for a no-pressure chat — or email innerwest@outdoorsquad.com.au if that's easier. Either way, you're not doing this on your own."
+                "Drop your first name + mobile and they'll call for a no-pressure chat, or email innerwest@outdoorsquad.com.au if that's easier. Either way, you're not doing this on your own."
             )
         return (
             "Good one to flag before training. A health condition doesn't automatically rule you out, but it's specific enough that Robo-Nick shouldn't be guessing.\n\n"
@@ -2374,7 +2396,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(phrase in clean for phrase in ["used to train", "used to come", "former member", "old member", "returning member", "come back", "coming back", "haven't been in ages", "havent been in ages", "been away", "restart", "re-start", "rejoin", "re-join", "lapsed"]):
         return (
             "Welcome back-ish. The sensible path is usually not to pretend nothing happened and charge straight into heroic nonsense.\n\n"
-            "Nick or Lyn can check where you’re at now, any injuries or schedule changes, then point you to the cleanest restart — group classes, SPT, or a trial-style first session if that makes more sense.\n\n"
+            "Nick or Lyn can check where you’re at now, any injuries or schedule changes, then point you to the cleanest restart: group classes, SPT, or a trial-style first session if that makes more sense.\n\n"
             "Want to drop your name + mobile/email so they can look you up and suggest the right re-entry?"
         )
 
@@ -2394,7 +2416,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         or (any(w in clean for w in ["eat", "eating", "diet", "nutrition", "food"]) and any(g in clean for g in ["lose weight", "weight loss", "fat loss", "slim down", "drop weight", "shift weight"]))
     ):
         return (
-            "Robo-Nick won’t write you a diet from a chat box — but the food side genuinely matters, so two real things:\n\n"
+            "Robo-Nick won’t write you a diet from a chat box, but the food side genuinely matters, so two real things:\n\n"
             "There’s a free 5-Day High-Protein Australian Meal Plan you can grab (drop an email and the team sends it through), and the SPT path includes proper nutrition support and tracking if you want it dialled in. Training plus food beats training alone.\n\n"
             "Want me to flag the meal plan to send through, or is the training side the bigger question right now?"
         )
@@ -2405,7 +2427,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         phrase in clean for phrase in ["lose weight", "losing weight", "weight loss", "fat loss", "drop weight", "shift some weight", "shed weight", "shed some", "slim down", "tone up", "drop a few", "lose a few"]
     ):
         return (
-            "Good goal — and the honest lever is consistency plus food, not punishment sessions.\n\n"
+            "Good goal, and the honest lever is consistency plus food, not punishment sessions.\n\n"
             "The coached group classes are the easiest way to actually show up regularly, which is where weight loss really comes from, and there’s a free 5-Day High-Protein Meal Plan for the food side. SPT adds tighter programming and nutrition support if you want it dialled in.\n\n"
             "Best first move is a free trial so you can feel how it works. " + trial_close(session_id)
         )
@@ -2416,19 +2438,19 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # just hand back the nervous-beginner reassurance.
     if mentions_pregnancy(clean):
         return (
-            "Love that you want to stay active — and smart to check first rather than guess.\n\n"
+            "Love that you want to stay active, and smart to check first rather than guess.\n\n"
             "This one’s genuinely not a Robo-Nick call though. What’s right depends on where you’re at, your history, and what your own healthcare team has said, so I’m not going to hand you a training plan from a chat box.\n\n"
-            "The proper move is a quick chat with Humanoid-Nick or Lyn — they’ve coached pregnant and postnatal members before and can scope it with you directly. Want to drop your first name + mobile so they can give you a call, or would you rather email innerwest@outdoorsquad.com.au?"
+            "The proper move is a quick chat with Humanoid-Nick or Lyn. They’ve coached pregnant and postnatal members before and can scope it with you directly. Want to drop your first name + mobile so they can give you a call, or would you rather email innerwest@outdoorsquad.com.au?"
         )
     if mentions_injury(clean):
         if any(word in clean for word in ["crossfit", "hyrox", "powerlifting", "powerlift", "barbell", "strongman"]) or ("serious" in clean and ("programming" in clean or "program" in clean)):
             return (
-                "That’s more SPT / 28-Day Kickstarter than a basic group-class trial. You clearly know your way around training, so the useful bit is not random sweat — it’s programming, coaching eyes, and sensible adjustments around that injury.\n\n"
+                "That’s more SPT / 28-Day Kickstarter than a basic group-class trial. You clearly know your way around training, so the useful bit is not random sweat: it’s programming, coaching eyes, and sensible adjustments around that injury.\n\n"
                 "Every injury is individual, so Humanoid-Nick/Lyn should scope it rather than Robo-Nick pretending to be a physio. But the setup can include form cues, technique correction, regressions, and a programme that actually progresses.\n\n"
                 "Want the team to treat this as an SPT/Kickstarter enquiry?"
             )
         name = extract_contact_name(message, session_id=session_id)
-        name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
+        name_open = f"Righto {name.split()[0]}. " if name else "Good thing to flag. "
         terms = named_injury_terms(clean)
         specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
         # Word-boundary matching only — bare substrings let unrelated wording bleed
@@ -2454,7 +2476,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 extra.append("the schedule/business constraint")
             context_note = " and ".join(extra)
             return (
-                f"{name_open}that’s a human-coach chat, not a chat-widget prescription.\n\n"
+                f"{name_open}That’s a human-coach chat, not a chat-widget prescription.\n\n"
                 f"The team should look at the {specific_issue} and {context_note} together, then work out whether a modified free trial, SPT, or a quick call is the sensible first move. Every injury is individual, and rehab/acute stuff should stay lined up with their health practitioner too.\n\n"
                 "If you want, send a name + mobile and I’ll flag it for Humanoid-Nick or Lyn to handle properly."
             )
@@ -2469,26 +2491,26 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # re-firing the nervous-beginner reassurance (which read as a repeat).
     if any(phrase in clean for phrase in ["what should i expect", "what to expect", "what happens in a", "what happens at a", "what's a session like", "whats a session like", "what is a session like", "what do beginners", "where do beginners", "what should a beginner", "what's the first session", "what is the first session", "how does a session", "what does a session"]) and not any(w in clean for w in ["spt", "kickstarter", "1:1", "personal training", "pilates", "yoga", "hyrox"]):
         return (
-            "Honestly pretty low-key. You rock up, the coach says hi and works out where you’re at, there’s a warm-up, then the main session — scaled to you (lighter load, simpler version, more rest if you need it).\n\n"
+            "Honestly pretty low-key. You rock up, the coach says hi and works out where you’re at, there’s a warm-up, then the main session, scaled to you (lighter load, simpler version, more rest if you need it).\n\n"
             "Most people just start with the free trial in a normal group class. Nothing special required, you’re not expected to keep up with anyone, and you bring a drink bottle, towel and a mat.\n\n"
             + trial_close(session_id)
         )
 
     if not mentions_youth(clean) and any(phrase in clean for phrase in ["pretty unfit", "very unfit", "super unfit", "really unfit", "nervous", "anxious", "anxiety", "intimidated", "intimidating", "scared", "self-conscious", "self conscious", "judged", "cringe", "fit people", "first class", "first session", "beginner", "never trained", "no exercise", "haven't done any exercise", "havent done any exercise", "out of shape", "not fit", "desk 10 hours", "desk job", "body's falling apart", "bodys falling apart"]):
         return (
-            "Yes — someone like you can do this. Plenty of people start before they feel ready, and nobody sensible expects you to keep up with the fittest person in the class on day one.\n\n"
+            "Yes, someone like you can do this. Plenty of people start before they feel ready, and nobody sensible expects you to keep up with the fittest person in the class on day one.\n\n"
             "The coach scales the session to where you actually are: lighter load, simpler version, more rest if needed. The entry requirement is having a crack, not arriving pre-built like a fitness catalogue mannequin.\n\n"
             "Best first move is a quiet free trial rather than overthinking it. " + trial_close(session_id)
         )
     if any(phrase in clean for phrase in ["chat to my partner", "talk to my partner", "ask my partner", "check with my partner", "speak to my partner"]):
         return (
-            "Fair — partners get a vote when the calendar and budget are involved.\n\n"
+            "Fair, partners get a vote when the calendar and budget are involved.\n\n"
             "If it helps, I can give you the short version to show them: it’s a free first session with a coach, scaled to where you’re at, so you’re not signing your household up for a heroic saga before breakfast.\n\n"
-            "And if your partner has specific questions, Humanoid-Nick or Lyn can answer them directly. Lowest-risk move is still just the trial — one session, no big commitment. " + trial_close(session_id)
+            "And if your partner has specific questions, Humanoid-Nick or Lyn can answer them directly. Lowest-risk move is still just the trial: one session, no big commitment. " + trial_close(session_id)
         )
     if any(phrase in clean for phrase in ["bring a friend", "bring my friend", "bring a mate", "come with a friend", "train with a friend", "train with my partner", "bring my partner"]):
         return (
-            "Yep — friends, partners and family are welcome to come along. Training with someone you know can make the first session feel a lot less weird.\n\n"
+            "Yep, friends, partners and family are welcome to come along. Training with someone you know can make the first session feel a lot less weird.\n\n"
             "If it turns into a family or partner membership conversation, the line is value-stack rather than discounting: the team may add useful bonuses like extra sessions, movement screens or other add-ons after a quick chat, but Robo-Nick won’t promise reduced prices or '$X off' deals.\n\n"
             "Best first step is still simple: both come to a free trial and see how it feels. " + trial_close(session_id)
         )
@@ -2496,16 +2518,16 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "If it rains, the session doesn’t automatically fall apart.\n\n"
             "The Squad has access to undercover areas, so the coach can shift things if the weather turns feral. For cold mornings or evenings, dress in layers and bring the normal basics: drink bottle, towel and mat.\n\n"
-            "If cars are floating past with a pod of dolphins, then yes, the session might get cancelled. That is — mercifully — rare.\n\n"
+            "If cars are floating past with a pod of dolphins, then yes, the session might get cancelled. That is, mercifully, rare.\n\n"
             "If you’re testing it for the first time, a free trial is still the cleanest way to feel it out. " + trial_close(session_id)
         )
     # Park facilities — only state what the source docs actually say (Camperdown
     # has upgraded public facilities); don't invent lockers or showers.
     if any(phrase in clean for phrase in ["toilet", "toilets", "bathroom", "bathrooms", "shower", "showers", "locker", "lockers", "change room", "change rooms", "changing room", "leave my bag", "leave bags", "leave my stuff", "store my bag", "bag storage", "somewhere to put my"]):
         return (
-            "Honest picture: it's park training, so think practical rather than fancy — but both spots have real public amenities.\n\n"
-            "Camperdown (The Barracks at Camperdown Tennis & Oval) has upgraded public facilities on site, including public toilets and an outdoor gym, plus access to Camperdown Oval. Redfern Park has public toilets and the Park Café right by the Sports Oval end meeting point. Most people just bring a small bag and keep it beside the session — best to leave the valuables at home.\n\n"
-            "If something specific matters (showers before work, pram space, that sort of thing), the team can give you the exact lay of the land — want me to flag it?"
+            "Honest picture: it's park training, so think practical rather than fancy, but both spots have real public amenities.\n\n"
+            "Camperdown (The Barracks at Camperdown Tennis & Oval) has upgraded public facilities on site, including public toilets and an outdoor gym, plus access to Camperdown Oval. Redfern Park has public toilets and the Park Café right by the Sports Oval end meeting point. Most people just bring a small bag and keep it beside the session. Best to leave the valuables at home.\n\n"
+            "If something specific matters (showers before work, pram space, that sort of thing), the team can give you the exact lay of the land. Want me to flag it?"
         )
     # Equipment / "what do I bring" — answer from the KB fact (all gear provided,
     # bring a drink bottle/towel/mat). Deterministic so the LLM can't invent a
@@ -2518,7 +2540,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         "do you supply", "need to bring anything", "what should i wear and bring",
     ]):
         return (
-            "Good news — you don’t need to own or bring any training gear. All the equipment is provided on site at the park, set up and ready when you arrive.\n\n"
+            "Good news: you don’t need to own or bring any training gear. All the equipment is provided on site at the park, set up and ready when you arrive.\n\n"
             "You just bring a drink bottle, a towel and a mat, and wear something you can move in (sunscreen and a hat are handy since it’s outdoors).\n\n"
             "Want me to line up a free trial so you can see a session for yourself?"
         )
@@ -2554,8 +2576,8 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if any(phrase in clean for phrase in ["over 50", "over fifty", "in my 50s", "in my fifties", "late forties", "in my 40s", "in my forties", "peter attia", "functional into my seventies", "functional into my 70s", "into my seventies", "into my 70s", "in my 60s", "in my sixties", "too old", "am i too old"]):
         return (
-            "Definitely your wheelhouse — and that long-game mindset is a very Outdoor Squad reason to train.\n\n"
-            "The focus is functional strength, mobility, balance and long-term health — still carrying your own groceries at 75, not cosplaying as a 22-year-old doing punishment circuits for Instagram. Movements scale to where you’re at.\n\n"
+            "Definitely your wheelhouse, and that long-game mindset is a very Outdoor Squad reason to train.\n\n"
+            "The focus is functional strength, mobility, balance and long-term health: still carrying your own groceries at 75, not cosplaying as a 22-year-old doing punishment circuits for Instagram. Movements scale to where you’re at.\n\n"
             "Flow'N'Flex leans especially well into longevity: yoga/Pilates/mobility-style work, balance, posture/core control, and the bit most people skip. A free trial is the sensible first test. " + trial_close(session_id)
         )
 
@@ -2566,7 +2588,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     ):
         return (
             "There’s some overlap, but it’s its own thing rather than a branded-format clone.\n\n"
-            "Outdoor Squad is coached outdoor group training in Inner West parks — strength, conditioning and real variety across the week, in small enough groups that the coach actually knows your name. Less treadmill-and-mirrors, more fresh air, proper coaching, and a crew that notices when you don’t show up.\n\n"
+            "Outdoor Squad is coached outdoor group training in Inner West parks: strength, conditioning and real variety across the week, in small enough groups that the coach actually knows your name. Less treadmill-and-mirrors, more fresh air, proper coaching, and a crew that notices when you don’t show up.\n\n"
             f"If you want receipts while you’re comparing: {GOOGLE_REVIEW_LINE}.\n\n"
             "Easiest way to feel the difference is a free trial. Camperdown or Redfern?"
         )
@@ -2577,11 +2599,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Main difference: it’s coached training, not just access to equipment and your own disappearing motivation.\n\n"
             "The group sessions still get cues, modifications and attention, and the Squad structure makes consistency easier because people actually know when you vanish. SPT adds bespoke programming and assessments if you want the higher-touch lane.\n\n"
             f"If you want receipts while you’re weighing it up: {GOOGLE_REVIEW_LINE}.\n\n"
-            "Best test is the free trial — the session tells you more than another comparison page."
+            "Best test is the free trial. The session tells you more than another comparison page."
         )
     if "hyrox" in clean and any(w in clean for w in ["outdoor", "class", "classes", "session", "sessions", "when", "timetable", "schedule", "run", "running"]):
         return (
-            "Hyrox-style work is in the training wheelhouse — running, conditioning and strength under fatigue — but there isn’t a fixed Outdoor Hyrox slot in the current timetable.\n\n"
+            "Hyrox-style work is in the training wheelhouse (running, conditioning and strength under fatigue), but there isn’t a fixed Outdoor Hyrox slot in the current timetable.\n\n"
             "The team can tell you when that format next pops up; meanwhile HiiT'N'Run and Strength'N'Stamina are the closest regular ingredients. Since you ask, it would be remiss of me not to mention the free trial.\n\n"
             "Want Camperdown or Redfern?"
         )
@@ -2591,13 +2613,13 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     ):
         if mentions_injury(clean) or ("back" in clean and "dodgy" in clean):
             return (
-                "That’s more SPT / 28-Day Kickstarter than a basic group-class trial. You know your way around a barbell, so the useful bit is not random sweat — it’s programming, coaching eyes, and sensible adjustments around that back.\n\n"
+                "That’s more SPT / 28-Day Kickstarter than a basic group-class trial. You know your way around a barbell, so the useful bit is not random sweat: it’s programming, coaching eyes, and sensible adjustments around that back.\n\n"
                 "Every injury is individual, so Humanoid-Nick/Lyn should scope the back rather than Robo-Nick pretending to be a physio. But the setup can include form cues, technique correction, regressions, and a programme that actually progresses.\n\n"
                 "Want the team to treat this as an SPT/Kickstarter enquiry?"
             )
         return (
             "That sounds more like the serious-programming lane than a basic group-class question.\n\n"
-            "SPT is probably the cleanest fit: max 4 people, bespoke programming, regular assessments, nutrition support, form cues, technique correction, and enough coach attention to progress you properly — and unlimited group classes are bundled in on top, so you're not choosing between the two. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
+            "SPT is probably the cleanest fit: max 4 people, bespoke programming, regular assessments, nutrition support, form cues, technique correction, and enough coach attention to progress you properly. And unlimited group classes are bundled in on top, so you're not choosing between the two. The 28-Day Kickstarter is the trial version if you want to test that setup first.\n\n"
             "Are you chasing strength progression, conditioning, or a bit of both?"
         )
     multi_person_family = (
@@ -2606,9 +2628,9 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     )
     if multi_person_family:
         return (
-            "Love it — whole household in one go. Here's the picture for all three of you:\n\n"
+            "Love it, whole household in one go. Here's the picture for all three of you:\n\n"
             "For you two adults, the clean default is Squad Ascent at $51/wk each for unlimited coached group classes. For the teenager, it's the Youth Training Program: Saturday 9:15am at Camperdown, $25/wk, ages 10–17, with qualified WWCC-checked coaches.\n\n"
-            "Saturday works neatly as a family routine too: an adult trains at 8:00am while the teen does YTP at 9:15am. Best first move is free trials all round — want me to flag all three to the team?"
+            "Saturday works neatly as a family routine too: an adult trains at 8:00am while the teen does YTP at 9:15am. Best first move is free trials all round. Want me to flag all three to the team?"
         )
 
     # Gift memberships — must outrank the partner branch ("for my husband" is a
@@ -2616,15 +2638,15 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # product, so hand off rather than invent vouchers.
     if any(phrase in clean for phrase in ["as a gift", "a gift for", "gift for my", "gift it", "gift membership", "gift voucher", "voucher", "as a present", "a present for", "surprise my", "buy a membership for", "membership for my husband", "membership for my wife", "membership for my mum", "membership for my dad", "membership for my partner"]):
         return (
-            "Lovely idea — and very giftable, as far as presents that involve burpees go.\n\n"
+            "Lovely idea, and very giftable, as far as presents that involve burpees go.\n\n"
             "Gift setups aren't an off-the-shelf product, but the team has sorted them before: easiest path is usually booking them the free trial first (so they actually want the gift), then Nick or Lyn set up the membership in their name.\n\n"
             "Drop your name + mobile or email innerwest@outdoorsquad.com.au and they'll sort the details with you directly."
         )
     if any(phrase in clean for phrase in ["partner and i", "my partner and i", "partner is", "run it past my", "run it past the", "run it by my", "ask my husband", "ask my wife", "chat to my husband", "chat to my wife", "talk to my husband", "talk to my wife", "check with my husband", "check with my wife", "my husband", "my wife"]):
         return (
-            "Totally fair — worth talking through with them, and the trial’s free either way so you can both feel it out before any money chat.\n\n"
+            "Totally fair. Worth talking through with them, and the trial’s free either way so you can both feel it out before any money chat.\n\n"
             "There are different levels depending on how much coaching you want: Squad Ascent at $51/wk for unlimited coached group sessions, a $25/wk Squad Student rate if either of you is a verified student, and SPT if you want the higher-touch lane (bespoke programming, regular assessments, four-person max).\n\n"
-            "Lowest-risk move for you both is the free trial — test the coaching before anyone commits to a level."
+            "Lowest-risk move for you both is the free trial: test the coaching before anyone commits to a level."
         )
 
     if any(phrase in clean for phrase in ["on a budget", "tight budget", "money's tight", "money is tight", "bit tight", "can't really afford", "cant afford", "can't afford", "afford it"]):
@@ -2645,8 +2667,8 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         "don't want a membership", "dont want a membership", "no membership",
     ]):
         return (
-            "Yep — you don’t have to commit to a membership to train with us.\n\n"
-            "Casual drop-ins are $37 a session, so you can just come to whichever classes suit while you’re around — and your first class can be the free trial, so the very first one’s on us.\n\n"
+            "Yep, you don’t have to commit to a membership to train with us.\n\n"
+            "Casual drop-ins are $37 a session, so you can just come to whichever classes suit while you’re around. And your first class can be the free trial, so the very first one’s on us.\n\n"
             "Camperdown or Redfern easier for you? I can point you at the timetable to pick your sessions."
         )
 
@@ -2659,7 +2681,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
 
     if ("$125" in clean or "125 a week" in clean or "125/wk" in clean) and any(w in clean for w in ["get", "include", "included", "what", "spt", "week"]):
         return (
-            "$125/wk is SPT 2x + Group — the semi-private lane, not the 28-Day Kickstarter.\n\n"
+            "$125/wk is SPT 2x + Group: the semi-private lane, not the 28-Day Kickstarter.\n\n"
             "You get two SPT sessions per week in a four-person max setup, plus group classes, bespoke programming, regular assessments, nutrition support and closer coach attention.\n\n"
             f"And if you want social proof while you’re weighing the value: {GOOGLE_REVIEW_LINE}.\n\n"
             "If you haven’t tried the setup yet, the lower-commitment test is the 28-Day Kickstarter at $397 total."
@@ -2667,7 +2689,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
 
     if any(phrase in clean for phrase in ["just generic", "generic class", "generic classes", "pay attention", "coach actually", "coach pay", "modifications", "cues"]):
         return (
-            "Group classes are still coached — not a faceless park workout where you’re left to guess.\n\n"
+            "Group classes are still coached, not a faceless park workout where you’re left to guess.\n\n"
             "In Squad Ascent/core group sessions the coach gives cues, modifications, options, regressions/progressions and movement fixes as you go. SPT is for people who want bespoke programming, regular assessments and a four-person max, but the group sessions still get real coach attention.\n\n"
             "Do you want general routine, or that more personal SPT level of detail?"
         )
@@ -2684,30 +2706,30 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             )
         return (
             "Roughly, the main doors are:\n\n"
-            "- Free trial — $0, one class to see if the Squad fits.\n"
-            "- Squad Ascent — $51/wk for unlimited coached group classes.\n"
-            "- 28-Day Kickstarter — $397 total for 28 days on the SPT trial path, with more coaching, assessment, programming and nutrition support.\n"
-            "- SPT 2x + Group — $125/wk after that if you want ongoing semi-private coaching plus group classes.\n"
-            "- Casual drop-in — $37 if you just need a one-off.\n\n"
+            "- Free trial: $0, one class to see if the Squad fits.\n"
+            "- Squad Ascent: $51/wk for unlimited coached group classes.\n"
+            "- 28-Day Kickstarter: $397 total for 28 days on the SPT trial path, with more coaching, assessment, programming and nutrition support.\n"
+            "- SPT 2x + Group: $125/wk after that if you want ongoing semi-private coaching plus group classes.\n"
+            "- Casual drop-in: $37 if you just need a one-off.\n\n"
             "If you’re not sure which bucket you’re in, the free trial is usually the least silly first step."
         )
     if any(phrase in clean for phrase in ["pay for the year", "pay for the whole year", "pay yearly", "pay annually", "annual payment", "annual membership", "yearly membership", "upfront for the year", "pay up front", "pay upfront", "year up front", "prepay", "pay in advance", "pay it all up front"]):
         return (
-            "Group memberships (Squad Ascent at $51/wk, Squad Student at $25/wk) are weekly-rolling, so there’s no lock-in to prepay — you just stay on while it’s working for you.\n\n"
-            "The one spot annual prepay applies is SPT: pay the year upfront and there’s a 5% saving. That’s the only standing discount — everything else is value-stacked, not discounted.\n\n"
+            "Group memberships (Squad Ascent at $51/wk, Squad Student at $25/wk) are weekly-rolling, so there’s no lock-in to prepay. You just stay on while it’s working for you.\n\n"
+            "The one spot annual prepay applies is SPT: pay the year upfront and there’s a 5% saving. That’s the only standing discount. Everything else is value-stacked, not discounted.\n\n"
             "The team can set up whichever suits when you start. Easiest first move is still the free trial. " + trial_close(session_id)
         )
     if any(word in clean for word in ["pause", "freeze", "suspend", "on hold", "put it on hold"]) and any(w in clean for w in ["member", "membership", "holiday", "holidays", "break", "away", "travel", "travelling", "overseas", "for a while", "couple of weeks", "few weeks", "a month"]):
         return (
-            "Yep — weekly memberships (Squad Ascent, Squad Student, YTP) can be paused: up to 8 weeks per calendar year, in minimum 1-week blocks, just requested in advance.\n\n"
-            "So a holiday or a busy stretch doesn’t mean cancelling — you hold it and pick back up. SPT and the exact dates are best set up directly with Humanoid-Nick or Lyn.\n\n"
+            "Yep, weekly memberships (Squad Ascent, Squad Student, YTP) can be paused: up to 8 weeks per calendar year, in minimum 1-week blocks, just requested in advance.\n\n"
+            "So a holiday or a busy stretch doesn’t mean cancelling. You hold it and pick back up. SPT and the exact dates are best set up directly with Humanoid-Nick or Lyn.\n\n"
             "Want me to flag a pause to the team, or were you still weighing up joining?"
         )
     # FIFO / on-rotation workers — "away 2 of every 4 weeks, worth it?" should get
     # the pause policy + casual option, not the generic price ladder (found 2026-06-11).
     if any(phrase in clean for phrase in ["fifo", "fly in fly out", "fly-in fly-out", "on rotation", "on a rotation", "away for work", "travel for work", "work away", "away every", "away half", "away 2 weeks", "away two weeks", "interstate half", "on swing", "swing shift"]):
         return (
-            "Genuinely workable — you've got two honest options rather than paying for air.\n\n"
+            "Genuinely workable. You've got two honest options rather than paying for air.\n\n"
             "Memberships can be paused for the away stretches: up to 8 weeks per calendar year, in minimum 1-week blocks, requested in advance. If your roster chews through more than that, $37 casual drop-ins only cost you when you're actually in town.\n\n"
             "Best move is the free trial first, then a quick word with Nick or Lyn about which setup fits your rotation. Want me to flag it?"
         )
@@ -2715,7 +2737,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # letting the LLM invent a "minimum commitment period" or say "I don't have it".
     if any(phrase in clean for phrase in ["lock-in", "lock in", "locked in", "lockin", "contract", "minimum commitment", "minimum term", "minimum contract", "tied in", "tied into", "how do i cancel", "how to cancel", "cancel my membership", "cancellation", "cancel anytime", "notice period", "cancel my", "quit my membership", "end my membership", "get out of it"]):
         return (
-            "Group memberships (Squad Ascent, Squad Student, YTP) have no lock-in — weekly rolling, one week's notice to cancel, and you can pause instead if it's just a holiday (up to 8 weeks a year).\n\n"
+            "Group memberships (Squad Ascent, Squad Student, YTP) have no lock-in: weekly rolling, one week's notice to cancel, and you can pause instead if it's just a holiday (up to 8 weeks a year).\n\n"
             "SPT is the one exception: 12-week minimum term, then fortnight-to-fortnight rolling.\n\n"
             "Anything else you want to check before trying a session?"
         )
@@ -2726,7 +2748,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Depends which lane you're in:\n\n"
             "- Group classes (Squad Ascent / Student): they're unlimited, so a missed class just means you catch the next one.\n"
             "- SPT sessions: 24 hours' notice to cancel, one makeup session a month (use it or lose it), and no makeups for no-shows.\n\n"
-            "If it's about a specific booking, the team can sort it directly — want me to flag it?"
+            "If it's about a specific booking, the team can sort it directly. Want me to flag it?"
         )
     # Group / SPT size. If the visitor asks about SPT, lead with the hard fact;
     # do not hedge with group-class language first (Nicholas 2026-06-11 retest).
@@ -2735,12 +2757,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     )
     if size_question and any(w in clean for w in ["spt", "semi-private", "semi private", "small group personal", "personal training"]):
         return (
-            "SPT is 4 max — that’s the point of it.\n\n"
+            "SPT is 4 max. That’s the point of it.\n\n"
             "You get semi-private coaching with bespoke programming, regular assessments and enough coach attention that it doesn’t become anonymous group training."
         )
     if size_question:
         return (
-            "Group classes stay small enough that the coach actually knows you and can give cues and modifications — it's coached training, not a faceless crowd. Numbers vary a bit by session and time of day.\n\n"
+            "Group classes stay small enough that the coach actually knows you and can give cues and modifications. It's coached training, not a faceless crowd. Numbers vary a bit by session and time of day.\n\n"
             "If you want the most personal setup, SPT is capped at 4 people. For typical numbers at a specific session, the team can tell you when you book.\n\n"
             "Want to try a session and see the vibe for yourself? Camperdown or Redfern?"
         )
@@ -2753,7 +2775,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return timetable_reply(clean, session_id)
     if ("student" in clean or "concession" in clean) and not any(word in clean for word in ["trainer", "coach", "instructor"]):
         return (
-            "Yep — there’s a Squad Student membership at $25/wk for verified students: unlimited coached group classes, same as the main membership.\n\n"
+            "Yep, there’s a Squad Student membership at $25/wk for verified students: unlimited coached group classes, same as the main membership.\n\n"
             "That’s a proper tier rather than a haggled discount, so you’d just need to show student verification. Everyone else is on Squad Ascent at $51/wk.\n\n"
             "Easiest first move is still the free trial so you can feel it out before sorting the membership. " + trial_close(session_id)
         )
@@ -2769,10 +2791,10 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     # because RAG didn't surface it). Outdoor Hyrox is intentionally left to the
     # serious-programming branch above.
     class_blurbs = (
-        (("flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "power'n'pilates", "power n pilates", "pilates", "mobility"), "Flow'N'Flex blends yoga strength and flexibility, Pilates-style core control, and restorative mobility — handy for desk tightness, post-training stiffness and feeling less like a rusty gate."),
+        (("flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "power'n'pilates", "power n pilates", "pilates", "mobility"), "Flow'N'Flex blends yoga strength and flexibility, Pilates-style core control, and restorative mobility, handy for desk tightness, post-training stiffness and feeling less like a rusty gate."),
         (("strength'n'stamina", "strength n stamina", "strength'n'tone", "strength n tone", "buff'n'puff", "buff n puff", "buffnpuff", "hybrid"), "Strength'N'Stamina is the current hybrid strength-and-conditioning class: resistance work plus conditioning, using power bags, kettlebells, dumbbells, barbells, TRX and deadballs across push, pull, squat, hinge, lunge, carry, rotate and gait."),
-        (("core'n'sore", "core n sore"), "Core'N'Sore is core stability and endurance — weighted and bodyweight work, a high-heart-rate finisher and some animal flow. Exactly as friendly as the name suggests."),
-        (("hiit'n'run", "hiit n run", "hiit"), "HiiT'N'Run is high-intensity intervals for heart and lung capacity — circuits, sprints, speed and agility, plus hill and stair work."),
+        (("core'n'sore", "core n sore"), "Core'N'Sore is core stability and endurance: weighted and bodyweight work, a high-heart-rate finisher and some animal flow. Exactly as friendly as the name suggests."),
+        (("hiit'n'run", "hiit n run", "hiit"), "HiiT'N'Run is high-intensity intervals for heart and lung capacity: circuits, sprints, speed and agility, plus hill and stair work."),
     )
     class_question = any(p in clean for p in ["class", "session", "tell me about", "what's", "whats", "what is", "explain", "sounds", "do you do", "do you have", "do you still have", "still have", "interested in"])
     for aliases, blurb in class_blurbs:
@@ -2792,27 +2814,27 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         return (
             "Yep. That’s a very Outdoor Squad reason to train.\n\n"
             "The focus is real-world strength, mobility, balance, and still carrying your own groceries when you’re 75. Plenty of members train with that long-game mindset, not a quick before-and-after thing.\n\n"
-            "Flow'N'Flex leans particularly well into the long game — yoga/Pilates/mobility-style work, balance, posture/core control, and the bit most people skip.\n\n"
+            "Flow'N'Flex leans particularly well into the long game: yoga/Pilates/mobility-style work, balance, posture/core control, and the bit most people skip.\n\n"
             "A free trial is the sensible first step. " + trial_close(session_id)
         )
     if any(phrase in clean for phrase in ["referral", "refer a friend", "refer a mate", "refer my", "referring", "bring friends", "bring mates", "bring people", "for bringing", "if i bring someone", "if i refer", "refer someone", "bring a guest", "bring my guest", "bring a friend", "bring my friend", "bring a mate", "bring my mate", "bring someone", "guest pass", "plus one", "plus-one"]):
         return (
-            "Mates are very welcome — your guest can grab the free 1-Day Trial Pass and train alongside you, that part’s easy.\n\n"
-            "We don’t run a cash-back or discount referral scheme, though. Where it lands is value-stacking: when people train together the team can add useful bonuses (extra sessions, movement screens, that sort of thing) after a quick chat — not money off.\n\n"
+            "Mates are very welcome. Your guest can grab the free 1-Day Trial Pass and train alongside you, that part’s easy.\n\n"
+            "We don’t run a cash-back or discount referral scheme, though. Where it lands is value-stacking: when people train together the team can add useful bonuses (extra sessions, movement screens, that sort of thing) after a quick chat, not money off.\n\n"
             "Want me to flag that you’d like to bring someone along?"
         )
     # Corporate / private-group one-offs (office teams, bucks/hens, birthdays) —
     # a real lead, but not a product Robo-Nick can quote. Hand off, don't improvise.
     if any(phrase in clean for phrase in ["corporate", "work team", "office team", "team from work", "from our office", "from a local office", "workplace session", "team building", "team-building", "bucks party", "bucks night", "hens party", "hens night", "birthday group", "private group session", "group booking", "book a group", "session for our team", "session for the team", "group of us from work"]):
         return (
-            "That's a Humanoid-Nick conversation — group and one-off sessions like that aren't a standard product I can quote, but the team has done custom things before.\n\n"
+            "That's a Humanoid-Nick conversation. Group and one-off sessions like that aren't a standard product I can quote, but the team has done custom things before.\n\n"
             "Tell me roughly the group size and what you're after, plus a name and mobile or email, and I'll flag it so Nick or Lyn can come back with what's possible.\n\n"
             "Or if it's easier, email innerwest@outdoorsquad.com.au directly with the details."
         )
     if any(phrase in clean for phrase in ["new member offer", "new member offers", "member offer", "joining offer", "sign-up offer", "signup offer", "any offers", "any offer", "current offers", "specials", "any specials", "promotion", "promotions", "promo ", "promos", "running this month", "anything running", "anything on this month", "deals on", "current deals", "offers running"]):
         return (
-            "The standing offer is the 1-Day Free Trial Pass — one coached session, no cost, no catch. That’s the one that matters.\n\n"
-            "After that the doors are simple: Squad Ascent at $51/wk unlimited (or $25/wk Squad Student if you’re verified), the 28-Day Kickstarter at $397 total for the SPT trial, and $37 casual drop-ins. We don’t run random promos or discounts — there’s lots of value in the coaching, not a sticker price.\n\n"
+            "The standing offer is the 1-Day Free Trial Pass: one coached session, no cost, no catch. That’s the one that matters.\n\n"
+            "After that the doors are simple: Squad Ascent at $51/wk unlimited (or $25/wk Squad Student if you’re verified), the 28-Day Kickstarter at $397 total for the SPT trial, and $37 casual drop-ins. We don’t run random promos or discounts. There’s lots of value in the coaching, not a sticker price.\n\n"
             "Best move is to use the free trial and decide from the actual session."
         )
     family_pricing_request = "family" in clean and (
@@ -2824,11 +2846,11 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         if "family" in clean:
             return (
                 "We don't discount memberships or do percentage / '$X off' family deals.\n\n"
-                "For families training together, the team will often value-stack instead — things like extra sessions, movement screens, or useful add-ons after a quick chat about what fits your situation.\n\n"
+                "For families training together, the team will often value-stack instead: things like extra sessions, movement screens, or useful add-ons after a quick chat about what fits your situation.\n\n"
                 "Best next step is a free trial or a quick note to Nick/Lyn so they can point you to the right option."
             )
         return (
-            "No free-month magic from Robo-Nick, sorry — we don't do random discounts.\n\n"
+            "No free-month magic from Robo-Nick, sorry. We don't do random discounts.\n\n"
             "The honest answer is value over haggling: free trial first, $51/wk for unlimited coached group classes (or $25/wk Squad Student if you're verified), and SPT if you want the higher-touch path. SPT also has a 5% annual prepay if you go that way.\n\n"
             "Are you trying to keep cost low, or work out which option is worth it?"
         )
@@ -2837,13 +2859,13 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     teen_self = re.search(r"\bi(?:'|’)?m\s+(1[0-7])\b", clean) or re.search(r"\bi am\s+(1[0-7])\b", clean)
     if teen_self and any(w in clean for w in ["class", "classes", "join", "sign up", "train", "training", "old enough", "too young", "adult", "kids", "member", "start"]):
         return (
-            f"At {teen_self.group(1)} you're in the Youth Training Program age range (10–17) — that's your program rather than the adult classes.\n\n"
-            "It's Saturday 9:15am at Camperdown, $25/wk, with qualified WWCC-checked coaches — proper strength and fitness training, not a kids' playgroup. Once you turn 18 you roll into the adult classes.\n\n"
+            f"At {teen_self.group(1)} you're in the Youth Training Program age range (10–17). That's your program rather than the adult classes.\n\n"
+            "It's Saturday 9:15am at Camperdown, $25/wk, with qualified WWCC-checked coaches: proper strength and fitness training, not a kids' playgroup. Once you turn 18 you roll into the adult classes.\n\n"
             "Want the team to sort your first session? Easiest is to have a parent drop their contact details here."
         )
     if mentions_youth(clean) and any(phrase in clean for phrase in ["same time", "at the same time", "can i train", "can we train", "nearby", "while they", "while he", "while she", "while my kid", "while the kids", "while i train", "while i'm training", "while im training", "train while", "train together", "same session", "join me", "alongside", "adult class"]):
         return (
-            "Yes — you can train nearby rather than just doing parent-waiting-room purgatory.\n\n"
+            "Yes, you can train nearby rather than just doing parent-waiting-room purgatory.\n\n"
             "The Youth Training Program is Saturday 9:15am at Camperdown. Adult Strength'N'Stamina runs at Camperdown at 8:00am that same morning, so it can work as a family routine around the same park. Since you ask, it would be remiss of me not to mention the free trial for you too.\n\n"
             "Want the team to flag both: YTP for them and a free trial for you?"
         )
@@ -2853,7 +2875,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             r"\b1[0-7]\b|\b(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b", clean)
         if under_10:
             return (
-                "Love the instinct — though the Youth Training Program starts at 10, so they’re just a touch young for it right now.\n\n"
+                "Love the instinct, though the Youth Training Program starts at 10, so they’re just a touch young for it right now.\n\n"
                 "Worth a quick word with Nick or Lyn about whether there’s anything suitable in the meantime, or flagging them to start when they turn 10 (it’s Saturday 9:15am at Camperdown, $25/wk, WWCC-checked coaches).\n\n"
                 "Want me to pass that on?"
             )
@@ -2861,24 +2883,24 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         # YTP's stated purpose in the source docs (found 2026-06-11).
         if any(w in clean for w in ["shy", "nervous", "anxious", "confidence", "self-conscious", "self conscious", "introvert", "won't know anyone", "wont know anyone", "cope in a group", "cope with a group", "scared of groups", "doesn't like groups", "doesnt like groups"]):
             return (
-                "Really common worry — and honestly, shy kids are exactly who the Youth Training Program is built for.\n\n"
-                "It's a small Saturday group (9:15am at Camperdown, $25/wk) with qualified WWCC-checked coaches, and the whole point is confidence and physical literacy, not performing in front of anyone. Nobody gets singled out, everything scales, and parents are welcome to stay and watch — which usually settles the nerves on both sides.\n\n"
+                "Really common worry, and honestly, shy kids are exactly who the Youth Training Program is built for.\n\n"
+                "It's a small Saturday group (9:15am at Camperdown, $25/wk) with qualified WWCC-checked coaches, and the whole point is confidence and physical literacy, not performing in front of anyone. Nobody gets singled out, everything scales, and parents are welcome to stay and watch, which usually settles the nerves on both sides.\n\n"
                 "Easiest first step is one no-pressure session to see how they find it. Want the team to set that up gently?"
             )
         return (
-            "Yep — that’s the Youth Training Program, for ages 10–17.\n\n"
+            "Yep, that’s the Youth Training Program, for ages 10–17.\n\n"
             "It’s Saturday 9:15am at Camperdown, $25/wk, and coached by qualified, WWCC-checked trainers. Parents are welcome to watch first so it doesn’t feel like sending your kid into the wilderness with a whistle.\n\n"
             "Anyone between 10 and 17 is right in the age range. Saturday 9:15am is the current session, with a Wednesday 4pm class likely to follow as demand grows. Want the team to point you to the best first session?"
         )
     if mentions_pregnancy(clean):
         return (
-            "Love that you want to stay active — and smart to check first rather than guess.\n\n"
+            "Love that you want to stay active, and smart to check first rather than guess.\n\n"
             "This one’s genuinely not a Robo-Nick call though. What’s right depends on where you’re at, your history, and what your own healthcare team has said, so I’m not going to hand you a training plan from a chat box.\n\n"
-            "The proper move is a quick chat with Humanoid-Nick or Lyn — they’ve coached pregnant and postnatal members before and can scope it with you directly. Want to drop your first name + mobile so they can give you a call, or would you rather email innerwest@outdoorsquad.com.au?"
+            "The proper move is a quick chat with Humanoid-Nick or Lyn. They’ve coached pregnant and postnatal members before and can scope it with you directly. Want to drop your first name + mobile so they can give you a call, or would you rather email innerwest@outdoorsquad.com.au?"
         )
     if mentions_injury(clean):
         name = extract_contact_name(message, session_id=session_id)
-        name_open = f"Righto {name.split()[0]} — " if name else "Good thing to flag. "
+        name_open = f"Righto {name.split()[0]}. " if name else "Good thing to flag. "
         terms = named_injury_terms(clean)
         specific_issue = ", ".join(terms[:3]) if terms else "specific issue"
         # Word-boundary matching only — bare substrings let unrelated wording bleed
@@ -2904,7 +2926,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 extra.append("the schedule/business constraint")
             context_note = " and ".join(extra)
             return (
-                f"{name_open}that’s a human-coach chat, not a chat-widget prescription.\n\n"
+                f"{name_open}That’s a human-coach chat, not a chat-widget prescription.\n\n"
                 f"The team should look at the {specific_issue} and {context_note} together, then work out whether a modified free trial, SPT, or a quick call is the sensible first move. Every injury is individual, and rehab/acute stuff should stay lined up with their health practitioner too.\n\n"
                 "If you want, send a name + mobile and I’ll flag it for Humanoid-Nick or Lyn to handle properly."
             )
@@ -2919,39 +2941,39 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(phrase in clean for phrase in ["decide next month", "decide next week", "decide later", "decide after", "i'll probably decide", "ill probably decide", "get back to you next", "get back to you in", "circle back", "after the holidays", "after winter", "after christmas", "next quarter", "in a few months", "in a couple of months", "maybe next month", "revisit next", "when things calm down", "when work calms down"]):
         comparing = any(p in clean for p in ["tossing up", "torn between", "deciding between", "choosing between", "between you and", "comparing", "a couple of others", "few others", "other options", "other gyms", "shortlist"])
         opener = (
-            "Fair enough — comparing properly beats picking blind. One honest tip though: the trial is the research. One coached session tells you more than every comparison tab combined, and Crom weeps when a free trial goes to waste.\n\n"
+            "Fair enough, comparing properly beats picking blind. One honest tip though: the trial is the research. One coached session tells you more than every comparison tab combined, and Crom weeps when a free trial goes to waste.\n\n"
             if comparing else
-            "All good — no one's rushing the decision.\n\n"
+            "All good, no one's rushing the decision.\n\n"
         )
         return (
             opener
-            + "One thing I won't do is park this for next month — that's where good intentions go to die. Easiest move: drop your first name + mobile now and the team will usually say g'day the same day while it's fresh. The decision itself can take as long as it likes.\n\n"
+            + "One thing I won't do is park this for next month. That's where good intentions go to die. Easiest move: drop your first name + mobile now and the team will usually say g'day the same day while it's fresh. The decision itself can take as long as it likes.\n\n"
             + "Or just grab the free trial whenever suits and let the session make the case."
         )
     if any(phrase in clean for phrase in ["have a think", "need to think", "think about it", "not sure", "keen but not sure", "i'm keen but", "not ready to commit", "researching", "just researching", "looking at options", "looking at my options", "checking options", "window-shopping", "window shopping", "comparing options", "comparing a few", "comparing my options", "weighing up", "weighing it up", "shopping around", "tossing up", "torn between", "deciding between", "choosing between", "between you and", "a couple of others", "few other places", "other gyms too"]):
         return (
-            "All good — no pressure.\n\n"
-            "Worth mentioning though: the trial is one session, free, no commitment. The trial is the research — it gives you better information than another website ever will. Crom weeps when a free trial goes to waste.\n\n"
+            "All good, no pressure.\n\n"
+            "Worth mentioning though: the trial is one session, free, no commitment. The trial is the research. It gives you better information than another website ever will. Crom weeps when a free trial goes to waste.\n\n"
             + trial_close(session_id)
         )
     # "Can I do the free trial twice?" — answer the actual question (one per
     # person) instead of reciting generic trial info (found 2026-06-11).
     if any(phrase in clean for phrase in ["trial twice", "trial again", "second trial", "another trial", "another free trial", "two trials", "2 trials", "free trial again", "second free", "trial more than once", "another free class", "another free session", "redo the trial"]):
         return (
-            "Straight answer: the free pass is one per person — one full coached session to see if the Squad fits.\n\n"
-            "After that the low-commitment option is a $37 casual drop-in, or Squad Ascent at $51/wk if you're ready for unlimited classes. If your trial got rained out or didn't give you a fair read, mention it to the team — they're humans about it.\n\n"
+            "Straight answer: the free pass is one per person, one full coached session to see if the Squad fits.\n\n"
+            "After that the low-commitment option is a $37 casual drop-in, or Squad Ascent at $51/wk if you're ready for unlimited classes. If your trial got rained out or didn't give you a fair read, mention it to the team. They're humans about it.\n\n"
             "Want me to flag your details so Nick or Lyn can sort the next step?"
         )
     if any(phrase in clean for phrase in ["how do i actually sign up", "how do i sign up", "how do i book", "where do i sign up", "sign me up", "sign up", "book a trial", "book the trial", "how do i join", "how do i get started"]):
         return (
-            "Easiest way in is the free trial — one session, no commitment.\n\n"
+            "Easiest way in is the free trial: one session, no commitment.\n\n"
             f"You can grab a spot here: {TRIAL_LINK}\n\n"
             "Pick a time that suits, and the coach will meet you there and point you toward group classes, SPT, or YTP from there. Want me to flag Camperdown or Redfern as your starting spot?"
         )
     if any(phrase in clean for phrase in ["next step", "come along", "want to come along", "how do i start", "how to start", "what should i actually do first", "what should i do first", "do first", "when can i start"]):
         return (
             "The cleanest next step is the free trial.\n\n"
-            f"You come along once, meet the coach, and get a feel for the session — you can grab a spot here: {TRIAL_LINK}\n\n"
+            f"You come along once, meet the coach, and get a feel for the session. You can grab a spot here: {TRIAL_LINK}\n\n"
             "From there the team can point you toward group classes, SPT, or YTP if that fits better. " + trial_close(session_id)
         )
     if any(phrase in clean for phrase in ["just browsing", "browsing for now", "just looking"]):
@@ -2980,31 +3002,31 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if any(phrase in clean for phrase in ["who are the coaches", "who coaches", "coach bios", "trainer bios", "tell me about the coaches", "who trains", "who runs the classes", "who's coaching", "who is coaching"]):
         return (
-            "Yep — there’s proper human depth behind the whistle.\n\n"
+            "Yep, there’s proper human depth behind the whistle.\n\n"
             "Nick brings the functional-strength / kettlebell / boxing / Olympic-lifting background, Rory is strength-and-conditioning with a big bootcamp/endurance engine, Eddie has PT, CrossFit, kettlebell and yoga/Pilates experience, and Fran is a strength-and-conditioning coach and former pro athlete.\n\n"
-            "Short version: qualified coaches, different strengths, same job — make the session safe, useful, and not weirdly gym-bro."
+            "Short version: qualified coaches, different strengths, same job, which is to make the session safe, useful, and not weirdly gym-bro."
         )
     if any(phrase in clean for phrase in ["bad experience", "actually qualified", "trainers qualified", "qualified trainers", "are your trainers", "are the trainers", "are your coaches", "properly trained", "real qualifications", "any qualifications"]):
         return (
-            "Fair question — especially if another bootcamp cooked the trust account.\n\n"
-            "Short version: the coaches are properly qualified, not just loud. Fran is a strength-and-conditioning coach and former pro athlete; Paul is an exercise physiologist with 20+ years and a strong technique focus; Eddie is an AIF Master Trainer (CrossFit L1, kettlebells, yoga/Pilates). The job is watching form, cueing technique, and adjusting movements — not yelling at you.\n\n"
+            "Fair question, especially if another bootcamp cooked the trust account.\n\n"
+            "Short version: the coaches are properly qualified, not just loud. Fran is a strength-and-conditioning coach and former pro athlete; Paul is an exercise physiologist with 20+ years and a strong technique focus; Eddie is an AIF Master Trainer (CrossFit L1, kettlebells, yoga/Pilates). The job is watching form, cueing technique, and adjusting movements, not yelling at you.\n\n"
             "Given the bad experience, the sensible move is a quick word with Humanoid-Nick or Lyn so they can match you to the right coach and first session. Want me to pass that on?"
         )
     if any(phrase in clean for phrase in ["sent two messages", "nobody's gotten back", "nobodys gotten back", "no one has gotten back", "no one got back", "anyone actually running this place", "haven't heard back", "havent heard back"]):
         return (
-            "That’s annoying — fair to be cranky.\n\n"
+            "That’s annoying, fair to be cranky.\n\n"
             "Robo-Nick can’t see every human inbox from here, so I’m not going to pretend I’ve fixed it. Best move is to pass this straight to Humanoid-Nick or Lyn with your name, mobile/email, and what you were waiting on.\n\n"
             "Drop those details here and the humans can pick it up properly."
         )
     if any(phrase in clean for phrase in ["outdoor training just a gimmick", "proper indoor gym", "indoor gym is better", "serious results"]):
         return (
-            "Not a gimmick — just a different tool.\n\n"
+            "Not a gimmick, just a different tool.\n\n"
             "A good indoor gym gives you equipment access. Outdoor Squad gives you coached sessions, programming, strength work, conditioning, community, and a coach watching how you move. Serious results come from consistency and good coaching, not fluorescent lights.\n\n"
             "If you want the more serious coached path, SPT or the 28-Day Kickstarter is the one to look at."
         )
     if any(phrase in clean for phrase in ["reviews", "testimonials", "proof", "what do members say", "member feedback", "5 star", "five star"]):
         return (
-            "Yep — there’s proper member proof, and it sounds like real training rather than glossy transformation nonsense.\n\n"
+            "Yep, there’s proper member proof, and it sounds like real training rather than glossy transformation nonsense.\n\n"
             "The headline number: 250+ five-star reviews across our two Google profiles. A few in members' own words: Pip called it \"always different\" with a friendly, welcoming group; Helen said Nick pushes people while keeping technique front and centre; Carla said the Squad helped rebuild strength and confidence; and Julia called it a welcoming community flexible enough for bringing a baby in the pram.\n\n"
             "Receipts: Camperdown https://share.google/Fy2fcWRWx9uxeXx0f · Redfern https://share.google/z6uRDTUZAw82nOqTo\n\n"
             "Best test is still simple: come to a free trial, meet the coach, feel the pace, and decide from the actual session."
@@ -3020,12 +3042,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "- 2 or 3 semi-private sessions a week, max 4 people\n"
             "- Bespoke programming on 6-week cycles + regular assessments\n"
             "- A movement screen, personalised warm-up, and nutrition support\n"
-            "- UNLIMITED group classes bundled in — so you're not choosing between SPT and group, you get both\n\n"
+            "- UNLIMITED group classes bundled in, so you're not choosing between SPT and group, you get both\n\n"
             "It's $125/wk for SPT 2x + Group or $175/wk for SPT 3x + Group; the 28-Day Kickstarter ($397 total) is the lower-commitment way to test the setup. Want me to flag an SPT chat with Humanoid-Nick or Lyn?"
         )
     if re.search(r"\bpt\b", clean) or any(phrase in clean for phrase in ["personal training", "private session", "private sessions", "private coach", "private coaching", "1:1", "1 on 1", "one-on-one", "one on one", "one-to-one", "coach who knows", "specific goals", "pay attention", "writes me a program", "write the program around me", "write a program around me", "program around me"]):
         return (
-            "Yep — there are a couple of private-coaching lanes, depending how much one-on-one you want.\n\n"
+            "Yep, there are a couple of private-coaching lanes, depending how much one-on-one you want.\n\n"
             "SPT is usually the best value: max 4 people, bespoke programming, regular assessments, coaching cues, more personal attention than a normal group session, and unlimited group classes bundled in on top. True 1:1 PT exists too at $150/session.\n\n"
             "The 28-Day Kickstarter is the lower-commitment way to test the SPT setup. Want me to walk you through it?"
         )
@@ -3044,7 +3066,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if any(phrase in clean for phrase in ["billing date", "payment date", "payment day", "change my billing", "change my payment", "update my payment", "pause membership", "cancel membership", "account question", "card details", "update my card", "change my card", "new card", "payment method", "credit card", "debit card", "direct debit", "bank details", "update my details", "change my details"]):
         return (
             "Although I’m awesome, that is outside my purview.\n\n"
-            "Payment dates, billing changes, pauses and account stuff need Humanoid-Nick, Lyn, or the admin team — cruel human overlords with actual account access.\n\n"
+            "Payment dates, billing changes, pauses and account stuff need Humanoid-Nick, Lyn, or the admin team, cruel human overlords with actual account access.\n\n"
             "Send through your name plus the email or mobile on the membership and they can follow it up properly."
         )
     if "souths" in clean or "rabbitohs" in clean:
@@ -3060,7 +3082,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         )
     if any(phrase in clean for phrase in ["promo code", "coupon", "discount", "free first month", "free month", "cheaper", "a deal", "any deal", "any deals", "do a deal", "better deal", "good deal", "best price", "money off", "knock off", "mates rate", "mate's rate", "sign-up deal", "joining deal"]):
         return (
-            "No free-month magic from Robo-Nick, sorry — we don't do random discounts.\n\n"
+            "No free-month magic from Robo-Nick, sorry. We don't do random discounts.\n\n"
             "The honest answer is value over haggling: free trial first, $51/wk for unlimited coached group classes (or $25/wk Squad Student if you're verified), and SPT if you want the higher-touch path. SPT also has a 5% annual prepay if you go that way.\n\n"
             "Are you trying to keep cost low, or work out which option is worth it?"
         )
@@ -3122,7 +3144,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             ]
         ):
             return (
-                "Sweet — no injuries or limitations to flag.\n\n"
+                "Sweet, no injuries or limitations to flag.\n\n"
                 "That keeps it straightforward for the coach.\n\n"
                 "Are you leaning more towards a free trial, regular group training, or something more coached like SPT?"
             )
@@ -3136,14 +3158,14 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if ("food" in clean or "nutrition" in clean or "meal plan" in clean) and len(clean.split()) <= 6:
         if "which bit feels like the bigger blocker right now" in previous or "training consistency or food" in previous:
             return (
-                "Yep, fair call — if food is the bit wobbling, starting with the meal plan makes sense.\n\n"
+                "Yep, fair call. If food is the bit wobbling, starting with the meal plan makes sense.\n\n"
                 "That gives you something practical straight away without overcomplicating it. Then training can layer in after that.\n\n"
                 "Do you want me to point you towards the free meal plan first, or are you also thinking about a trial session alongside it?"
             )
     if any(word in clean for word in {"training", "consistency", "routine"}) and len(clean.split()) <= 6:
         if "which bit feels like the bigger blocker right now" in previous or "training consistency or food" in previous:
             return (
-                "That makes sense — if consistency is the hard part, the simplest win is getting you into a routine you’ll actually stick to.\n\n"
+                "That makes sense. If consistency is the hard part, the simplest win is getting you into a routine you’ll actually stick to.\n\n"
                 "That’s where the free trial usually helps, because you can test the vibe before committing to anything bigger.\n\n"
                 "Do you want to start with the free trial, or were you more curious about the classes first?"
             )
@@ -3723,7 +3745,7 @@ async def create_widget_session(request: Request):
 @app.post("/api/chat")
 async def chat(request: Request):
     if is_rate_limited(client_ip(request)):
-        return JSONResponse({"error": "Too many requests — please slow down and try again shortly."}, status_code=429)
+        return JSONResponse({"error": "Too many requests. Please slow down and try again shortly."}, status_code=429)
     try:
         body = await request.json()
     except Exception:
@@ -3745,7 +3767,7 @@ async def chat(request: Request):
     if not message:
         return JSONResponse({"error": "No message provided"}, status_code=400)
     if len(message) > MAX_MESSAGE_LEN:
-        return JSONResponse({"error": "That message is a bit long — try trimming it down."}, status_code=413)
+        return JSONResponse({"error": "That message is a bit long. Try trimming it down."}, status_code=413)
 
     # Get or create conversation history
     history = load_conversation(session_id)
@@ -5239,7 +5261,7 @@ async def twilio_wa_webhook(request: Request):
         if os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message):
             reply = demo_fallback_reply(message, session_id=session_id)
         else:
-            reply = "I’m having a moment reaching my brain — give me a minute and message again."
+            reply = "I’m having a moment reaching my brain. Give me a minute and message again."
         reply = prevent_repetitive_reply(reply, message, session_id)
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
@@ -6531,7 +6553,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             )
         if vague_count == 2:
             return (
-                "Still in the fog. No drama — pick the least-wrong one: trial class, personal training, kids training, or prices?"
+                "Still in the fog. No drama, pick the least-wrong one: trial class, personal training, kids training, or prices?"
             )
         return (
             "All good, I’ll stop throwing the brochure at you. If you want the shortest path: book a free trial, or send your name + mobile and Humanoid-Nick/Lyn can point you the right way."
@@ -6539,7 +6561,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
 
     if is_obvious_boundary_joke(clean):
         return (
-            "Haha, no — clothes stay on and there’s no army yelling.\n\n"
+            "Haha, no. Clothes stay on and there’s no army yelling.\n\n"
             "The sessions are coached, but the vibe is supportive rather than shouty. You’ll work hard, just without the weird bootcamp theatre.\n\n"
             "Are you asking because group training sounds intimidating, or just checking the danger level?"
         )
@@ -6604,7 +6626,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
         "wasted memberships", "wasted my membership", "drop off again", "fall off",
     ]):
         return (
-            "Fair question — and a really common one.\n\n"
+            "Fair question, and a really common one.\n\n"
             "What tends to make the difference here isn’t willpower, it’s structure: small sessions where a coach actually learns your name, outdoor training in your neighbourhood so it doesn’t feel like a chore, and a regular group that ends up half-friends-half-accountability.\n\n"
             "The free trial is the cleanest way to see if it lands differently in person. Or drop your first name + mobile and Humanoid-Nick or Lyn can give you a quick call about what kept tripping you up at the other gyms."
         )
@@ -6633,21 +6655,21 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
 
     if any(word in text for word in ["unfit", "not fit", "not very fit", "beginner", "nervous", "embarrassed"]):
         return (
-            "Totally fair — a lot of people start before they feel ready 🙂\n\n"
+            "Totally fair, a lot of people start before they feel ready 🙂\n\n"
             "The sessions can be adjusted to your level, so you don't need to turn up already fit.\n\n"
             "Are you mainly looking to build fitness, lose weight, or get back into a routine?"
         )
 
     if any(word in text for word in ["evening", "full-time", "full time", "after work", "schedule", "availability"]):
         return (
-            "That makes sense — most people need something that fits around work.\n\n"
+            "That makes sense. Most people need something that fits around work.\n\n"
             "The best next step would be a free trial so the team can point you to the right session options.\n\n"
             "Which area are you closest to in the Inner West?"
         )
 
     if any(word in text for word in ["busy", "inconsistent", "quit", "routine", "motivation", "two weeks"]):
         return (
-            "Honestly, that’s a really common pattern — people don’t usually need more willpower, they need something easy to keep showing up to.\n\n"
+            "Honestly, that’s a really common pattern. People don’t usually need more willpower, they need something easy to keep showing up to.\n\n"
             "Consistency beats motivation. The group structure and coaching help because you’re not figuring it all out alone.\n\n"
             "Would evenings, mornings, or weekends be easiest for you to stick with?"
         )
@@ -6662,14 +6684,14 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
 
     if mentions_youth(text):
         return (
-            "Yep — that’s the Youth Training Program for kids and teens aged 10–17.\n\n"
-            "It’s Saturday 9:15am at Camperdown, $25/wk, coached by qualified, WWCC-checked trainers, focused on safe strength, movement skills, confidence, and a bit of fun — not tiny bootcamp sergeants yelling at children. Parents are welcome to watch first.\n\n"
+            "Yep, that’s the Youth Training Program for kids and teens aged 10–17.\n\n"
+            "It’s Saturday 9:15am at Camperdown, $25/wk, coached by qualified, WWCC-checked trainers, focused on safe strength, movement skills, confidence, and a bit of fun, not tiny bootcamp sergeants yelling at children. Parents are welcome to watch first.\n\n"
             "How old are they?"
         )
 
     if any(word in text for word in ["food", "nutrition", "meal", "diet", "weight loss"]):
         return (
-            "Yep — if weight loss is the goal, training and food need to stop fighting each other. Annoying, but true.\n\n"
+            "Yep, if weight loss is the goal, training and food need to stop fighting each other. Annoying, but true.\n\n"
             "SPT: best if you want tighter coaching, programming, nutrition support, and progress tracking.\n"
             "Group classes: best if you want routine, fresh air, and a lower-pressure start.\n"
             "Free meal plan: handy if food is the bit that keeps wobbling.\n\n"
@@ -6694,8 +6716,8 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     # matter the question — it hands off to a human, with a light line. Never a
     # stock content block, never bluffed confidence.
     return (
-        "Honest answer: that one's outside what Robo-Nick can reliably do — Humanoid-Nick kept the improv rights for himself.\n\n"
-        "Drop your first name + mobile and he'll sort it properly, or email innerwest@outdoorsquad.com.au. If it turns out to be quick, you can also just ask me about trials, prices, classes, SPT or the youth program — that's my home turf."
+        "Honest answer: that one's outside what Robo-Nick can reliably do. Humanoid-Nick kept the improv rights for himself.\n\n"
+        "Drop your first name + mobile and he'll sort it properly, or email innerwest@outdoorsquad.com.au. If it turns out to be quick, you can also just ask me about trials, prices, classes, SPT or the youth program. That's my home turf."
     )
 
 
@@ -6826,10 +6848,10 @@ def contact_capture_reply(message: str, session_id: str) -> str:
     what happened to Nicholas's own test on 2026-07-02."""
     name = extract_contact_name(message, session_id=session_id)
     if name:
-        intro = f"I’ve got those contact details, {name.split()[0]} — thanks."
-        follow_up = "The team will pick it up and follow up, usually the same day, about the best free trial, SPT, or a coach call — whatever suits you."
+        intro = f"I’ve got those contact details, {name.split()[0]}. Thanks."
+        follow_up = "The team will pick it up and follow up, usually the same day, about the best free trial, SPT, or a coach call, whatever suits you."
     else:
-        intro = "I’ve got those contact details — thanks."
+        intro = "I’ve got those contact details, thanks."
         follow_up = "If you haven’t already, pop your first name in too so Nick or Lyn know who they’re replying to. They usually follow up the same day."
     return (
         f"{intro}\n\n"
