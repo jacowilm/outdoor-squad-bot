@@ -8236,9 +8236,22 @@ ADMIN_HTML = """
     main { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
 
     @media (max-width: 700px) {
-      /* Never break a control's label across two lines. */
-      .topbar-link { white-space: nowrap; padding: 7px 11px; font-size: .78rem; }
-      .topbar-meta { gap: 8px; }
+      .topbar-inner { padding: 11px 16px; gap: 10px; }
+      /* .topbar-meta is a non-wrapping flex row, so keeping button labels on one
+         line each pushed "Sign out" off the right edge where it could not be
+         tapped. Wrap the row, and let the status text claim the first line so the
+         three controls land together on the second. */
+      .topbar-meta { width: 100%; margin-left: 0; flex-wrap: wrap; gap: 8px; }
+      .live-dot { flex: 0 0 auto; }
+      #lastUpdated { flex: 1 1 calc(100% - 74px); white-space: nowrap; }
+      .topbar-link {
+        white-space: nowrap;
+        flex: 1 1 auto;
+        justify-content: center;
+        text-align: center;
+        padding: 8px 10px;
+        font-size: .78rem;
+      }
 
       /* Six columns don't fit a phone: drop the header and restack each lead
          as a labelled card. */
