@@ -68,3 +68,14 @@ alter table public.outdoor_squad_events enable row level security;
 alter table public.outdoor_squad_human_request_claims enable row level security;
 alter table public.outdoor_squad_conversation_logs enable row level security;
 alter table public.outdoor_squad_leads enable row level security;
+
+-- Key/value settings (owner-changeable password hash, WhatsApp channel state:
+-- kill switch, per-thread mute + nudge markers, rotating Momence refresh token).
+-- The table already exists in the live project; recorded here so a fresh
+-- provision from this file matches production. "key" must be PRIMARY KEY or
+-- the on_conflict upserts in app.py degrade to blind inserts.
+create table if not exists outdoor_squad_settings (
+  key text primary key,
+  value text,
+  updated_at timestamptz
+);

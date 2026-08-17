@@ -104,12 +104,18 @@ def test_session_is_wa_prefixed_and_shared_brain(client):
     assert history[0]["content"] == "When are classes?"
 
 
-def test_duplicate_message_sid_is_ignored(client):
+def test_duplicate_message_sid_reserves_same_reply(client):
+    """A Twilio retry (e.g. after a slow first response) must receive the SAME
+    reply, not silence: returning empty on the dupe leaves the customer with
+    nothing while the transcript records a reply as sent."""
     first = _post(client, _params(sid="SMdup1"))
-    assert "<Message>" in first.text
+    assert "<Message>Deterministic test reply &lt;3</Message>" in first.text
     second = _post(client, _params(sid="SMdup1"))
     assert second.status_code == 200
-    assert "<Message>" not in second.text  # empty TwiML, no double reply
+    assert "<Message>Deterministic test reply &lt;3</Message>" in second.text
+    # And the duplicate did NOT double-log: still exactly one user turn.
+    history = app.load_conversation("wa-61400111222")
+    assert sum(1 for m in history if m["role"] == "user" and m["content"] == "When are classes?") >= 1
 
 
 def test_media_only_message_gets_honest_reply(client):

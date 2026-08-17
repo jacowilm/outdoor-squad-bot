@@ -4279,7 +4279,7 @@ def format_report_text(stats: dict) -> str:
                 f"- {week['week_start']} to {week['week_end']}: {week['real_visitors']} real visitor(s)"
             )
 
-    if stats.get("wa_conversations") or stats.get("wa_messages"):
+    if any(stats.get(k) for k in ("wa_conversations", "wa_messages", "wa_leads", "wa_manual_replies")):
         lines += [
             "",
             "WHATSAPP (new channel)",
@@ -4434,6 +4434,13 @@ def format_report_html(stats: dict) -> str:
         str(stats["trial_link_clicks"]),
         "The strongest booking signal visible from the chat side — cross-check names against Momence.",
     ))
+
+    if any(stats.get(k) for k in ("wa_conversations", "wa_messages", "wa_leads", "wa_manual_replies")):
+        inner.append(_email_section("WhatsApp (new channel)"))
+        inner.append(_email_row("Conversations", str(stats.get("wa_conversations", 0))))
+        inner.append(_email_row("Messages received", str(stats.get("wa_messages", 0))))
+        inner.append(_email_row("Leads captured", str(stats.get("wa_leads", 0))))
+        inner.append(_email_row("Manual replies you sent", str(stats.get("wa_manual_replies", 0))))
 
     inner.append(_email_section("Human follow-up"))
     inner.append(_email_row("Bot-generated follow-up suggestions", str(stats.get("handoff_suggestions", 0))))
@@ -4871,7 +4878,10 @@ async def wa_webhook_receive(request: Request):
 # Twilio retries a webhook only on 5xx/timeout, but a slow reply can still get
 # the same MessageSid delivered twice; a small in-process LRU is enough because
 # the retry window is minutes, not days.
-_twilio_wa_seen_sids: "collections.OrderedDict[str, float]" = collections.OrderedDict()
+# sid -> reply text (None until computed). A Twilio retry after a slow first
+# response must re-serve the SAME TwiML: returning empty on the dupe leaves
+# the customer with no reply at all while our transcript says one was sent.
+_twilio_wa_seen_sids: "collections.OrderedDict[str, str | None]" = collections.OrderedDict()
 _TWILIO_WA_SEEN_MAX = 500
 
 # Bot-mute per conversation (stage-1 commitment: the moment Nick types, the bot
@@ -4881,36 +4891,54 @@ _TWILIO_WA_SEEN_MAX = 500
 WA_MUTE_FILE = Path(os.environ.get("OUTDOOR_SQUAD_WA_MUTE_FILE", "wa_mute.json"))
 
 
-def _wa_mute_load() -> dict:
+def _json_dict_load(path: Path) -> dict:
     try:
-        with WA_MUTE_FILE.open() as handle:
+        with path.open() as handle:
             data = json.load(handle)
         return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
 
 
-def _wa_mute_save(data: dict) -> None:
+def _json_dict_save(path: Path, data: dict) -> bool:
+    """Atomic tmp+rename, like append_jsonl_file: a crash mid-write must never
+    leave a truncated file that silently reads back as {} — for the state file
+    that would reset the kill switch to ON and re-arm every nudge marker."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
     try:
-        with WA_MUTE_FILE.open("w") as handle:
+        with tmp.open("w") as handle:
             json.dump(data, handle)
+        tmp.replace(path)
+        return True
     except OSError:
-        pass
+        return False
+
+
+def _wa_mute_load() -> dict:
+    return _json_dict_load(WA_MUTE_FILE)
+
+
+def _wa_mute_save(data: dict) -> None:
+    _json_dict_save(WA_MUTE_FILE, data)
 
 
 def wa_muted(session_id: str) -> bool:
-    until = _wa_mute_load().get(session_id)
-    return bool(until) and float(until) > time.time()
+    raw = get_wa_setting(f"mute:{session_id}")
+    try:
+        return bool(raw) and float(raw) > time.time()
+    except ValueError:
+        return False
 
 
 def set_wa_mute(session_id: str, minutes: float | None) -> None:
-    """minutes=None clears the mute (hand the thread back to the bot)."""
-    data = _wa_mute_load()
+    """minutes=None clears the mute (hand the thread back to the bot).
+    Stored in the durable settings store, NOT a local file: the mute is the
+    promise that the bot never talks over Nick mid-conversation, and a deploy
+    wiping an ephemeral file would break exactly that promise."""
     if minutes is None:
-        data.pop(session_id, None)
+        set_wa_setting(f"mute:{session_id}", "")
     else:
-        data[session_id] = time.time() + minutes * 60
-    _wa_mute_save(data)
+        set_wa_setting(f"mute:{session_id}", str(time.time() + minutes * 60))
 
 
 def _twiml_escape(text: str) -> str:
@@ -4949,6 +4977,31 @@ def twilio_signature_valid(path_qs: str, params: dict, signature: str) -> bool:
     return False
 
 
+def _wa_capture_lead(message: str, session_id: str, human_request_handled: bool, reason: str) -> None:
+    """The ONE lead-capture path for every WhatsApp branch. Extracted after
+    review found the copy-pasted block had drifted: the AI-outage branch had
+    no capture at all (a lead arriving during an incident was simply lost),
+    and the Momence push sat inside the owner-alert dedupe guard, so the
+    hottest leads — the ones who explicitly asked for a human — were exactly
+    the ones never pushed to the CRM."""
+    lead_info = extract_lead_info(message, session_id)
+    if not lead_info:
+        return
+    save_lead(lead_info)
+    has_contact = has_contact_details(message)
+    log_event("lead_captured" if has_contact else "lead_updated", **lead_info)
+    if not has_contact:
+        return
+    # Owner alert: deduped against the human-request alert that already fired.
+    if not human_request_handled:
+        notify_lead_summary_async(lead_info, reason=reason)
+    # CRM push: NOT deduped against alerts (different concern), but pushed at
+    # most once per thread so a two-message lead doesn't create two members.
+    if get_wa_setting(f"momence_pushed:{session_id}") != "1":
+        set_wa_setting(f"momence_pushed:{session_id}", "1")
+        push_wa_lead_async(lead_info)
+
+
 @app.post("/twilio-wa-webhook")
 async def twilio_wa_webhook(request: Request):
     # Fail-closed: without the auth token there is no way to authenticate
@@ -4968,19 +5021,14 @@ async def twilio_wa_webhook(request: Request):
         return _twiml_message(None)
     session_id = sanitize_session_id("wa-" + re.sub(r"\D", "", sender))
 
-    if not wa_channel_enabled():
-        # Nick's kill switch: the channel is off, so the bot says nothing and
-        # alerts nobody. The inbound is still logged for continuity.
-        log_chat_message(session_id, "user", str(form.get("Body", ""))[:MAX_MESSAGE_LEN])
-        log_event("wa_channel_off_skip", session_id=session_id, channel="whatsapp")
-        return _twiml_message(None)
-
-    # Dedupe retried deliveries of the same message.
+    # Dedupe FIRST: a Twilio retry must never double-log a message, whatever
+    # state the channel is in (a retried inbound also skews the 24h window
+    # anchor if it gets re-recorded).
     message_sid = str(form.get("MessageSid", ""))[:64]
     if message_sid:
         if message_sid in _twilio_wa_seen_sids:
-            return _twiml_message(None)
-        _twilio_wa_seen_sids[message_sid] = time.time()
+            return _twiml_message(_twilio_wa_seen_sids[message_sid])
+        _twilio_wa_seen_sids[message_sid] = None
         while len(_twilio_wa_seen_sids) > _TWILIO_WA_SEEN_MAX:
             _twilio_wa_seen_sids.popitem(last=False)
 
@@ -4989,7 +5037,7 @@ async def twilio_wa_webhook(request: Request):
         if int(form.get("NumMedia", "0") or 0) > 0:
             # Media-only message: acknowledge honestly instead of hallucinating.
             return _twiml_message(
-                "G'day — I can only read text for now. Type your question and I'll sort you out."
+                "G'day, I can only read text for now. Type your question and I'll sort you out."
             )
         return _twiml_message(None)
 
@@ -5014,16 +5062,17 @@ async def twilio_wa_webhook(request: Request):
         message, session_id, trusted_widget=True, internal_qa=False
     )
 
+    if not wa_channel_enabled():
+        # Kill switch: the BOT is silent, the business is not. The enquiry is
+        # recorded, the lead saved, alerts fired — only the auto-reply stops.
+        log_event("wa_channel_off_skip", session_id=session_id, channel="whatsapp")
+        _wa_capture_lead(message, session_id, human_request_handled, "wa_channel_off_capture")
+        return _twiml_message(None)
+
     if wa_muted(session_id):
         # Nick is driving this thread: capture and alert, never speak.
         log_event("wa_bot_muted_skip", session_id=session_id, channel="whatsapp")
-        lead_info = extract_lead_info(message, session_id)
-        if lead_info:
-            save_lead(lead_info)
-            log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
-            if has_contact_details(message) and not human_request_handled:
-                notify_lead_summary_async(lead_info, reason="wa_muted_contact_capture")
-                push_wa_lead_async(lead_info)
+        _wa_capture_lead(message, session_id, human_request_handled, "wa_muted_contact_capture")
         return _twiml_message(None)
 
     if should_use_local_tone_handler(message, session_id):
@@ -5032,15 +5081,11 @@ async def twilio_wa_webhook(request: Request):
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)
-        lead_info = extract_lead_info(message, session_id)
-        if lead_info:
-            save_lead(lead_info)
-            log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
-            if has_contact_details(message) and not human_request_handled:
-                notify_lead_summary_async(lead_info, reason="wa_local_tone_contact_capture")
-                push_wa_lead_async(lead_info)
+        _wa_capture_lead(message, session_id, human_request_handled, "wa_local_tone_contact_capture")
         log_event("local_tone_handler_used", session_id=session_id, channel="whatsapp")
         log_bot_reply(session_id, reply, fallback=False)
+        if message_sid:
+            _twilio_wa_seen_sids[message_sid] = reply
         return _twiml_message(reply)
 
     try:
@@ -5049,15 +5094,11 @@ async def twilio_wa_webhook(request: Request):
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)
-        lead_info = extract_lead_info(message, session_id)
-        if lead_info:
-            save_lead(lead_info)
-            log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
-            if has_contact_details(message) and not human_request_handled:
-                notify_lead_summary_async(lead_info, reason="wa_ai_contact_capture")
-                push_wa_lead_async(lead_info)
+        _wa_capture_lead(message, session_id, human_request_handled, "wa_ai_contact_capture")
         log_event("wa_reply_sent", session_id=session_id, channel="whatsapp", ai_provider=ai_provider)
         log_bot_reply(session_id, reply, fallback=False)
+        if message_sid:
+            _twilio_wa_seen_sids[message_sid] = reply
         return _twiml_message(reply)
     except Exception:
         if os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message):
@@ -5068,8 +5109,11 @@ async def twilio_wa_webhook(request: Request):
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)
+        _wa_capture_lead(message, session_id, human_request_handled, "wa_fallback_contact_capture")
         log_event("wa_reply_fallback", session_id=session_id, channel="whatsapp")
         log_bot_reply(session_id, reply, fallback=True)
+        if message_sid:
+            _twilio_wa_seen_sids[message_sid] = reply
         return _twiml_message(reply)
 
 
@@ -5077,7 +5121,10 @@ async def twilio_wa_webhook(request: Request):
 async def wa_mute_endpoint(request: Request, _: str = Depends(require_admin)):
     """Dashboard hook for the stage-1 manual-reply commitment: mute the bot in
     one conversation while Nick types, clear to hand the thread back."""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid body"}, status_code=400)
     session_id = sanitize_session_id(body.get("session_id", ""))
     if not session_id.startswith("wa-"):
         return JSONResponse({"ok": False, "error": "session_id must be a wa- session"}, status_code=400)
@@ -5096,67 +5143,135 @@ async def wa_mute_endpoint(request: Request, _: str = Depends(require_admin)):
 # Small key/value state shared across deploys: Supabase settings table when
 # available, a local JSON file otherwise (dev/tests). Holds the kill switch,
 # the rotating Momence refresh token, and per-thread nudge markers.
-WA_STATE_FILE = Path(os.environ.get("OUTDOOR_SQUAD_WA_STATE_FILE", "wa_state.json"))
+WA_STATE_FILE = Path(os.environ.get("OUTDOOR_SQUAD_WA_STATE_FILE",
+                                    str(Path(__file__).parent / "wa_state.json")))
+
+
+def _parse_any_ts(value) -> "datetime | None":
+    """One tolerant parser for every stored timestamp the WA code touches:
+    naive-local now_iso() strings, PostgREST's '+00:00', trailing 'Z'.
+    Aware stamps are converted to naive LOCAL so every comparison shares the
+    clock now_iso() writes with — three hand-rolled slicing recipes disagreeing
+    about this is how the 24h window drifts by the host TZ offset."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        try:
+            parsed = datetime.fromisoformat(raw[:26])
+        except ValueError:
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
 _WA_SETTING_PREFIX = "wa::"
 
 
 def _wa_state_file_load() -> dict:
-    try:
-        with WA_STATE_FILE.open() as handle:
-            data = json.load(handle)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    return _json_dict_load(WA_STATE_FILE)
 
 
 def get_wa_setting(key: str, default: str = "") -> str:
+    """Freshest store wins. Both stores carry updated_at because a Supabase
+    write can fail while the file write succeeds (or vice versa): preferring
+    one store unconditionally would let a stale row shadow a newer value —
+    fatal for the rotating Momence refresh token, where serving an old value
+    locks us out until the client re-consents."""
+    file_entry = _wa_state_file_load().get(key)
+    if isinstance(file_entry, dict):
+        file_value, file_ts = str(file_entry.get("value", "")), str(file_entry.get("updated_at", ""))
+    else:  # legacy plain-string entries predate timestamps
+        file_value, file_ts = (str(file_entry), "") if file_entry is not None else ("", "")
     if supabase_enabled():
         try:
             rows = supabase_request(
                 "GET",
                 SUPABASE_TABLES["settings"],
-                params={"select": "value", "key": f"eq.{_WA_SETTING_PREFIX}{key}", "limit": "1"},
+                params={"select": "value,updated_at", "key": f"eq.{_WA_SETTING_PREFIX}{key}", "limit": "1"},
             )
             if rows:
-                return str(rows[0].get("value") or default)
+                db_value = str(rows[0].get("value") or "")
+                db_dt = _parse_any_ts(rows[0].get("updated_at"))
+                file_dt = _parse_any_ts(file_ts)
+                if file_entry is None or file_dt is None or (db_dt and db_dt >= file_dt):
+                    return db_value or default
+                return file_value or default
         except Exception:
             pass  # fall through to the file so a Supabase blip is not an outage
-    return str(_wa_state_file_load().get(key, default))
+    if file_entry is not None:
+        return file_value or default
+    return default
 
 
-def set_wa_setting(key: str, value: str) -> None:
+def set_wa_setting(key: str, value: str) -> bool:
+    """Returns whether the value durably persisted ANYWHERE. Callers surfacing
+    a switch to the owner must not confirm success on a False."""
+    stamp = now_iso()
+    db_ok = False
     if supabase_enabled():
         try:
             supabase_request(
                 "POST",
                 SUPABASE_TABLES["settings"],
-                json_body={"key": f"{_WA_SETTING_PREFIX}{key}", "value": value, "updated_at": now_iso()},
+                json_body={"key": f"{_WA_SETTING_PREFIX}{key}", "value": value, "updated_at": stamp},
+                params={"on_conflict": "key"},
                 prefer="resolution=merge-duplicates",
             )
+            db_ok = True
         except Exception:
             pass
     data = _wa_state_file_load()
-    data[key] = value
-    try:
-        with WA_STATE_FILE.open("w") as handle:
-            json.dump(data, handle)
-    except OSError:
-        pass
+    data[key] = {"value": value, "updated_at": stamp}
+    file_ok = _json_dict_save(WA_STATE_FILE, data)
+    _wa_setting_cache.pop(key, None)
+    return db_ok or file_ok
+
+
+_wa_setting_cache: dict[str, tuple[float, str]] = {}
+_WA_SETTING_CACHE_TTL = 20.0
+
+
+def _cached_wa_setting(key: str, default: str = "") -> str:
+    """Short-TTL read for hot paths (the webhook checks the kill switch on
+    every inbound). set_wa_setting busts the entry, so in-process flips are
+    immediate and cross-instance flips converge within the TTL."""
+    hit = _wa_setting_cache.get(key)
+    if hit and time.time() - hit[0] < _WA_SETTING_CACHE_TTL:
+        return hit[1]
+    value = get_wa_setting(key, default)
+    _wa_setting_cache[key] = (time.time(), value)
+    return value
 
 
 def wa_channel_enabled() -> bool:
-    """Nick's kill switch. Default ON; '0' turns the whole channel silent."""
-    return get_wa_setting("channel_enabled", "1") != "0"
+    """Nick's kill switch. Default ON; '0' silences the BOT — inbound is still
+    captured and alerts still fire, because a weekend with the switch off must
+    not silently discard enquiries (review finding, 17 Aug)."""
+    return _cached_wa_setting("channel_enabled", "1") != "0"
+
+
+# The WhatsApp sender is normally a DIFFERENT number from the SMS long code
+# used for owner alerts, so it gets its own env var (falling back to the SMS
+# one for single-number setups). A value pasted straight from the Twilio
+# console arrives as "whatsapp:+614...", so the prefix is stripped here rather
+# than doubled at send time.
+TWILIO_WA_FROM = (
+    os.environ.get("OUTDOOR_SQUAD_TWILIO_WA_FROM", "").strip() or TWILIO_FROM
+).removeprefix("whatsapp:")
 
 
 def send_whatsapp_via_twilio(to_digits: str, body: str) -> tuple[bool, str]:
     """Outbound WhatsApp via Twilio REST. Returns (ok, message_sid_or_error).
     Used for manual replies and the follow-up nudge — inbound conversation
     replies ride TwiML and never touch this path."""
-    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM):
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WA_FROM):
         return False, "twilio sending not configured"
     payload = urllib.parse.urlencode({
-        "From": f"whatsapp:{TWILIO_FROM}",
+        "From": f"whatsapp:{TWILIO_WA_FROM}",
         "To": f"whatsapp:+{re.sub(r'[^0-9]', '', to_digits)}",
         "Body": body[:1600],
     }).encode()
@@ -5207,7 +5322,7 @@ def wa_window_state(session_id: str, now: datetime | None = None) -> dict:
     elapsed = ((now or datetime.now()) - last_in).total_seconds()
     remaining = max(0, int((24 * 3600 - elapsed) // 60))
     return {
-        "window_open": remaining > 0,
+        "window_open": elapsed < 24 * 3600,
         "minutes_remaining": remaining,
         "last_inbound_at": last_in.isoformat(),
     }
@@ -5216,10 +5331,20 @@ def wa_window_state(session_id: str, now: datetime | None = None) -> dict:
 @app.post("/api/wa/kill")
 async def wa_kill_switch(request: Request, _: str = Depends(require_admin)):
     """The stage-1 kill switch: Nick can turn the WhatsApp channel off himself."""
-    body = await request.json()
-    enabled = bool(body.get("enabled", True))
-    set_wa_setting("channel_enabled", "1" if enabled else "0")
-    log_event("wa_channel_toggled", session_id="wa-system", enabled=enabled)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid body"}, status_code=400)
+    raw = body.get("enabled", True)
+    enabled = raw if isinstance(raw, bool) else str(raw).strip().lower() not in ("false", "0", "")
+    persisted = set_wa_setting("channel_enabled", "1" if enabled else "0")
+    log_event("wa_channel_toggled", session_id="wa-system", enabled=enabled, persisted=persisted)
+    if not persisted:
+        # Never confirm a switch that only exists in memory: a deploy would
+        # silently flip the bot back on while Nick believes it is off.
+        return JSONResponse({"ok": False, "enabled": enabled,
+                             "error": "could not persist the switch; it may reset on redeploy"},
+                            status_code=503)
     return JSONResponse({"ok": True, "enabled": enabled})
 
 
@@ -5228,7 +5353,10 @@ async def wa_manual_reply(request: Request, _: str = Depends(require_admin)):
     """Manual reply from the dashboard. Sending is REST (needs Twilio creds),
     and the moment it succeeds the bot is muted in that thread until handed
     back — the stage-1 promise, enforced server-side rather than by UI hope."""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid body"}, status_code=400)
     session_id = sanitize_session_id(body.get("session_id", ""))
     message = str(body.get("message", "")).strip()
     if not session_id.startswith("wa-"):
@@ -5296,7 +5424,7 @@ async def wa_conversations(_: str = Depends(require_admin)):
 # ── Follow-up nudge (the "single follow-up nudge" on the invoice) ────────────
 WA_NUDGE_MINUTES = int(os.environ.get("OUTDOOR_SQUAD_WA_NUDGE_MINUTES", "90"))
 WA_NUDGE_TEXT = (
-    "No stress if now's not the time — I'm here whenever you're ready. "
+    "No stress if now's not the time, I'm here whenever you're ready. "
     "Want me to send the free trial link, or answer anything else?"
 )
 
@@ -5360,7 +5488,7 @@ def _wa_nudge_loop() -> None:
 
 
 def _start_wa_nudge_scheduler() -> None:
-    if WA_NUDGE_MINUTES > 0 and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM:
+    if WA_NUDGE_MINUTES > 0 and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WA_FROM:
         threading.Thread(target=_wa_nudge_loop, daemon=True).start()
 
 
@@ -5372,6 +5500,9 @@ MOMENCE_SEED_REFRESH_TOKEN = os.environ.get("MOMENCE_V2_REFRESH_TOKEN", "").stri
 MOMENCE_WA_TAG_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_WA_TAG_ID", "").strip()
 
 
+_momence_token_lock = threading.Lock()
+
+
 def momence_configured() -> bool:
     return bool(MOMENCE_V2_CLIENT_ID and MOMENCE_V2_CLIENT_SECRET
                 and (MOMENCE_SEED_REFRESH_TOKEN or get_wa_setting("momence_refresh_token")))
@@ -5380,7 +5511,15 @@ def momence_configured() -> bool:
 def _momence_access_token() -> str | None:
     """OAuth2 refresh. Momence ROTATES the refresh token on every use, so the
     fresh one is persisted immediately — losing it locks us out until Nick
-    re-consents. The env var only seeds the very first exchange."""
+    re-consents. The env var only seeds the very first exchange.
+    Serialized: two concurrent lead threads reading the same refresh token
+    would both spend it, and whichever exchange lands second falls off the
+    rotation chain permanently."""
+    with _momence_token_lock:
+        return _momence_access_token_locked()
+
+
+def _momence_access_token_locked() -> str | None:
     refresh = get_wa_setting("momence_refresh_token") or MOMENCE_SEED_REFRESH_TOKEN
     if not refresh:
         return None
@@ -5422,9 +5561,11 @@ def push_wa_lead_to_momence(lead_info: dict) -> None:
         return
     name = str(lead_info.get("name") or "").strip()
     first, _, last = name.partition(" ")
+    # No fabricated names: a CRM full of "Sarah Lead" / "WhatsApp Lead"
+    # placeholder members is worse than a first-name-only record.
     payload = {
-        "firstName": first or "WhatsApp",
-        "lastName": last or "Lead",
+        "firstName": first or "WhatsApp enquiry",
+        "lastName": last or None,
         "email": lead_info.get("email") or None,
         "phoneNumber": lead_info.get("phone") or None,
     }
@@ -5673,9 +5814,10 @@ async def change_admin_password(payload: dict, _: str = Depends(require_admin)):
     return response
 
 
-MOMENCE_V2_BASE = os.environ.get("MOMENCE_V2_BASE", "https://api.momence.com")
-MOMENCE_V2_CLIENT_ID = os.environ.get("MOMENCE_V2_CLIENT_ID", "").strip()
-MOMENCE_V2_CLIENT_SECRET = os.environ.get("MOMENCE_V2_CLIENT_SECRET", "").strip()
+# MOMENCE_V2_BASE / _CLIENT_ID / _CLIENT_SECRET are defined ONCE, hardened
+# (.strip().rstrip("/")), next to the lead-push code above. A second module-
+# level definition here silently shadowed that hardened set (later assignment
+# wins), reintroducing the double-slash URL bug — removed after review.
 MOMENCE_V2_REDIRECT_URI = os.environ.get(
     "MOMENCE_V2_REDIRECT_URI",
     "https://outdoor-squad-bot.onrender.com/api/momence/oauth/callback",
@@ -5766,6 +5908,11 @@ async def momence_oauth_callback(request: Request, _: str = Depends(require_admi
         return page("Token exchange failed", f"<pre>{str(exc)[:300]}</pre>")
 
     refresh = data.get("refreshToken") or data.get("refresh_token") or ""
+    if refresh:
+        # Also persist into the shared WA settings store: the push pipeline
+        # reads (and rotates) the token from there, so a re-consent must hand
+        # the NEW chain to the pipeline instead of leaving it on a dead one.
+        set_wa_setting("momence_refresh_token", str(refresh))
     expires = data.get("refreshTokenExpiresAt", "unknown")
     log_event("momence_oauth_success", session_id="system", refresh_expires_at=str(expires))
     return page(
