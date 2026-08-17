@@ -9,7 +9,7 @@ trial, SPT, Youth Training Program), and captures leads for the team.
 - A small **FastAPI** backend (this repo) runs on **Render**.
 - A lightweight **`widget.js`** is embedded on your website; it calls the backend.
 - Conversations and leads are stored in your **Supabase** project.
-- Answers come from your **AI provider** (Anthropic Claude Haiku, with an optional
+- Answers come from your **AI provider** (Anthropic Claude Sonnet 4.6, with an optional
   OpenAI failover) grounded in the files under `source-docs/` and `knowledge_base.md`.
 
 ## Configuration

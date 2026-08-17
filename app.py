@@ -1,6 +1,6 @@
 """
 The Outdoor Squad — Robo-Nick enquiry flow
-Built by AI Sprints for Nicholas Holland / The Outdoor Squad
+Built by Realtiq for Nicholas Holland / The Outdoor Squad
 
 Scope: one practical/linkable first version that answers Outdoor Squad FAQs,
 routes prospects toward the right front door, and captures clean lead context.
@@ -29,14 +29,16 @@ from email.mime.text import MIMEText
 from pathlib import Path
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from openai import OpenAI
 
 app = FastAPI(title="Outdoor Squad AI Assistant")
-security = HTTPBasic()
+# auto_error=False so a cookie-authenticated browser without an Authorization
+# header reaches require_admin instead of getting the raw Basic-auth popup.
+security = HTTPBasic(auto_error=False)
 APP_REVIEW_BUILD = "source-grounding-2026-05-19-location-choice"
 
 
@@ -254,6 +256,17 @@ WA_APP_ID = os.environ.get("OUTDOOR_SQUAD_META_APP_ID", "").strip()
 WA_ES_CONFIG_ID = os.environ.get("OUTDOOR_SQUAD_META_ES_CONFIG_ID", "").strip()
 WA_APP_SECRET = os.environ.get("OUTDOOR_SQUAD_META_APP_SECRET", "").strip()
 WA_WEBHOOK_VERIFY_TOKEN = os.environ.get("OUTDOOR_SQUAD_WA_VERIFY_TOKEN", "").strip()
+# Twilio WhatsApp (the LIVE architecture since 10 Aug: dedicated AU mobile on
+# Nick's own Twilio account; the Meta endpoints above are kept only until the
+# Twilio path is verified end to end). Signature validation needs the exact URL
+# Twilio requested: never reconstruct it from Host headers (Cloudflare/Render
+# rewrite them) — validate against the explicitly configured webhook URL, or
+# failing that against the two hosts this service is actually reachable on.
+TWILIO_WA_WEBHOOK_URL = os.environ.get("OUTDOOR_SQUAD_TWILIO_WA_WEBHOOK_URL", "").strip()
+TWILIO_WA_FALLBACK_HOSTS = (
+    "https://outdoorsquad.realtiq.ai",
+    "https://outdoor-squad-bot.onrender.com",
+)
 SMTP_HOST = os.environ.get("OUTDOOR_SQUAD_SMTP_HOST", "").strip()
 SMTP_PORT = int(os.environ.get("OUTDOOR_SQUAD_SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("OUTDOOR_SQUAD_SMTP_USER", "").strip()
@@ -293,6 +306,7 @@ SUPABASE_TABLES = {
     "conversation_logs": "outdoor_squad_conversation_logs",
     "leads": "outdoor_squad_leads",
     "human_request_claims": "outdoor_squad_human_request_claims",
+    "settings": "outdoor_squad_settings",
 }
 
 # Load leads file
@@ -3219,22 +3233,185 @@ def prune_conversation_cache(preserve: str | None = None) -> None:
         conversation_last_access.pop(session_id, None)
 
 
-def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
+# ---------------------------------------------------------------------------
+# Admin auth
+#
+# Two ways in:
+#   1. Session cookie set by the /login page (what the owner uses in a browser).
+#   2. HTTP Basic (kept so the watcher, scripts and monitoring keep working).
+#
+# The password starts as the OUTDOOR_SQUAD_ADMIN_PASSWORD env default. Once the
+# owner changes it in the dashboard, a PBKDF2 hash in the Supabase settings
+# table takes over and the env default stops working. The session-cookie HMAC
+# secret is derived from the active password material, so every session is
+# invalidated the moment the password changes.
+# ---------------------------------------------------------------------------
+ADMIN_SETTINGS_PASSWORD_KEY = "admin_password_hash"
+ADMIN_SESSION_COOKIE = "rq_admin_session"
+ADMIN_SESSION_TTL_SECONDS = 30 * 24 * 3600
+ADMIN_HASH_CACHE_TTL_SECONDS = 60.0
+_PBKDF2_ITERATIONS = 390_000
+
+_admin_hash_cache = {"value": None, "loaded_at": 0.0, "ever_loaded": False}
+_admin_hash_lock = threading.Lock()
+
+
+def _read_stored_admin_hash() -> str | None:
+    rows = supabase_request(
+        "GET",
+        SUPABASE_TABLES["settings"],
+        params={"select": "value", "key": f"eq.{ADMIN_SETTINGS_PASSWORD_KEY}", "limit": "1"},
+    )
+    if rows:
+        return rows[0].get("value") or None
+    return None
+
+
+def get_admin_password_hash() -> str | None:
+    """Owner-set password hash, or None while the env default is still active."""
+    if not supabase_enabled():
+        return None
+    now = time.time()
+    with _admin_hash_lock:
+        if _admin_hash_cache["ever_loaded"] and now - _admin_hash_cache["loaded_at"] < ADMIN_HASH_CACHE_TTL_SECONDS:
+            return _admin_hash_cache["value"]
+    try:
+        value = _read_stored_admin_hash()
+    except Exception:
+        # Supabase unreachable: keep the last known answer instead of silently
+        # re-enabling the env default password.
+        with _admin_hash_lock:
+            return _admin_hash_cache["value"] if _admin_hash_cache["ever_loaded"] else None
+    with _admin_hash_lock:
+        _admin_hash_cache.update(value=value, loaded_at=time.time(), ever_loaded=True)
+    return value
+
+
+def hash_admin_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), _PBKDF2_ITERATIONS).hex()
+    return f"pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt}${digest}"
+
+
+def _verify_against_hash(password: str, stored: str) -> bool:
+    try:
+        scheme, iterations, salt, digest = stored.split("$", 3)
+        if scheme != "pbkdf2_sha256":
+            return False
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(iterations)).hex()
+        return secrets.compare_digest(candidate, digest)
+    except Exception:
+        return False
+
+
+def verify_admin_password(password: str) -> bool:
+    stored = get_admin_password_hash()
+    if stored:
+        return _verify_against_hash(password, stored)
+    return bool(ADMIN_PASSWORD) and secrets.compare_digest(password, ADMIN_PASSWORD)
+
+
+def store_admin_password(password: str) -> None:
+    new_hash = hash_admin_password(password)
+    supabase_request(
+        "POST",
+        SUPABASE_TABLES["settings"],
+        json_body={"key": ADMIN_SETTINGS_PASSWORD_KEY, "value": new_hash, "updated_at": now_iso()},
+        prefer="resolution=merge-duplicates",
+    )
+    with _admin_hash_lock:
+        _admin_hash_cache.update(value=new_hash, loaded_at=time.time(), ever_loaded=True)
+
+
+def _session_secret() -> bytes:
+    basis = get_admin_password_hash() or ADMIN_PASSWORD or ""
+    return hashlib.sha256(b"rq-admin-session:" + basis.encode()).digest()
+
+
+def issue_session_token() -> str:
+    expires = int(time.time()) + ADMIN_SESSION_TTL_SECONDS
+    sig = hmac.new(_session_secret(), f"admin:{expires}".encode(), hashlib.sha256).hexdigest()
+    return f"{expires}.{sig}"
+
+
+def session_token_valid(token: str | None) -> bool:
+    if not token or "." not in token:
+        return False
+    expires_raw, _, sig = token.partition(".")
+    try:
+        expires = int(expires_raw)
+    except ValueError:
+        return False
+    if expires < time.time():
+        return False
+    expected = hmac.new(_session_secret(), f"admin:{expires}".encode(), hashlib.sha256).hexdigest()
+    return secrets.compare_digest(sig, expected)
+
+
+def _set_session_cookie(response) -> None:
+    response.set_cookie(
+        ADMIN_SESSION_COOKIE,
+        issue_session_token(),
+        max_age=ADMIN_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+
+
+LOGIN_MAX_ATTEMPTS = 8
+LOGIN_WINDOW_SECONDS = 600
+_login_failures: dict[str, collections.deque] = {}
+_login_failures_lock = threading.Lock()
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return forwarded or (request.client.host if request.client else "unknown")
+
+
+def _too_many_login_attempts(ip: str) -> bool:
+    cutoff = time.time() - LOGIN_WINDOW_SECONDS
+    with _login_failures_lock:
+        attempts = _login_failures.get(ip)
+        if not attempts:
+            return False
+        while attempts and attempts[0] < cutoff:
+            attempts.popleft()
+        return len(attempts) >= LOGIN_MAX_ATTEMPTS
+
+
+def _register_failed_login(ip: str) -> None:
+    with _login_failures_lock:
+        _login_failures.setdefault(ip, collections.deque(maxlen=LOGIN_MAX_ATTEMPTS)).append(time.time())
+        # Bound the dict itself so a spray of spoofed IPs can't grow it forever.
+        if len(_login_failures) > 2000:
+            _login_failures.clear()
+
+
+def require_admin(request: Request, credentials: HTTPBasicCredentials | None = Depends(security)) -> str:
     """Protect owner-only leads, metrics, and conversation review surfaces."""
     if not ADMIN_PASSWORD:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Admin password is not configured on this deployment.",
         )
-    username_ok = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
-    password_ok = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
-    if not (username_ok and password_ok):
+    if credentials is not None:
+        username_ok = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
+        if username_ok and verify_admin_password(credentials.password):
+            return credentials.username
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect admin credentials",
             headers={"WWW-Authenticate": "Basic"},
         )
-    return credentials.username
+    if session_token_valid(request.cookies.get(ADMIN_SESSION_COOKIE)):
+        return ADMIN_USERNAME
+    # No credentials at all: browsers get the login page, API callers get 401.
+    if "text/html" in (request.headers.get("accept") or ""):
+        raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/login"})
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
 
 EXPLICIT_HUMAN_REQUEST_PATTERNS = [
@@ -4655,6 +4832,226 @@ async def wa_webhook_receive(request: Request):
     return JSONResponse({"status": "received"})
 
 
+# ── Twilio WhatsApp channel ──────────────────────────────────────────────────
+# One brain, many mouths: this endpoint feeds inbound WhatsApp through the SAME
+# pipeline as the website widget (history, guardrails, lead capture, human-
+# request alerts), differing only in transport. Replies ride the TwiML response
+# itself, so inbound conversation needs no Twilio REST credentials at all.
+
+# Twilio retries a webhook only on 5xx/timeout, but a slow reply can still get
+# the same MessageSid delivered twice; a small in-process LRU is enough because
+# the retry window is minutes, not days.
+_twilio_wa_seen_sids: "collections.OrderedDict[str, float]" = collections.OrderedDict()
+_TWILIO_WA_SEEN_MAX = 500
+
+# Bot-mute per conversation (stage-1 commitment: the moment Nick types, the bot
+# goes quiet in that thread until handed back). The dashboard's manual-reply UI
+# sets this; the webhook honours it. File-backed so a deploy doesn't unmute
+# mid-conversation.
+WA_MUTE_FILE = Path(os.environ.get("OUTDOOR_SQUAD_WA_MUTE_FILE", "wa_mute.json"))
+
+
+def _wa_mute_load() -> dict:
+    try:
+        with WA_MUTE_FILE.open() as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _wa_mute_save(data: dict) -> None:
+    try:
+        with WA_MUTE_FILE.open("w") as handle:
+            json.dump(data, handle)
+    except OSError:
+        pass
+
+
+def wa_muted(session_id: str) -> bool:
+    until = _wa_mute_load().get(session_id)
+    return bool(until) and float(until) > time.time()
+
+
+def set_wa_mute(session_id: str, minutes: float | None) -> None:
+    """minutes=None clears the mute (hand the thread back to the bot)."""
+    data = _wa_mute_load()
+    if minutes is None:
+        data.pop(session_id, None)
+    else:
+        data[session_id] = time.time() + minutes * 60
+    _wa_mute_save(data)
+
+
+def _twiml_escape(text: str) -> str:
+    return (
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+
+
+def _twiml_message(reply: str | None) -> Response:
+    inner = f"<Message>{_twiml_escape(reply)}</Message>" if reply else ""
+    return Response(
+        content=f'<?xml version="1.0" encoding="UTF-8"?><Response>{inner}</Response>',
+        media_type="application/xml",
+    )
+
+
+def twilio_signature_valid(path_qs: str, params: dict, signature: str) -> bool:
+    """Twilio's documented scheme: HMAC-SHA1 over (exact request URL + POST
+    params sorted by key, values appended), base64, in X-Twilio-Signature.
+    The URL is validated against configured bases, never trusted headers."""
+    if not (TWILIO_AUTH_TOKEN and signature):
+        return False
+    bases = (
+        [TWILIO_WA_WEBHOOK_URL.rsplit("/twilio-wa-webhook", 1)[0]]
+        if TWILIO_WA_WEBHOOK_URL
+        else list(TWILIO_WA_FALLBACK_HOSTS)
+    )
+    payload_suffix = "".join(k + str(params[k]) for k in sorted(params))
+    for base in bases:
+        candidate = base + path_qs
+        digest = hmac.new(
+            TWILIO_AUTH_TOKEN.encode(), (candidate + payload_suffix).encode(), hashlib.sha1
+        ).digest()
+        if secrets.compare_digest(base64.b64encode(digest).decode(), signature):
+            return True
+    return False
+
+
+@app.post("/twilio-wa-webhook")
+async def twilio_wa_webhook(request: Request):
+    # Fail-closed: without the auth token there is no way to authenticate
+    # Twilio, so nothing gets processed rather than everything.
+    if not TWILIO_AUTH_TOKEN:
+        log_event("wa_twilio_unconfigured", session_id="wa-system")
+        return Response(status_code=503)
+
+    form = dict(await request.form())
+    path_qs = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    if not twilio_signature_valid(path_qs, form, request.headers.get("x-twilio-signature", "")):
+        log_event("wa_twilio_bad_signature", session_id="wa-system")
+        return Response(status_code=403)
+
+    sender = str(form.get("From", ""))
+    if not sender.startswith("whatsapp:"):
+        return _twiml_message(None)
+    session_id = sanitize_session_id("wa-" + re.sub(r"\D", "", sender))
+
+    # Dedupe retried deliveries of the same message.
+    message_sid = str(form.get("MessageSid", ""))[:64]
+    if message_sid:
+        if message_sid in _twilio_wa_seen_sids:
+            return _twiml_message(None)
+        _twilio_wa_seen_sids[message_sid] = time.time()
+        while len(_twilio_wa_seen_sids) > _TWILIO_WA_SEEN_MAX:
+            _twilio_wa_seen_sids.popitem(last=False)
+
+    message = str(form.get("Body", "")).strip()[:MAX_MESSAGE_LEN]
+    if not message:
+        if int(form.get("NumMedia", "0") or 0) > 0:
+            # Media-only message: acknowledge honestly instead of hallucinating.
+            return _twiml_message(
+                "G'day — I can only read text for now. Type your question and I'll sort you out."
+            )
+        return _twiml_message(None)
+
+    history = load_conversation(session_id)
+    if len(history) == 0:
+        log_event("conversation_started", session_id=session_id, channel="whatsapp")
+    history.append({"role": "user", "content": message})
+    persist_conversation(session_id)
+    log_chat_message(session_id, "user", message)
+    log_event(
+        "message_received",
+        session_id=session_id,
+        channel="whatsapp",
+        route=classify_route(message.lower()),
+        message_length=len(message),
+    )
+
+    # A WhatsApp sender is signature-authenticated and owns a real phone
+    # number, so explicit human requests count as trusted (unlike anonymous
+    # widget traffic, which must prove itself via Turnstile).
+    human_request_handled = notify_human_request_if_needed(
+        message, session_id, trusted_widget=True, internal_qa=False
+    )
+
+    if wa_muted(session_id):
+        # Nick is driving this thread: capture and alert, never speak.
+        log_event("wa_bot_muted_skip", session_id=session_id, channel="whatsapp")
+        lead_info = extract_lead_info(message, session_id)
+        if lead_info:
+            save_lead(lead_info)
+            log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
+            if has_contact_details(message) and not human_request_handled:
+                notify_lead_summary_async(lead_info, reason="wa_muted_contact_capture")
+        return _twiml_message(None)
+
+    if should_use_local_tone_handler(message, session_id):
+        reply = demo_fallback_reply(message, session_id=session_id)
+        reply = prevent_repetitive_reply(reply, message, session_id)
+        history.append({"role": "assistant", "content": reply})
+        persist_conversation(session_id)
+        log_chat_message(session_id, "assistant", reply)
+        lead_info = extract_lead_info(message, session_id)
+        if lead_info:
+            save_lead(lead_info)
+            log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
+            if has_contact_details(message) and not human_request_handled:
+                notify_lead_summary_async(lead_info, reason="wa_local_tone_contact_capture")
+        log_event("local_tone_handler_used", session_id=session_id, channel="whatsapp")
+        log_bot_reply(session_id, reply, fallback=False)
+        return _twiml_message(reply)
+
+    try:
+        reply, ai_provider = generate_ai_reply(message, session_id)
+        reply = prevent_repetitive_reply(reply, message, session_id)
+        history.append({"role": "assistant", "content": reply})
+        persist_conversation(session_id)
+        log_chat_message(session_id, "assistant", reply)
+        lead_info = extract_lead_info(message, session_id)
+        if lead_info:
+            save_lead(lead_info)
+            log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
+            if has_contact_details(message) and not human_request_handled:
+                notify_lead_summary_async(lead_info, reason="wa_ai_contact_capture")
+        log_event("wa_reply_sent", session_id=session_id, channel="whatsapp", ai_provider=ai_provider)
+        log_bot_reply(session_id, reply, fallback=False)
+        return _twiml_message(reply)
+    except Exception:
+        if os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message):
+            reply = demo_fallback_reply(message, session_id=session_id)
+        else:
+            reply = "I’m having a moment reaching my brain — give me a minute and message again."
+        reply = prevent_repetitive_reply(reply, message, session_id)
+        history.append({"role": "assistant", "content": reply})
+        persist_conversation(session_id)
+        log_chat_message(session_id, "assistant", reply)
+        log_event("wa_reply_fallback", session_id=session_id, channel="whatsapp")
+        log_bot_reply(session_id, reply, fallback=True)
+        return _twiml_message(reply)
+
+
+@app.post("/api/wa/mute")
+async def wa_mute_endpoint(request: Request, _: str = Depends(require_admin)):
+    """Dashboard hook for the stage-1 manual-reply commitment: mute the bot in
+    one conversation while Nick types, clear to hand the thread back."""
+    body = await request.json()
+    session_id = sanitize_session_id(body.get("session_id", ""))
+    if not session_id.startswith("wa-"):
+        return JSONResponse({"ok": False, "error": "session_id must be a wa- session"}, status_code=400)
+    if body.get("clear"):
+        set_wa_mute(session_id, None)
+        log_event("wa_bot_unmuted", session_id=session_id, channel="whatsapp")
+        return JSONResponse({"ok": True, "muted": False})
+    minutes = float(body.get("minutes", 30))
+    minutes = max(1.0, min(minutes, 24 * 60))
+    set_wa_mute(session_id, minutes)
+    log_event("wa_bot_muted", session_id=session_id, channel="whatsapp", minutes=minutes)
+    return JSONResponse({"ok": True, "muted": True, "minutes": minutes})
+
+
 @app.get("/api/storage-health")
 async def storage_diag(_: str = Depends(require_admin)):
     """Admin storage-health check: does the LIVE Supabase read/write actually
@@ -4796,6 +5193,66 @@ async def admin_dashboard(_: str = Depends(require_admin)):
     # "</script>" would otherwise break out of this inline <script> and run in the
     # authenticated owner's browser (stored XSS). See html_safe_json().
     return HTMLResponse(ADMIN_HTML.replace("__ADMIN_DATA__", html_safe_json(admin_data)))
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    if session_token_valid(request.cookies.get(ADMIN_SESSION_COOKIE)):
+        return RedirectResponse("/admin", status_code=303)
+    return HTMLResponse(LOGIN_HTML.replace("__LOGIN_ERROR__", ""))
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    # Parsed by hand (urlencoded) so we don't need the python-multipart package.
+    ip = _client_ip(request)
+    if _too_many_login_attempts(ip):
+        return HTMLResponse(
+            LOGIN_HTML.replace("__LOGIN_ERROR__", '<div class="error">Too many attempts. Wait a few minutes and try again.</div>'),
+            status_code=429,
+        )
+    form = urllib.parse.parse_qs((await request.body()).decode("utf-8", "replace"))
+    username = (form.get("username") or [""])[0].strip()
+    password = (form.get("password") or [""])[0]
+    if ADMIN_PASSWORD and secrets.compare_digest(username, ADMIN_USERNAME) and verify_admin_password(password):
+        response = RedirectResponse("/admin", status_code=303)
+        _set_session_cookie(response)
+        return response
+    _register_failed_login(ip)
+    return HTMLResponse(
+        LOGIN_HTML.replace("__LOGIN_ERROR__", '<div class="error">Wrong username or password.</div>'),
+        status_code=401,
+    )
+
+
+@app.get("/logout")
+async def logout():
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path="/")
+    return response
+
+
+@app.post("/api/admin/change-password")
+async def change_admin_password(payload: dict, _: str = Depends(require_admin)):
+    current = str(payload.get("current_password") or "")
+    new = str(payload.get("new_password") or "")
+    if not verify_admin_password(current):
+        raise HTTPException(status_code=403, detail="Current password is incorrect.")
+    if len(new) < 10:
+        raise HTTPException(status_code=422, detail="New password must be at least 10 characters.")
+    if new == current:
+        raise HTTPException(status_code=422, detail="New password must be different from the current one.")
+    if not supabase_enabled():
+        raise HTTPException(status_code=503, detail="Password storage is unavailable on this deployment.")
+    try:
+        store_admin_password(new)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Could not save the new password. Nothing was changed — try again.")
+    # The session secret rotates with the password, killing every other session.
+    # Re-issue this browser's cookie so the owner stays signed in.
+    response = JSONResponse({"ok": True})
+    _set_session_cookie(response)
+    return response
 
 
 MOMENCE_V2_BASE = os.environ.get("MOMENCE_V2_BASE", "https://api.momence.com")
@@ -6170,13 +6627,115 @@ def save_lead(lead_info: dict):
     LEADS_FILE.write_text(json.dumps(leads[-5000:], indent=2))
 
 
+LOGIN_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — Robo-Nick Console</title>
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; min-height: 100%; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0e1a;
+      background-image: radial-gradient(ellipse 70% 50% at 50% -10%, rgba(255,208,112,.13), transparent);
+      color: #eef1f8;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      -webkit-font-smoothing: antialiased;
+    }
+    .card {
+      width: 100%;
+      max-width: 380px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 14px;
+      padding: 36px 32px 32px;
+      box-shadow: 0 24px 60px rgba(0,0,0,.45);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+    .brand img { width: 40px; height: 40px; }
+    .wordmark { font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; color: #fff; }
+    .wordmark .q { color: #ffd070; }
+    .sub { color: rgba(238,241,248,.55); font-size: .86rem; margin: 0 0 26px; }
+    label { display: block; font-size: .78rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: rgba(238,241,248,.6); margin: 16px 0 6px; }
+    input {
+      width: 100%;
+      background: rgba(255,255,255,.05);
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 8px;
+      color: #fff;
+      font: inherit;
+      font-size: .95rem;
+      padding: 11px 13px;
+      outline: none;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    input:focus { border-color: #ffd070; box-shadow: 0 0 0 3px rgba(255,208,112,.15); }
+    button {
+      width: 100%;
+      margin-top: 24px;
+      background: #ffd070;
+      color: #0a0e1a;
+      border: 0;
+      border-radius: 8px;
+      font: inherit;
+      font-size: .95rem;
+      font-weight: 700;
+      padding: 12px;
+      cursor: pointer;
+      transition: background .15s ease, transform .12s ease;
+    }
+    button:hover { background: #f5c452; transform: translateY(-1px); }
+    .error {
+      margin-top: 18px;
+      background: rgba(220,80,80,.12);
+      border: 1px solid rgba(220,80,80,.35);
+      color: #ffb4b4;
+      border-radius: 8px;
+      padding: 10px 13px;
+      font-size: .86rem;
+    }
+    .foot { margin-top: 26px; text-align: center; font-size: .74rem; color: rgba(238,241,248,.38); }
+    .foot .q { color: rgba(255,208,112,.7); }
+  </style>
+</head>
+<body>
+  <form class="card" method="post" action="/login" autocomplete="on">
+    <div class="brand">
+      <img src="/favicon.svg" alt="">
+      <div class="wordmark">realti<span class="q">q</span><span class="q">.</span></div>
+    </div>
+    <p class="sub">Robo-Nick console · The Outdoor Squad</p>
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" required autofocus>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    __LOGIN_ERROR__
+    <button type="submit">Sign in</button>
+    <div class="foot">Robo-Nick · a realti<span class="q">q</span> system</div>
+  </form>
+</body>
+</html>
+"""
+
+
 ADMIN_HTML = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Outdoor Squad — Admin</title>
+  <title>Robo-Nick Console — Realtiq</title>
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -6193,9 +6752,12 @@ ADMIN_HTML = """
       --line-strong: #d8d8d8;
       --paper: #ffffff;
       --canvas: #f5f4f1;
-      --orange: #f26522;
-      --orange-deep: #e0540f;
-      --orange-tint: #fdf0e7;
+      --navy: #0a0e1a;
+      --amber: #ffd070;
+      --amber-hover: #f5c452;
+      --amber-strong: #e2a815;
+      --amber-text: #8a6100;
+      --amber-tint: #fff6de;
       --green: #16a34a;
       --green-tint: #e8f7ee;
       --red: #b91c1c;
@@ -6217,9 +6779,9 @@ ADMIN_HTML = """
 
     /* Top bar */
     .topbar {
-      background: var(--ink);
+      background: var(--navy);
       color: #fff;
-      border-bottom: 3px solid var(--orange);
+      border-bottom: 3px solid var(--amber);
     }
     .topbar-inner {
       max-width: 1200px;
@@ -6235,28 +6797,22 @@ ADMIN_HTML = """
       align-items: center;
       gap: 12px;
     }
-    .brand-mark {
-      width: 36px; height: 36px;
-      background: var(--orange);
+    .brand-mark { width: 38px; height: 38px; display: block; }
+    .brand-text { line-height: 1.15; }
+    .brand-text .wordmark {
+      font-size: 1.2rem;
+      font-weight: 800;
+      letter-spacing: -.02em;
       color: #fff;
-      display: grid; place-items: center;
-      font-weight: 900;
-      font-size: .82rem;
-      letter-spacing: .04em;
-      border-radius: 4px;
     }
-    .brand-text { line-height: 1.1; }
+    .brand-text .wordmark .q { color: var(--amber); }
     .brand-text .eyebrow {
-      font-size: .68rem;
-      letter-spacing: .22em;
+      font-size: .66rem;
+      letter-spacing: .2em;
       text-transform: uppercase;
       color: rgba(255,255,255,.55);
       font-weight: 600;
-    }
-    .brand-text .title {
-      font-size: 1.05rem;
-      font-weight: 800;
-      letter-spacing: -.01em;
+      margin-top: 2px;
     }
     .topbar-meta {
       margin-left: auto;
@@ -6286,6 +6842,40 @@ ADMIN_HTML = """
       transition: background .15s ease;
     }
     .topbar-link:hover { background: rgba(255,255,255,.08); }
+    button.topbar-link { font-family: inherit; background: none; cursor: pointer; }
+
+    /* Change-password modal */
+    .modal-backdrop {
+      position: fixed; inset: 0; z-index: 50;
+      background: rgba(10,14,26,.55);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .modal-backdrop[hidden] { display: none; }
+    .modal {
+      background: var(--paper);
+      border-radius: 12px;
+      box-shadow: 0 24px 60px rgba(10,14,26,.35);
+      width: 100%; max-width: 400px;
+      padding: 26px 26px 22px;
+    }
+    .modal h3 { margin: 0 0 4px; font-size: 1.15rem; letter-spacing: -.01em; }
+    .modal-sub { color: var(--muted); font-size: .84rem; margin: 0 0 14px; }
+    .modal label { display: block; font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 12px 0 5px; }
+    .modal input {
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      font: inherit; font-size: .92rem;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .modal input:focus { border-color: var(--amber-strong); box-shadow: 0 0 0 3px rgba(255,208,112,.25); }
+    .modal-msg { min-height: 20px; font-size: .84rem; margin-top: 12px; }
+    .modal-msg.err { color: var(--red); }
+    .modal-msg.ok { color: var(--green); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
     /* Tabs */
     .tabs {
@@ -6313,7 +6903,7 @@ ADMIN_HTML = """
       display: inline-flex; align-items: center; gap: 8px;
     }
     .tab:hover { color: var(--ink); }
-    .tab.active { color: var(--ink); border-bottom-color: var(--orange); }
+    .tab.active { color: var(--ink); border-bottom-color: var(--amber-strong); }
     .tab-count {
       background: var(--canvas);
       color: var(--char);
@@ -6324,7 +6914,7 @@ ADMIN_HTML = """
       min-width: 20px;
       text-align: center;
     }
-    .tab.active .tab-count { background: var(--orange-tint); color: var(--orange-deep); }
+    .tab.active .tab-count { background: var(--amber-tint); color: var(--amber-text); }
 
     /* Main */
     main {
@@ -6360,9 +6950,9 @@ ADMIN_HTML = """
       overflow: hidden;
     }
     .metric-card.feature {
-      background: var(--ink);
+      background: var(--navy);
       color: #fff;
-      border-color: var(--ink);
+      border-color: var(--navy);
     }
     .metric-card.feature .metric-label { color: rgba(255,255,255,.6); }
     .metric-card.feature .metric-foot { color: rgba(255,255,255,.55); }
@@ -6380,7 +6970,7 @@ ADMIN_HTML = """
       line-height: 1.05;
       margin-top: 8px;
     }
-    .metric-card.feature .metric-value { color: var(--orange); }
+    .metric-card.feature .metric-value { color: var(--amber); }
     .metric-foot {
       margin-top: 10px;
       font-size: .78rem;
@@ -6429,7 +7019,7 @@ ADMIN_HTML = """
       color: var(--char);
       border: 1px solid var(--line-strong);
     }
-    .badge.orange { background: var(--orange-tint); color: var(--orange-deep); border-color: rgba(242,101,34,.28); }
+    .badge.amber { background: var(--amber-tint); color: var(--amber-text); border-color: rgba(226,168,21,.35); }
     .badge.green  { background: var(--green-tint);  color: var(--green);       border-color: rgba(22,163,74,.25); }
     .badge.red    { background: var(--red-tint);    color: var(--red);         border-color: rgba(185,28,28,.22); }
 
@@ -6459,8 +7049,8 @@ ADMIN_HTML = """
       white-space: nowrap;
     }
     .btn:hover { transform: translateY(-1px); }
-    .btn.primary { background: var(--orange); border-color: var(--orange); }
-    .btn.primary:hover { background: var(--orange-deep); border-color: var(--orange-deep); }
+    .btn.primary { background: var(--amber); border-color: var(--amber); color: var(--navy); }
+    .btn.primary:hover { background: var(--amber-hover); border-color: var(--amber-hover); }
     .btn.ghost { background: var(--paper); color: var(--ink); border-color: var(--line-strong); }
     .btn.ghost:hover { background: var(--canvas); }
     .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
@@ -6478,7 +7068,7 @@ ADMIN_HTML = """
       min-width: 260px;
       transition: border-color .15s ease;
     }
-    .search:focus-within { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(242,101,34,.12); }
+    .search:focus-within { border-color: var(--amber-strong); box-shadow: 0 0 0 3px rgba(255,208,112,.25); }
     .search svg { position: absolute; left: 11px; width: 14px; height: 14px; color: var(--muted); }
     .search input {
       background: none; border: 0; outline: 0;
@@ -6512,7 +7102,7 @@ ADMIN_HTML = """
     }
     .session-row:last-child { border-bottom: 0; }
     .session-row:hover { background: #fafafa; }
-    .session-row.active { background: var(--orange-tint); }
+    .session-row.active { background: var(--amber-tint); }
     .session-row.active::before {
       content: ''; position: absolute;
     }
@@ -6526,7 +7116,7 @@ ADMIN_HTML = """
       font-size: .72rem; font-weight: 800;
       letter-spacing: .02em;
     }
-    .session-row.active .session-avatar { background: var(--orange); }
+    .session-row.active .session-avatar { background: var(--amber); color: var(--navy); }
     .session-meta { min-width: 0; flex: 1; }
     .session-id {
       display: block;
@@ -6616,16 +7206,18 @@ ADMIN_HTML = """
   <div class="topbar">
     <div class="topbar-inner">
       <div class="brand">
-        <div class="brand-mark">OS</div>
+        <img class="brand-mark" src="/favicon.svg" alt="Realtiq">
         <div class="brand-text">
-          <div class="eyebrow">The Outdoor Squad</div>
-          <div class="title">Admin Console</div>
+          <div class="wordmark">realti<span class="q">q</span><span class="q">.</span></div>
+          <div class="eyebrow">Robo-Nick · The Outdoor Squad</div>
         </div>
       </div>
       <div class="topbar-meta">
         <span class="live-dot">Live</span>
         <span id="lastUpdated">—</span>
         <a class="topbar-link" href="/admin">Refresh</a>
+        <button class="topbar-link" id="changePwBtn" type="button">Change password</button>
+        <a class="topbar-link" href="/logout">Sign out</a>
       </div>
     </div>
   </div>
@@ -6695,6 +7287,25 @@ ADMIN_HTML = """
       </div>
     </section>
   </main>
+
+  <div class="modal-backdrop" id="pwModal" hidden>
+    <div class="modal" role="dialog" aria-labelledby="pwTitle">
+      <h3 id="pwTitle">Change password</h3>
+      <p class="modal-sub">Pick something only you know — at least 10 characters. You'll stay signed in here.</p>
+      <label for="pwCurrent">Current password</label>
+      <input type="password" id="pwCurrent" autocomplete="current-password">
+      <label for="pwNew">New password</label>
+      <input type="password" id="pwNew" autocomplete="new-password">
+      <label for="pwConfirm">Confirm new password</label>
+      <input type="password" id="pwConfirm" autocomplete="new-password">
+      <div class="modal-msg" id="pwMsg"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="pwCancel" type="button">Cancel</button>
+        <button class="btn primary" id="pwSave" type="button">Update password</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     window.__OS_ADMIN_DATA__ = __ADMIN_DATA__;
 
@@ -6734,7 +7345,7 @@ ADMIN_HTML = """
       const r = String(route || '').toLowerCase();
       let tone = '';
       if (r.includes('book') || r.includes('trial')) tone = 'green';
-      else if (r.includes('handoff') || r.includes('human')) tone = 'orange';
+      else if (r.includes('handoff') || r.includes('human')) tone = 'amber';
       else if (r.includes('drop') || r.includes('lost')) tone = 'red';
       return '<span class="badge ' + tone + '">' + esc(route || 'lead') + '</span>';
     }
@@ -6915,7 +7526,56 @@ ADMIN_HTML = """
       });
     }
 
+    // Change-password modal
+    function initPasswordModal() {
+      const modal = document.getElementById('pwModal');
+      const msg = document.getElementById('pwMsg');
+      const fields = ['pwCurrent', 'pwNew', 'pwConfirm'].map(function(id) { return document.getElementById(id); });
+      function open() {
+        fields.forEach(function(f) { f.value = ''; });
+        msg.textContent = ''; msg.className = 'modal-msg';
+        modal.hidden = false;
+        fields[0].focus();
+      }
+      function close() { modal.hidden = true; }
+      document.getElementById('changePwBtn').addEventListener('click', open);
+      document.getElementById('pwCancel').addEventListener('click', close);
+      modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
+      document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && !modal.hidden) close(); });
+      document.getElementById('pwSave').addEventListener('click', async function() {
+        const current = fields[0].value, next = fields[1].value, confirm = fields[2].value;
+        msg.className = 'modal-msg err';
+        if (!current || !next) { msg.textContent = 'Fill in every field.'; return; }
+        if (next.length < 10) { msg.textContent = 'New password must be at least 10 characters.'; return; }
+        if (next !== confirm) { msg.textContent = 'New passwords don\\'t match.'; return; }
+        this.disabled = true;
+        msg.className = 'modal-msg'; msg.textContent = 'Saving…';
+        try {
+          const res = await fetch('/api/admin/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ current_password: current, new_password: next })
+          });
+          const body = await res.json().catch(function() { return {}; });
+          if (res.ok && body.ok) {
+            msg.className = 'modal-msg ok';
+            msg.textContent = 'Password updated. Use it next time you sign in.';
+            fields.forEach(function(f) { f.value = ''; });
+            window.setTimeout(close, 2200);
+          } else {
+            msg.className = 'modal-msg err';
+            msg.textContent = body.detail || 'Something went wrong — password unchanged.';
+          }
+        } catch (e) {
+          msg.className = 'modal-msg err';
+          msg.textContent = 'Network error — password unchanged.';
+        }
+        this.disabled = false;
+      });
+    }
+
     initTabs();
+    initPasswordModal();
     boot();
   </script>
 </body>
