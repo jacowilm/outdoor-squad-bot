@@ -50,6 +50,17 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "TWILIO_AUTH_TOKEN", TEST_TOKEN)
     monkeypatch.setattr(app, "TWILIO_WA_WEBHOOK_URL", "")
     monkeypatch.setattr(app, "WA_MUTE_FILE", tmp_path / "wa_mute.json")
+    # Hermetic data files: without these, a solo run of this module writes fake
+    # WA sessions into the repo's real jsonl files and inherits yesterday's,
+    # which breaks the 24h-window and repetition assertions.
+    for name, filename, empty in [
+        ("CONVERSATION_LOG_FILE", "conversation_logs.jsonl", ""),
+        ("EVENTS_FILE", "events.jsonl", ""),
+        ("LEADS_FILE", "leads.json", "[]"),
+    ]:
+        path = tmp_path / filename
+        path.write_text(empty)
+        monkeypatch.setattr(app, name, path)
     app._twilio_wa_seen_sids.clear()
     # Deterministic brain: no network, assertable output.
     monkeypatch.setattr(app, "generate_ai_reply", lambda m, s: ("Deterministic test reply <3", "test"))
