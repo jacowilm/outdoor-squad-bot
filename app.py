@@ -47,13 +47,13 @@ def load_local_env_files() -> None:
     """Load dev env files without printing or exposing secrets.
 
     Production/handoff should use the host's normal environment variable setup.
-    This is only so local review can use Jacobo/AI Sprints keys while Nicholas's
-    own API account is not connected yet.
+    Only project-local .env files are eligible: shared home-level env files
+    (e.g. ~/.openclaw/.env) hold OTHER projects' credentials and once caused
+    stray tables in the wrong Supabase project (2026-07-07).
     """
     candidates = [
         Path(__file__).parent / ".env",
         Path(__file__).parents[1] / ".env",
-        Path.home() / ".openclaw" / ".env",
     ]
     for path in candidates:
         if not path.exists():

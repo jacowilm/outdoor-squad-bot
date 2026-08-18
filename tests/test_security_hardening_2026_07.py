@@ -29,8 +29,9 @@ for _k in (
 
 import app  # noqa: E402
 importlib.reload(app)
-# app's load_local_env_files() re-reads ~/.openclaw/.env on import and can put
-# SUPABASE_URL back; force the local-file backend so tests are hermetic and fast.
+# app's load_local_env_files() re-reads project-local .env files on import and
+# can put SUPABASE_URL back; force the local-file backend so tests are hermetic
+# and fast.
 app.SUPABASE_URL = ""
 app.SUPABASE_KEY = None
 from fastapi.testclient import TestClient  # noqa: E402
