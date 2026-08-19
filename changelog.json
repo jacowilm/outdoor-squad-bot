@@ -78,5 +78,13 @@
   {
     "date": "2026-08-17",
     "line": "The dashboard can now be added to your phone's home screen and opens like an app"
+  },
+  {
+    "date": "2026-08-19",
+    "line": "Four-week baseline now labels the weeks measured under the old pre-24 July counting as not comparable, instead of mixing them in silently"
+  },
+  {
+    "date": "2026-08-19",
+    "line": "Weekly report now reads its window straight from the database by date, so the earliest baseline week cannot quietly lose events as the data grows"
   }
 ]

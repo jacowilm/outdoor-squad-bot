@@ -678,16 +678,22 @@ def supabase_select_paged(table: str, params: dict, cap: int) -> list[dict]:
     return rows
 
 
-def read_events(limit: int | None = None) -> list[dict]:
+def read_events(limit: int | None = None, since: str | None = None) -> list[dict]:
+    """`since` (ISO timestamp) filters server-side, so the row cap applies to the
+    caller's window instead of the whole table — table-wide, the newest `limit`
+    rows stop covering a 4-week report window once the table outgrows the cap."""
     limit = max(1, min(limit or EVENTS_READ_LIMIT, 10000))
     if supabase_enabled():
         try:
+            params = {
+                "select": "timestamp,event_type,session_id,metadata",
+                "order": "timestamp.desc",
+            }
+            if since:
+                params["timestamp"] = f"gte.{since}"
             rows = supabase_select_paged(
                 SUPABASE_TABLES["events"],
-                {
-                    "select": "timestamp,event_type,session_id,metadata",
-                    "order": "timestamp.desc",
-                },
+                params,
                 limit,
             )
             events = []
@@ -4173,6 +4179,12 @@ REAL_VISITOR_DEFINITION = (
     "bare single-impression sessions and non-widget QA traffic are excluded"
 )
 
+# The 10s-dwell signal (teaser_shown) only exists from this date; weeks that
+# start earlier undercount real visitors and can't sit next to later weeks as
+# equals. Nicholas asked (19 Aug) for those weeks to be flagged, not silently
+# mixed in.
+DWELL_COUNTING_START = "2026-07-24"
+
 
 def is_human_session(session_events: list[dict]) -> bool:
     """Crawler filter for owner-facing stats (2026-07-27).
@@ -4211,9 +4223,14 @@ def read_changelog_entries(since_iso: str) -> list[str]:
 
 def _report_events_between(start: datetime, end: datetime) -> list[dict]:
     """Return report-eligible events in [start, end), using one locked source filter."""
+    # `since=` pushes the window into the Supabase query itself: read_events()
+    # otherwise returns only the newest EVENTS_READ_LIMIT rows table-wide, and
+    # the table crossed that size on 2026-08-19 — without the filter the
+    # baseline's earliest week silently loses events as the table grows (the
+    # same failure mode as the 2026-07-27 truncation incident).
     return [
         event
-        for event in read_events()
+        for event in read_events(since=start.isoformat())
         if start.isoformat() <= _event_ts(event) < end.isoformat()
         and str(event.get("session_id") or "").startswith("widget-")
     ]
@@ -4264,6 +4281,7 @@ def build_report_stats(days: int = 7) -> dict:
             "week_end": week_end.date().isoformat(),
             "real_visitors": len(_human_session_ids(week_events)),
             "definition": REAL_VISITOR_DEFINITION,
+            "comparable": week_start.date().isoformat() >= DWELL_COUNTING_START,
         })
     opened = sessions("widget_opened")
     conversations = sessions("conversation_started")
@@ -4432,8 +4450,9 @@ def format_report_text(stats: dict) -> str:
             f"- Definition locked: {stats.get('visitor_definition', REAL_VISITOR_DEFINITION)}",
         ]
         for week in baseline:
+            suffix = "" if week.get("comparable", True) else "  (pre-24 Jul counting, undercounts real visitors; not comparable)"
             lines.append(
-                f"- {week['week_start']} to {week['week_end']}: {week['real_visitors']} real visitor(s)"
+                f"- {week['week_start']} to {week['week_end']}: {week['real_visitors']} real visitor(s){suffix}"
             )
 
     if any(stats.get(k) for k in ("wa_conversations", "wa_messages", "wa_leads", "wa_manual_replies")):
@@ -4621,7 +4640,8 @@ def format_report_html(stats: dict) -> str:
     if baseline:
         inner.append(_email_section("Four-week traffic baseline"))
         for week in baseline:
-            inner.append(_email_row(f"{e(week['week_start'])} &rarr; {e(week['week_end'])}", f"{week['real_visitors']} visitor(s)"))
+            note = "" if week.get("comparable", True) else "<br><span style=\"color:#8a8f98;font-weight:normal;font-size:12px;\">(pre-24 Jul counting, not comparable)</span>"
+            inner.append(_email_row(f"{e(week['week_start'])} &rarr; {e(week['week_end'])}", f"{week['real_visitors']} visitor(s){note}"))
 
     shipped = stats.get("shipped_lines") or []
     if shipped:
