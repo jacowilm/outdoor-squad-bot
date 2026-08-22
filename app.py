@@ -5387,7 +5387,7 @@ async def twilio_wa_webhook(request: Request):
         _wa_capture_lead(message, session_id, human_request_handled, "wa_muted_contact_capture")
         return _twiml_message(None)
 
-    if should_use_local_tone_handler(message, session_id):
+    if should_use_local_tone_handler(message, session_id) and not wa_first_contact_greeting(message, session_id):
         reply = demo_fallback_reply(message, session_id=session_id)
         reply = prevent_repetitive_reply(reply, message, session_id)
         history.append({"role": "assistant", "content": reply})
@@ -6445,14 +6445,21 @@ async def bubble_options(_: str = Depends(require_admin)):
     return HTMLResponse("<h1>Bubble options not found</h1>", status_code=404)
 
 
-def should_use_local_tone_handler(message: str, session_id: str) -> bool:
-    """Catch moments that need stateful tone more than generic AI/Q&A."""
+def should_use_local_tone_handler(message: str, session_id: str, *, ignore_vague: bool = False) -> bool:
+    """Catch moments that need stateful tone more than generic AI/Q&A.
+
+    ignore_vague answers a narrower question: would this still need the local
+    handler if it were not MERELY vague? The WhatsApp path asks that so a
+    first-contact "hi" can reach the AI, without ever bypassing the branches
+    that exist for safety and tone (contact details, injury, pregnancy, youth,
+    eating disorder, pricing, prompt injection) — those still win.
+    """
     text = normalise_chat_text(message)
     if contextual_short_reply(message, session_id):
         return True
     if has_contact_details(message):
         return True
-    if is_vague_message(text):
+    if not ignore_vague and is_vague_message(text):
         return True
     if is_obvious_boundary_joke(text):
         return True
@@ -6507,6 +6514,35 @@ def should_use_local_tone_handler(message: str, session_id: str) -> bool:
     user_messages = [m["content"] for m in load_conversation(session_id) if m.get("role") == "user"]
     short_repeats = [normalise_chat_text(m) for m in user_messages if len(normalise_chat_text(m)) <= 18]
     return len(short_repeats) >= 2 and short_repeats[-1] == short_repeats[-2]
+
+
+def wa_first_contact_greeting(message: str, session_id: str) -> bool:
+    """WhatsApp only: let the AI answer an opening greeting.
+
+    On the website a visitor has read the page and usually types a question, so
+    routing "hi" to a deterministic prompt is cheap and fast. On WhatsApp "hi"
+    IS the normal opener, so that same ladder became the first impression of the
+    business on its own phone number (Jacobo, 22 Aug: "it should be intelligent").
+
+    Deliberately narrow:
+      * only the VAGUENESS branch defers; every other local branch still wins,
+        which is why this asks the gate again with ignore_vague rather than
+        re-listing the conditions (that list drifts, this cannot).
+      * only the FIRST vague message defers. Repeats fall back to the escalating
+        ladder, so someone who keeps typing "hi" gets funnelled, not looped.
+    """
+    text = normalise_chat_text(message)
+    if not is_vague_message(text):
+        return False
+    if should_use_local_tone_handler(message, session_id, ignore_vague=True):
+        return False
+    prior_vague = sum(
+        1
+        for m in load_conversation(session_id)
+        if m.get("role") == "user" and is_vague_message(normalise_chat_text(m.get("content", "")))
+    )
+    # The inbound message is already appended to history by this point.
+    return prior_vague <= 1
 
 
 def has_contact_details(message: str) -> bool:
