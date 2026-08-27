@@ -4958,6 +4958,22 @@ async def favicon_svg():
     return Response(status_code=404)
 
 
+@app.get("/whatsapp-profile.png")
+async def whatsapp_profile_image():
+    """The client's own WhatsApp Business profile picture.
+
+    Twilio's sender profile takes a logo_url rather than an upload, so the image
+    has to live somewhere public. Serving it from the client's own subdomain
+    keeps their brand asset on their host instead of a third party's, and means
+    the URL stays stable if the sender is ever re-registered.
+
+    Composed square (1000x1000) because WhatsApp crops avatars to a CIRCLE: the
+    wordmark is scaled so its diagonal fits inside the diameter, otherwise the
+    corners of the block get clipped.
+    """
+    return _serve_branding_png("whatsapp-profile.png")
+
+
 @app.get("/apple-touch-icon.png")
 async def apple_touch_icon():
     path = BRANDING_DIR / "apple-touch-icon.png"
