@@ -4974,6 +4974,16 @@ async def whatsapp_profile_image():
     return _serve_branding_png("whatsapp-profile.png")
 
 
+@app.get("/whatsapp-profile-badge.png")
+async def whatsapp_profile_badge():
+    """Alternative avatar: the client's own circular badge logo.
+
+    Served alongside the wordmark so the sender's logo_url can be pointed at
+    either without a redeploy.
+    """
+    return _serve_branding_png("whatsapp-profile-badge.png")
+
+
 @app.get("/apple-touch-icon.png")
 async def apple_touch_icon():
     path = BRANDING_DIR / "apple-touch-icon.png"
