@@ -6059,12 +6059,24 @@ def push_lead_to_momence(lead_info: dict, *, source: str, session_id: str) -> di
 
     tag_id = MOMENCE_WA_TAG_ID if source == "whatsapp" else MOMENCE_WEB_TAG_ID
     if member_id and tag_id:
-        try:
-            _momence_request("POST", f"/api/v2/host/members/{member_id}/tags/{tag_id}", token, {})
-            log_event("momence_lead_tagged", session_id=session_id, source=source)
-        except Exception as exc:
-            log_event("momence_tag_error", session_id=session_id, source=source, error=str(exc)[:200])
+        _momence_assign_tag(token, member_id, tag_id, session_id=session_id, source=source)
     return {"ok": True, "member_id": member_id, "already_existed": False}
+
+
+def _momence_assign_tag(token: str, member_id, tag_id, *, session_id: str, source: str) -> bool:
+    """Best-effort: a failed tag never blocks the member creation that
+    matters. The docs show no request body for this route."""
+    try:
+        _momence_request("POST", f"/api/v2/host/members/{member_id}/tags/{tag_id}", token)
+        log_event("momence_lead_tagged", session_id=session_id, source=source, tag_id=str(tag_id))
+        return True
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:300]
+        log_event("momence_tag_error", session_id=session_id, source=source,
+                  error=f"HTTP {exc.code}: {detail}")
+    except Exception as exc:
+        log_event("momence_tag_error", session_id=session_id, source=source, error=str(exc)[:200])
+    return False
 
 
 def push_lead_async(lead_info: dict, *, source: str, session_id: str) -> None:
@@ -6108,6 +6120,14 @@ def momence_test_push(body: dict, _: str = Depends(require_admin)):
     There is no documented member DELETE, so delete_after is a best-effort
     probe of the undocumented route; its outcome is reported, not assumed.
     """
+    if body.get("tag_member_id"):
+        token = _momence_access_token()
+        if not token:
+            return JSONResponse({"ok": False, "reason": "no_token"}, status_code=502)
+        tag_id = str(body.get("tag_id") or MOMENCE_WA_TAG_ID or MOMENCE_WEB_TAG_ID)
+        ok = _momence_assign_tag(token, body["tag_member_id"], tag_id,
+                                 session_id="admin-momence-test", source="admin-test")
+        return JSONResponse({"ok": ok, "member_id": body["tag_member_id"], "tag_id": tag_id})
     lead = {
         "name": str(body.get("name") or "").strip(),
         "email": str(body.get("email") or "").strip(),
