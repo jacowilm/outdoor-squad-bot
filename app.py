@@ -3829,6 +3829,7 @@ async def chat(request: Request):
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
             if has_contact_details(message) and not internal_qa and not human_request_handled:
                 notify_lead_summary_async(lead_info, reason="local_tone_handler_contact_capture")
+            maybe_push_lead_to_momence(lead_info, session_id, source="website", suppressed=internal_qa)
 
         log_event("local_tone_handler_used", session_id=session_id)
         log_bot_reply(session_id, reply, fallback=False)
@@ -3853,6 +3854,7 @@ async def chat(request: Request):
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
             if has_contact_details(message) and not internal_qa and not human_request_handled:
                 notify_lead_summary_async(lead_info, reason="ai_contact_capture")
+            maybe_push_lead_to_momence(lead_info, session_id, source="website", suppressed=internal_qa)
 
         reply_delay_ms = random.randint(MIN_REPLY_DELAY_MS, MAX_REPLY_DELAY_MS)
         log_bot_reply(session_id, reply, fallback=False)
@@ -3885,6 +3887,7 @@ async def chat(request: Request):
             log_event("lead_captured" if has_contact_details(message) else "lead_updated", **lead_info)
             if has_contact_details(message) and not internal_qa and not human_request_handled:
                 notify_lead_summary_async(lead_info, reason="fallback_contact_capture")
+            maybe_push_lead_to_momence(lead_info, session_id, source="website", suppressed=internal_qa)
 
         using_demo_fallback = (
             os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1"
@@ -5333,11 +5336,9 @@ def _wa_capture_lead(message: str, session_id: str, human_request_handled: bool,
     # Owner alert: deduped against the human-request alert that already fired.
     if not human_request_handled:
         notify_lead_summary_async(lead_info, reason=reason)
-    # CRM push: NOT deduped against alerts (different concern), but pushed at
-    # most once per thread so a two-message lead doesn't create two members.
-    if get_wa_setting(f"momence_pushed:{session_id}") != "1":
-        set_wa_setting(f"momence_pushed:{session_id}", "1")
-        push_wa_lead_async(lead_info)
+    # CRM push: NOT deduped against alerts (different concern); the shared
+    # gate handles the email requirement and the once-per-session dedupe.
+    maybe_push_lead_to_momence(lead_info, session_id, source="whatsapp")
 
 
 @app.post("/twilio-wa-webhook")
@@ -5858,6 +5859,7 @@ MOMENCE_V2_CLIENT_ID = os.environ.get("MOMENCE_V2_CLIENT_ID", "").strip()
 MOMENCE_V2_CLIENT_SECRET = os.environ.get("MOMENCE_V2_CLIENT_SECRET", "").strip()
 MOMENCE_SEED_REFRESH_TOKEN = os.environ.get("MOMENCE_V2_REFRESH_TOKEN", "").strip()
 MOMENCE_WA_TAG_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_WA_TAG_ID", "").strip()
+MOMENCE_WEB_TAG_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_WEB_TAG_ID", "").strip()
 
 
 _momence_token_lock = threading.Lock()
@@ -5907,68 +5909,198 @@ def _momence_access_token_locked() -> str | None:
     return data.get("accessToken") or data.get("access_token")
 
 
-def push_wa_lead_to_momence(lead_info: dict) -> None:
-    """Create the captured contact in Momence so it enters Nick's nurture
-    sequences. Best-effort and fully logged: the payload shape is calibrated
-    against the documented create endpoint but MUST be proven with a real
-    test lead before go-live (promised to Nick in writing, 11 Aug)."""
-    if not momence_configured():
-        log_event("momence_push_skipped", session_id=lead_info.get("session_id", "wa-system"),
-                  reason="not configured")
-        return
-    token = _momence_access_token()
-    if not token:
-        return
-    name = str(lead_info.get("name") or "").strip()
-    first, _, last = name.partition(" ")
-    # No fabricated names: a CRM full of "Sarah Lead" / "WhatsApp Lead"
-    # placeholder members is worse than a first-name-only record.
-    payload = {
-        "firstName": first or "WhatsApp enquiry",
-        "lastName": last or None,
-        "email": lead_info.get("email") or None,
-        "phoneNumber": lead_info.get("phone") or None,
-    }
-    payload = {k: v for k, v in payload.items() if v}
+def _momence_phone(raw) -> str | None:
+    """Normalise a typed AU mobile to +61 form for the CRM."""
+    digits = re.sub(r"[^\d+]", "", str(raw or ""))
+    if digits.startswith("04"):
+        return "+61" + digits[1:]
+    if digits.startswith("61"):
+        return "+" + digits
+    if digits.startswith("+"):
+        return digits
+    return digits or None
+
+
+def _momence_request(method: str, path: str, token: str, body: dict | None = None):
     request = urllib.request.Request(
-        f"{MOMENCE_V2_BASE}/api/v2/host/members",
-        data=json.dumps(payload).encode(),
+        f"{MOMENCE_V2_BASE}{path}",
+        data=json.dumps(body).encode() if body is not None else None,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
                  "Accept": "application/json"},
-        method="POST",
+        method=method,
     )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        raw = response.read().decode() or "{}"
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            data = json.loads(response.read().decode() or "{}")
-        member_id = data.get("id") or data.get("memberId")
-        log_event("momence_lead_pushed", session_id=lead_info.get("session_id", "wa-system"),
-                  member_id=str(member_id)[:40])
+        return json.loads(raw)
+    except ValueError:
+        return {}
+
+
+def _momence_find_member_by_email(token: str, email: str):
+    """Search-before-create so the same person chatting on web AND WhatsApp
+    (or across sessions) does not become two CRM members. The documented
+    search is the free-text ?query= on the members list, so the match is
+    confirmed against the returned email field. Fail-open: a search error
+    must not block the create."""
+    try:
+        data = _momence_request(
+            "GET",
+            "/api/v2/host/members?page=0&pageSize=20&query=" + urllib.parse.quote(email),
+            token,
+        )
+    except Exception:
+        return None
+    rows = data if isinstance(data, list) else None
+    if rows is None:
+        for key in ("payload", "data", "members", "items"):
+            if isinstance(data.get(key), list):
+                rows = data[key]
+                break
+    for row in rows or []:
+        if isinstance(row, dict) and str(row.get("email", "")).strip().lower() == email.lower():
+            return row.get("id") or row.get("memberId")
+    return None
+
+
+def push_lead_to_momence(lead_info: dict, *, source: str, session_id: str) -> dict:
+    """Create the captured contact in Momence so it enters Nick's nurture
+    sequences. Momence v2 REQUIRES email + firstName + lastName (verified
+    live 11-Aug: phone alone is rejected), so callers gate on email and this
+    function builds honest fallbacks for the name parts rather than fabricated
+    ones: the email local-part for a missing first name, and a visible
+    "(via whatsapp)"/"(via website)" source marker for a missing surname —
+    which also carries the lead source into the CRM record itself."""
+    if not momence_configured():
+        log_event("momence_push_skipped", session_id=session_id, reason="not configured", source=source)
+        return {"ok": False, "reason": "not configured"}
+    email = str(lead_info.get("email") or "").strip()
+    if not email:
+        log_event("momence_push_skipped", session_id=session_id, reason="no_email", source=source)
+        return {"ok": False, "reason": "no_email"}
+    token = _momence_access_token()
+    if not token:
+        log_event("momence_push_error", session_id=session_id, source=source,
+                  error="no access token (refresh exchange failed)")
+        return {"ok": False, "reason": "no_token"}
+
+    existing = _momence_find_member_by_email(token, email)
+    if existing:
+        log_event("momence_push_skipped", session_id=session_id, reason="already_in_momence",
+                  source=source, member_id=str(existing)[:40])
+        return {"ok": True, "member_id": existing, "already_existed": True}
+
+    name = str(lead_info.get("name") or "").strip()
+    first, _, last = name.partition(" ")
+    if not first:
+        first = email.split("@", 1)[0]
+    if not last.strip():
+        last = f"(via {source})"
+    payload = {"email": email, "firstName": first[:100], "lastName": last.strip()[:100]}
+    phone = _momence_phone(lead_info.get("phone"))
+    if phone:
+        payload["phoneNumber"] = phone
+
+    try:
+        data = _momence_request("POST", "/api/v2/host/members", token, payload)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")[:300]
-        log_event("momence_push_error", session_id=lead_info.get("session_id", "wa-system"),
+        log_event("momence_push_error", session_id=session_id, source=source,
                   error=f"HTTP {exc.code}: {detail}")
-        return
+        return {"ok": False, "reason": f"HTTP {exc.code}", "detail": detail}
     except Exception as exc:
-        log_event("momence_push_error", session_id=lead_info.get("session_id", "wa-system"),
-                  error=str(exc)[:200])
-        return
-    if member_id and MOMENCE_WA_TAG_ID:
-        tag_request = urllib.request.Request(
-            f"{MOMENCE_V2_BASE}/api/v2/host/members/{member_id}/tags/{MOMENCE_WA_TAG_ID}",
-            data=b"{}",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            method="POST",
-        )
+        log_event("momence_push_error", session_id=session_id, source=source, error=str(exc)[:200])
+        return {"ok": False, "reason": str(exc)[:200]}
+
+    member_id = data.get("memberId") or data.get("id")
+    log_event("momence_lead_pushed", session_id=session_id, source=source, member_id=str(member_id)[:40])
+
+    tag_id = MOMENCE_WA_TAG_ID if source == "whatsapp" else MOMENCE_WEB_TAG_ID
+    if member_id and tag_id:
         try:
-            urllib.request.urlopen(tag_request, timeout=15)
-            log_event("momence_lead_tagged", session_id=lead_info.get("session_id", "wa-system"))
+            _momence_request("POST", f"/api/v2/host/members/{member_id}/tags/{tag_id}", token, {})
+            log_event("momence_lead_tagged", session_id=session_id, source=source)
         except Exception as exc:
-            log_event("momence_tag_error", session_id=lead_info.get("session_id", "wa-system"),
-                      error=str(exc)[:200])
+            log_event("momence_tag_error", session_id=session_id, source=source, error=str(exc)[:200])
+    return {"ok": True, "member_id": member_id, "already_existed": False}
 
 
-def push_wa_lead_async(lead_info: dict) -> None:
-    threading.Thread(target=push_wa_lead_to_momence, args=(dict(lead_info),), daemon=True).start()
+def push_lead_async(lead_info: dict, *, source: str, session_id: str) -> None:
+    threading.Thread(
+        target=push_lead_to_momence,
+        args=(dict(lead_info),),
+        kwargs={"source": source, "session_id": session_id},
+        daemon=True,
+    ).start()
+
+
+def maybe_push_lead_to_momence(lead_info, session_id: str, *, source: str,
+                               suppressed: bool = False) -> None:
+    """The ONE gate every capture path goes through. Push at most once per
+    session, and only once an EMAIL exists — Momence cannot create a member
+    without one, so the dedupe flag must NOT be set for a phone-only lead:
+    the flag used to be set on first contact of any kind, which permanently
+    blocked the later message that finally carried the email."""
+    if not lead_info or not str(lead_info.get("email") or "").strip():
+        return
+    if suppressed:
+        # QA traffic proves the wiring without polluting the client's CRM.
+        log_event("momence_push_skipped", session_id=session_id, reason="internal_qa", source=source)
+        return
+    if get_wa_setting(f"momence_pushed:{session_id}") == "1":
+        return
+    set_wa_setting(f"momence_pushed:{session_id}", "1")
+    push_lead_async(lead_info, source=source, session_id=session_id)
+
+
+@app.post("/api/admin/momence/test")
+def momence_test_push(body: dict, _: str = Depends(require_admin)):
+    """Prove the Momence chain end-to-end with the app's own token store.
+
+    The refresh token ROTATES on every exchange, so testing credentials from a
+    terminal invalidates the app's stored token; this endpoint exists so the
+    test runs through the same code and the rotated token is persisted where
+    production reads it. Sync def: FastAPI runs it in the threadpool, so the
+    blocking CRM calls don't stall the event loop.
+
+    There is no documented member DELETE, so delete_after is a best-effort
+    probe of the undocumented route; its outcome is reported, not assumed.
+    """
+    lead = {
+        "name": str(body.get("name") or "").strip(),
+        "email": str(body.get("email") or "").strip(),
+        "phone": str(body.get("phone") or "").strip(),
+    }
+    source = str(body.get("source") or "whatsapp")
+    result = push_lead_to_momence(lead, source=source, session_id="admin-momence-test")
+    if body.get("delete_after") and result.get("member_id") and not result.get("already_existed"):
+        token = _momence_access_token()
+        try:
+            _momence_request("DELETE", f"/api/v2/host/members/{result['member_id']}", token)
+            result["delete_status"] = "deleted"
+        except urllib.error.HTTPError as exc:
+            result["delete_status"] = f"HTTP {exc.code} (not deletable via API; remove in the dashboard)"
+        except Exception as exc:
+            result["delete_status"] = str(exc)[:200]
+    return JSONResponse(result)
+
+
+@app.get("/api/admin/momence/tags")
+def momence_tag_catalogue(_: str = Depends(require_admin)):
+    """Read the tag catalogue through the app's token so the optional
+    OUTDOOR_SQUAD_MOMENCE_WA_TAG_ID / _WEB_TAG_ID env vars can be chosen
+    without touching the rotating token from outside the app."""
+    if not momence_configured():
+        return JSONResponse({"error": "momence not configured"}, status_code=503)
+    token = _momence_access_token()
+    if not token:
+        return JSONResponse({"error": "token exchange failed"}, status_code=502)
+    try:
+        data = _momence_request("GET", "/api/v2/host/tags?page=0&pageSize=100", token)
+    except urllib.error.HTTPError as exc:
+        return JSONResponse({"error": f"HTTP {exc.code}: {exc.read().decode(errors='replace')[:300]}"},
+                            status_code=502)
+    return JSONResponse(data)
 
 
 @app.get("/api/storage-health")
