@@ -88,13 +88,42 @@ def test_no_email_means_no_push_and_no_spent_flag(pushes):
     assert app.get_wa_setting("momence_pushed:wa-1") != "1"
 
 
-def test_email_pushes_once_per_session(pushes):
+def test_email_reaches_the_push_worker(pushes):
     lead = {"email": "jane@example.com", "name": "Jane Doe"}
     app.maybe_push_lead_to_momence(lead, "wa-2", source="whatsapp")
-    app.maybe_push_lead_to_momence(lead, "wa-2", source="whatsapp")
-    assert len(pushes) == 1
-    assert pushes[0]["source"] == "whatsapp"
+    assert len(pushes) == 1 and pushes[0]["source"] == "whatsapp"
+
+
+def test_worker_dedupes_and_marks_the_flag(monkeypatch):
+    calls = []
+    monkeypatch.setattr(app, "push_lead_to_momence",
+                        lambda info, *, source, session_id: (calls.append(1), {"ok": True})[1])
+    lead = {"email": "jane@example.com", "name": "Jane Doe"}
+    app._push_lead_guarded(lead, source="whatsapp", session_id="wa-2")
+    app._push_lead_guarded(lead, source="whatsapp", session_id="wa-2")
+    assert len(calls) == 1
     assert app.get_wa_setting("momence_pushed:wa-2") == "1"
+
+
+def test_failed_push_rolls_the_flag_back_so_the_next_message_retries(monkeypatch):
+    outcomes = [{"ok": False, "reason": "HTTP 500"}, {"ok": True, "member_id": 1}]
+    calls = []
+    monkeypatch.setattr(app, "push_lead_to_momence",
+                        lambda info, *, source, session_id: (calls.append(1), outcomes[len(calls) - 1])[1])
+    lead = {"email": "retry@example.com", "name": "Re Try"}
+    app._push_lead_guarded(lead, source="website", session_id="w-30")
+    assert app.get_wa_setting("momence_pushed:w-30") != "1"      # rolled back
+    app._push_lead_guarded(lead, source="website", session_id="w-30")
+    assert len(calls) == 2
+    assert app.get_wa_setting("momence_pushed:w-30") == "1"
+
+
+def test_untrusted_session_is_skipped_and_visible(pushes, events):
+    app.maybe_push_lead_to_momence({"email": "spam@example.com"}, "s-curl",
+                                   source="website", trusted=False)
+    assert pushes == []
+    skips = [e for e in events if e["event"] == "momence_push_skipped"]
+    assert skips and skips[0]["reason"] == "untrusted_session"
 
 
 def test_phone_first_email_later_still_reaches_the_crm(pushes):
@@ -104,6 +133,20 @@ def test_phone_first_email_later_still_reaches_the_crm(pushes):
         {"phone": "0412345678", "email": "late@example.com"}, "wa-3", source="whatsapp")
     assert len(pushes) == 1
     assert pushes[0]["lead"]["email"] == "late@example.com"
+
+
+def test_stray_plus_is_stripped_from_phones():
+    assert app._momence_phone("0412 345 678 +") == "+61412345678"
+    assert app._momence_phone("+614+123+45678") == "+61412345678"
+
+
+def test_null_json_body_does_not_crash_after_a_successful_create(monkeypatch):
+    class _Resp:
+        def read(self): return b"null"
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(app.urllib.request, "urlopen", lambda *a, **k: _Resp())
+    assert app._momence_request("POST", "/api/v2/host/members", "tok", {}) == {}
 
 
 def test_internal_qa_is_suppressed_but_visible(pushes, events):
@@ -238,3 +281,27 @@ def test_env_default_beats_the_oldest_fallback(momence_api, monkeypatch):
                              source="website", session_id="w-10")
     create = [c for c in momence_api["calls"] if c["method"] == "POST"][0]
     assert create["body"]["homeLocationId"] == 301
+
+
+def test_locations_fetch_failure_is_not_cached(momence_api, monkeypatch):
+    """One transient locations failure must not poison every later create."""
+    state = {"fail": True}
+    real = app._momence_request
+
+    def flaky(method, path, token, body=None):
+        if "/host/locations" in path and state["fail"]:
+            raise RuntimeError("momence hiccup")
+        return real(method, path, token, body)
+
+    monkeypatch.setattr(app, "_momence_request", flaky)
+    app.push_lead_to_momence({"email": "a@example.com", "name": "A B"},
+                             source="website", session_id="w-20")
+    first = [c for c in momence_api["calls"] if c["method"] == "POST"][-1]
+    assert "homeLocationId" not in first["body"]          # degraded, but attempted
+
+    state["fail"] = False
+    momence_api["calls"].clear()
+    app.push_lead_to_momence({"email": "b@example.com", "name": "C D"},
+                             source="website", session_id="w-21")
+    second = [c for c in momence_api["calls"] if c["method"] == "POST"][-1]
+    assert second["body"]["homeLocationId"] == 300        # recovered without a restart
