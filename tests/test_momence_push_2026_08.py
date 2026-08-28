@@ -121,10 +121,16 @@ def test_internal_qa_is_suppressed_but_visible(pushes, events):
 def momence_api(monkeypatch):
     """Capture every CRM call; programmable search result."""
     calls = []
-    state = {"search_rows": [], "create_response": {"memberId": 4242}}
+    state = {
+        "search_rows": [],
+        "create_response": {"memberId": 4242},
+        "locations": [{"id": 300, "name": "Camperdown"}, {"id": 301, "name": "Redfern"}],
+    }
 
     def fake_request(method, path, token, body=None):
         calls.append({"method": method, "path": path, "body": body})
+        if method == "GET" and "/host/locations" in path:
+            return {"payload": state["locations"]}
         if method == "GET" and "/host/members?" in path:
             return {"payload": state["search_rows"]}
         if method == "POST" and path.endswith("/host/members"):
@@ -132,6 +138,8 @@ def momence_api(monkeypatch):
         return {}
 
     monkeypatch.setattr(app, "_momence_request", fake_request)
+    monkeypatch.setattr(app, "_momence_locations_cache", None)
+    monkeypatch.setattr(app, "MOMENCE_DEFAULT_LOCATION_ID", "")
     state["calls"] = calls
     return state
 
@@ -144,7 +152,7 @@ def test_create_payload_has_required_fields_and_phone(momence_api):
     create = [c for c in momence_api["calls"] if c["method"] == "POST"][0]
     assert create["body"] == {
         "email": "jane@example.com", "firstName": "Jane", "lastName": "Doe",
-        "phoneNumber": "+61412345678",
+        "phoneNumber": "+61412345678", "homeLocationId": 300,
     }
 
 
@@ -205,3 +213,28 @@ def test_wa_capture_routes_through_the_shared_gate(monkeypatch):
         lambda lead_info, session_id, *, source, suppressed=False: seen.append((session_id, source)))
     app._wa_capture_lead("my email is wa@example.com", "wa-55", True, "test")
     assert seen == [("wa-55", "whatsapp")]
+
+
+# ── homeLocationId: required by Momence on this host (live 400 without it) ───
+
+def test_location_preference_maps_to_the_matching_location(momence_api):
+    app.push_lead_to_momence(
+        {"email": "r@example.com", "name": "Red Fern", "location_preference": "Redfern mornings"},
+        source="whatsapp", session_id="wa-10")
+    create = [c for c in momence_api["calls"] if c["method"] == "POST"][0]
+    assert create["body"]["homeLocationId"] == 301
+
+
+def test_no_preference_falls_back_to_oldest_location(momence_api):
+    app.push_lead_to_momence({"email": "n@example.com", "name": "No Pref"},
+                             source="website", session_id="w-9")
+    create = [c for c in momence_api["calls"] if c["method"] == "POST"][0]
+    assert create["body"]["homeLocationId"] == 300
+
+
+def test_env_default_beats_the_oldest_fallback(momence_api, monkeypatch):
+    monkeypatch.setattr(app, "MOMENCE_DEFAULT_LOCATION_ID", "301")
+    app.push_lead_to_momence({"email": "d@example.com", "name": "Def Ault"},
+                             source="website", session_id="w-10")
+    create = [c for c in momence_api["calls"] if c["method"] == "POST"][0]
+    assert create["body"]["homeLocationId"] == 301

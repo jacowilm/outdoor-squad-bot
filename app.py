@@ -5860,6 +5860,7 @@ MOMENCE_V2_CLIENT_SECRET = os.environ.get("MOMENCE_V2_CLIENT_SECRET", "").strip(
 MOMENCE_SEED_REFRESH_TOKEN = os.environ.get("MOMENCE_V2_REFRESH_TOKEN", "").strip()
 MOMENCE_WA_TAG_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_WA_TAG_ID", "").strip()
 MOMENCE_WEB_TAG_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_WEB_TAG_ID", "").strip()
+MOMENCE_DEFAULT_LOCATION_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_DEFAULT_LOCATION_ID", "").strip()
 
 
 _momence_token_lock = threading.Lock()
@@ -5963,6 +5964,44 @@ def _momence_find_member_by_email(token: str, email: str):
     return None
 
 
+_momence_locations_cache: list | None = None
+
+
+def _momence_home_location_id(token: str, preference=None):
+    """Momence rejects member creation without homeLocationId on this host
+    (found live 29-Aug: the docs mark it optional, a multi-location host
+    requires it). Map the lead's stated location preference to the matching
+    location; otherwise the env default, otherwise the oldest location."""
+    global _momence_locations_cache
+    if _momence_locations_cache is None:
+        try:
+            data = _momence_request("GET", "/api/v2/member/host/locations?page=0&pageSize=50", token)
+            rows = data if isinstance(data, list) else None
+            if rows is None:
+                for key in ("payload", "data", "items", "locations"):
+                    if isinstance(data.get(key), list):
+                        rows = data[key]
+                        break
+            _momence_locations_cache = sorted(
+                [r for r in rows or [] if isinstance(r, dict) and r.get("id")],
+                key=lambda r: r["id"],
+            )
+        except Exception:
+            _momence_locations_cache = []
+    pref = str(preference or "").strip().lower()
+    if pref:
+        for row in _momence_locations_cache:
+            name = str(row.get("name") or "").strip().lower()
+            if name and (name in pref or pref in name):
+                return row.get("id")
+    if MOMENCE_DEFAULT_LOCATION_ID:
+        try:
+            return int(MOMENCE_DEFAULT_LOCATION_ID)
+        except ValueError:
+            return MOMENCE_DEFAULT_LOCATION_ID
+    return _momence_locations_cache[0].get("id") if _momence_locations_cache else None
+
+
 def push_lead_to_momence(lead_info: dict, *, source: str, session_id: str) -> dict:
     """Create the captured contact in Momence so it enters Nick's nurture
     sequences. Momence v2 REQUIRES email + firstName + lastName (verified
@@ -6000,6 +6039,9 @@ def push_lead_to_momence(lead_info: dict, *, source: str, session_id: str) -> di
     phone = _momence_phone(lead_info.get("phone"))
     if phone:
         payload["phoneNumber"] = phone
+    home_location = _momence_home_location_id(token, lead_info.get("location_preference"))
+    if home_location:
+        payload["homeLocationId"] = home_location
 
     try:
         data = _momence_request("POST", "/api/v2/host/members", token, payload)
