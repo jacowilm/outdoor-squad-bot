@@ -86,5 +86,9 @@
   {
     "date": "2026-08-19",
     "line": "Weekly report now reads its window straight from the database by date, so the earliest baseline week cannot quietly lose events as the data grows"
+  },
+  {
+    "date": "2026-08-31",
+    "line": "Dashboard sign-in now takes your email address as the username (the old short username still works), and a Forgot password link on the sign-in page emails you a reset link so you can set a new password without signing in"
   }
 ]

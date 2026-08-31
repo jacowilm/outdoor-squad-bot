@@ -346,6 +346,13 @@ if not CONVERSATION_LOG_FILE.exists():
     CONVERSATION_LOG_FILE.write_text("")
 
 ADMIN_USERNAME = os.environ.get("OUTDOOR_SQUAD_ADMIN_USERNAME", "outdoorsquad")
+# The owner signs in with his email address; the short username stays valid so
+# the watcher, scripts and monitoring keep their existing Basic credentials.
+ADMIN_EMAIL_USERNAME = os.environ.get("OUTDOOR_SQUAD_ADMIN_EMAIL_USERNAME", HUMAN_EMAIL).strip().lower()
+# Where the "forgot password" reset link is emailed. Always a fixed owner
+# address — the form never accepts a recipient, so a stranger on /forgot-password
+# can at worst send the owner a reset email he didn't ask for.
+PASSWORD_RESET_EMAIL_TO = os.environ.get("OUTDOOR_SQUAD_RESET_EMAIL_TO", HUMAN_EMAIL).strip()
 ADMIN_PASSWORD = os.environ.get("OUTDOOR_SQUAD_ADMIN_PASSWORD")
 WIDGET_SIGNING_KEY = os.environ.get("OUTDOOR_SQUAD_WIDGET_SIGNING_KEY", "")
 WIDGET_SESSION_TTL_SECONDS = max(
@@ -3411,6 +3418,21 @@ def verify_admin_password(password: str) -> bool:
     return bool(ADMIN_PASSWORD) and secrets.compare_digest(password, ADMIN_PASSWORD)
 
 
+def admin_username_matches(candidate: str) -> bool:
+    """The owner's email address and the legacy short username both sign in.
+
+    Both comparisons always run (bitwise |, no short-circuit) for the same
+    timing reason require_admin still runs PBKDF2 on a wrong username: response
+    time must not reveal which usernames exist. The email comparison is
+    case-insensitive because phone keyboards love to capitalise the first letter.
+    """
+    short_ok = secrets.compare_digest(candidate, ADMIN_USERNAME)
+    email_ok = bool(ADMIN_EMAIL_USERNAME) and secrets.compare_digest(
+        candidate.strip().lower(), ADMIN_EMAIL_USERNAME
+    )
+    return bool(short_ok) | bool(email_ok)
+
+
 def store_admin_password(password: str) -> None:
     new_hash = hash_admin_password(password)
     supabase_request(
@@ -3493,6 +3515,73 @@ def _set_session_cookie(response) -> None:
     )
 
 
+# ── Forgot-password reset tokens ────────────────────────────────────────────
+# Stateless HMAC tokens, same shape as the session cookie but with a distinct
+# key prefix so one can never pass as the other. The signing basis is the ACTIVE
+# password material + session epoch, which buys single-use for free: the moment
+# a reset completes (or the owner signs out everywhere) the basis changes and
+# every outstanding token dies. Links are emailed ONLY to the fixed owner
+# address — the form never accepts a recipient.
+PASSWORD_RESET_TTL_SECONDS = 30 * 60
+
+
+def _reset_secret() -> bytes:
+    stored, epoch = _load_admin_settings()
+    basis = stored or ADMIN_PASSWORD or ""
+    return hashlib.sha256(b"rq-admin-pw-reset:" + basis.encode() + b":" + epoch.encode()).digest()
+
+
+def issue_password_reset_token() -> str:
+    expires = int(time.time()) + PASSWORD_RESET_TTL_SECONDS
+    sig = hmac.new(_reset_secret(), f"pw-reset:{expires}".encode(), hashlib.sha256).hexdigest()
+    return f"{expires}.{sig}"
+
+
+def password_reset_token_valid(token: str | None) -> bool:
+    if not token or "." not in token:
+        return False
+    # Same degenerate-secret guard as session_token_valid: with no password
+    # configured anywhere the secret would be a constant. 2026-08-17 audit (I3).
+    if not ADMIN_PASSWORD:
+        try:
+            if get_admin_password_hash() is None:
+                return False
+        except PasswordStateUnavailable:
+            return False
+    expires_raw, _, sig = token.partition(".")
+    try:
+        expires = int(expires_raw)
+    except ValueError:
+        return False
+    if expires < time.time():
+        return False
+    try:
+        secret = _reset_secret()
+    except PasswordStateUnavailable:
+        return False
+    expected = hmac.new(secret, f"pw-reset:{expires}".encode(), hashlib.sha256).hexdigest()
+    return secrets.compare_digest(sig, expected)
+
+
+# The recipient is fixed, so the only abuse of an unauthenticated
+# /forgot-password POST is mailbombing the owner: cap the emails globally, not
+# per IP.
+RESET_EMAILS_MAX_PER_HOUR = 3
+_reset_email_times: collections.deque = collections.deque()
+_reset_email_lock = threading.Lock()
+
+
+def _reset_email_allowed() -> bool:
+    now = time.time()
+    with _reset_email_lock:
+        while _reset_email_times and now - _reset_email_times[0] > 3600:
+            _reset_email_times.popleft()
+        if len(_reset_email_times) >= RESET_EMAILS_MAX_PER_HOUR:
+            return False
+        _reset_email_times.append(now)
+        return True
+
+
 LOGIN_MAX_ATTEMPTS = 8
 LOGIN_WINDOW_SECONDS = 600
 _login_failures: dict[str, collections.deque] = {}
@@ -3553,7 +3642,7 @@ def require_admin(request: Request, credentials: HTTPBasicCredentials | None = D
         # Both checks always run: short-circuiting on the username skipped PBKDF2
         # and made a wrong username measurably faster than a wrong password, which
         # leaks whether a username is valid. 2026-08-17 audit (L1).
-        username_ok = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
+        username_ok = admin_username_matches(credentials.username)
         try:
             password_ok = verify_admin_password(credentials.password)
         except PasswordStateUnavailable:
@@ -6413,7 +6502,7 @@ async def login_submit(request: Request):
     try:
         # Deliberately NOT short-circuited on the username (see require_admin / L1):
         # PBKDF2 runs either way so response time doesn't reveal a valid username.
-        username_ok = bool(ADMIN_PASSWORD) and secrets.compare_digest(username, ADMIN_USERNAME)
+        username_ok = bool(ADMIN_PASSWORD) and admin_username_matches(username)
         password_ok = verify_admin_password(password)
         credentials_ok = username_ok and password_ok
     except PasswordStateUnavailable:
@@ -6449,6 +6538,121 @@ async def logout():
             log_event("admin_session_revoke_failed", session_id="system")
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(ADMIN_SESSION_COOKIE, path="/")
+    return response
+
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page():
+    return HTMLResponse(FORGOT_HTML.replace("__FORGOT_MSG__", ""))
+
+
+@app.post("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_submit(request: Request):
+    """Email a reset link to the fixed owner address. Unauthenticated by design
+    (the whole point is that the owner is locked out), so the recipient is never
+    taken from the request and sends are capped globally."""
+    sent_box = (
+        '<div class="msg">Done. Check the Outdoor Squad inbox for the reset link.'
+        " It works for 30 minutes.</div>"
+    )
+    if not _reset_email_allowed():
+        # Cap reached: pretend success so the cap can't be used as an oracle,
+        # and the owner's inbox can't be flooded either way.
+        return HTMLResponse(FORGOT_HTML.replace("__FORGOT_MSG__", sent_box))
+    try:
+        token = issue_password_reset_token()
+    except PasswordStateUnavailable:
+        return HTMLResponse(
+            FORGOT_HTML.replace(
+                "__FORGOT_MSG__",
+                '<div class="error">Can\'t reach the password store right now. Try again in a moment.</div>',
+            ),
+            status_code=503,
+        )
+    link = f"{PUBLIC_BASE_URL}/reset-password?token={token}"
+    text = (
+        "Someone asked to reset the Robo-Nick dashboard password (probably you).\n\n"
+        f"Set a new one here (link works for 30 minutes):\n{link}\n\n"
+        "If this wasn't you, you can ignore this email. Your password hasn't changed."
+    )
+    html_body = (
+        "<p>Someone asked to reset the Robo-Nick dashboard password (probably you).</p>"
+        f'<p><a href="{link}"><b>Set a new password</b></a> (the link works for <b>30 minutes</b>).</p>'
+        "<p>If this wasn't you, you can ignore this email. Your password hasn't changed.</p>"
+    )
+    try:
+        sent = send_email_resend(
+            "Reset your Robo-Nick dashboard password", text, [PASSWORD_RESET_EMAIL_TO], html=html_body
+        )
+    except Exception:
+        sent = False
+    if not sent:
+        return HTMLResponse(
+            FORGOT_HTML.replace(
+                "__FORGOT_MSG__",
+                '<div class="error">Couldn\'t send the email right now. Try again shortly.</div>',
+            ),
+            status_code=503,
+        )
+    log_event("admin_password_reset_email_sent", session_id="system")
+    return HTMLResponse(FORGOT_HTML.replace("__FORGOT_MSG__", sent_box))
+
+
+@app.get("/reset-password", response_class=HTMLResponse)
+async def reset_password_page(request: Request):
+    token = request.query_params.get("token") or ""
+    if not password_reset_token_valid(token):
+        return HTMLResponse(RESET_DEAD_HTML, status_code=410)
+    return HTMLResponse(
+        RESET_HTML.replace("__RESET_TOKEN__", html.escape(token, quote=True)).replace("__RESET_ERROR__", "")
+    )
+
+
+@app.post("/reset-password", response_class=HTMLResponse)
+async def reset_password_submit(request: Request):
+    ip = client_ip(request)
+    # Failed token guesses share the login throttle: this endpoint changes the
+    # password, so it deserves at least the lockout /login has.
+    if _too_many_login_attempts(ip):
+        return HTMLResponse(RESET_DEAD_HTML, status_code=429)
+    raw_body = await request.body()
+    if len(raw_body) > 8192:
+        _register_failed_login(ip)
+        return HTMLResponse(RESET_DEAD_HTML, status_code=413)
+    form = urllib.parse.parse_qs(raw_body.decode("utf-8", "replace"))
+    token = (form.get("token") or [""])[0]
+    new = (form.get("new_password") or [""])[0]
+    confirm = (form.get("confirm_password") or [""])[0]
+    if not password_reset_token_valid(token):
+        _register_failed_login(ip)
+        return HTMLResponse(RESET_DEAD_HTML, status_code=410)
+
+    def _with_error(message: str, status_code: int = 422) -> HTMLResponse:
+        return HTMLResponse(
+            RESET_HTML.replace("__RESET_TOKEN__", html.escape(token, quote=True)).replace(
+                "__RESET_ERROR__", f'<div class="error">{message}</div>'
+            ),
+            status_code=status_code,
+        )
+
+    if len(new) < 10:
+        return _with_error("New password must be at least 10 characters.")
+    if new != confirm:
+        return _with_error("The two passwords don't match.")
+    if not supabase_enabled():
+        return _with_error("Password storage is unavailable on this deployment.", status_code=503)
+    try:
+        store_admin_password(new)
+        # Epoch rotation kills every outstanding session AND every outstanding
+        # reset token (both secrets derive from the password material + epoch).
+        rotate_session_epoch()
+    except Exception:
+        return _with_error("Could not save the new password. Nothing was changed, try again.", status_code=503)
+    log_event("admin_password_reset_completed", session_id="system")
+    # Sign this browser straight in with the new material and land on the
+    # dashboard; nobody wants to retype the password they chose two seconds ago.
+    response = RedirectResponse("/admin", status_code=303)
+    _set_session_cookie(response)
     return response
 
 
@@ -8047,13 +8251,13 @@ INSTALL_HTML = """
 """
 
 
-LOGIN_HTML = """
+_AUTH_PAGE_TOP = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Sign in — Robo-Nick Console</title>
+  <title>__PAGE_TITLE__</title>
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -8138,22 +8342,25 @@ LOGIN_HTML = """
     }
     .foot { margin-top: 26px; text-align: center; font-size: .74rem; color: rgba(238,241,248,.38); }
     .foot .q { color: rgba(255,208,112,.7); }
+    .links { margin-top: 18px; text-align: center; font-size: .84rem; }
+    .links a { color: rgba(255,208,112,.85); text-decoration: none; }
+    .links a:hover { text-decoration: underline; }
+    .msg {
+      margin-top: 18px;
+      background: rgba(120,200,140,.10);
+      border: 1px solid rgba(120,200,140,.3);
+      color: #bfe8c8;
+      border-radius: 8px;
+      padding: 10px 13px;
+      font-size: .86rem;
+    }
+    .lede { color: rgba(238,241,248,.7); font-size: .9rem; line-height: 1.5; margin: 0 0 4px; }
   </style>
 </head>
 <body>
-  <form class="card" method="post" action="/login" autocomplete="on">
-    <div class="brand">
-      <div class="wordmark">realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg></div>
-    </div>
-    <p class="sub">Robo-Nick console · The Outdoor Squad</p>
-    <label for="username">Username</label>
-    <input id="username" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" required autofocus>
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required>
-    __LOGIN_ERROR__
-    <button type="submit">Sign in</button>
-    <div class="foot">Robo-Nick · a realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg> system</div>
-  </form>
+"""
+
+_AUTH_PAGE_BOTTOM = """
   <script>
     // Registered here too, not just on /install: whichever page the owner lands
     // on first should make the app installable.
@@ -8164,6 +8371,77 @@ LOGIN_HTML = """
 </body>
 </html>
 """
+
+
+def _auth_page(title: str, card_html: str) -> str:
+    return _AUTH_PAGE_TOP.replace("__PAGE_TITLE__", title) + card_html + _AUTH_PAGE_BOTTOM
+
+
+_LOGIN_CARD = """
+  <form class="card" method="post" action="/login" autocomplete="on">
+    <div class="brand">
+      <div class="wordmark">realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg></div>
+    </div>
+    <p class="sub">Robo-Nick console · The Outdoor Squad</p>
+    <label for="username">Email</label>
+    <input id="username" name="username" autocomplete="username" inputmode="email" autocapitalize="none" autocorrect="off" required autofocus>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    __LOGIN_ERROR__
+    <button type="submit">Sign in</button>
+    <div class="links"><a href="/forgot-password">Forgot password?</a></div>
+    <div class="foot">Robo-Nick · a realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg> system</div>
+  </form>
+"""
+
+LOGIN_HTML = _auth_page("Sign in — Robo-Nick Console", _LOGIN_CARD)
+
+_FORGOT_CARD = """
+  <form class="card" method="post" action="/forgot-password">
+    <div class="brand">
+      <div class="wordmark">realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg></div>
+    </div>
+    <p class="sub">Robo-Nick console · The Outdoor Squad</p>
+    <p class="lede">We'll email a password reset link to the Outdoor Squad owner address. The link works for 30 minutes.</p>
+    __FORGOT_MSG__
+    <button type="submit">Email me a reset link</button>
+    <div class="links"><a href="/login">Back to sign in</a></div>
+  </form>
+"""
+
+FORGOT_HTML = _auth_page("Reset password — Robo-Nick Console", _FORGOT_CARD)
+
+_RESET_CARD = """
+  <form class="card" method="post" action="/reset-password" autocomplete="on">
+    <div class="brand">
+      <div class="wordmark">realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg></div>
+    </div>
+    <p class="sub">Robo-Nick console · The Outdoor Squad</p>
+    <p class="lede">Choose a new password. At least 10 characters.</p>
+    <input type="hidden" name="token" value="__RESET_TOKEN__">
+    <label for="new_password">New password</label>
+    <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="10" required autofocus>
+    <label for="confirm_password">Repeat it</label>
+    <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="10" required>
+    __RESET_ERROR__
+    <button type="submit">Set new password</button>
+  </form>
+"""
+
+RESET_HTML = _auth_page("Choose a new password — Robo-Nick Console", _RESET_CARD)
+
+_RESET_DEAD_CARD = """
+  <div class="card">
+    <div class="brand">
+      <div class="wordmark">realti<svg class="mark-q" viewBox="8 8 50 48" fill="none" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" aria-hidden="true"><rect x="12.5" y="11" width="39" height="34" rx="12"/><circle cx="32" cy="28" r="3.5" fill="currentColor" stroke="none"/><line x1="41.5" y1="39" x2="52.5" y2="51"/></svg></div>
+    </div>
+    <p class="sub">Robo-Nick console · The Outdoor Squad</p>
+    <p class="lede">This reset link has expired or was already used.</p>
+    <div class="links"><a href="/forgot-password">Request a new one</a></div>
+  </div>
+"""
+
+RESET_DEAD_HTML = _auth_page("Link expired — Robo-Nick Console", _RESET_DEAD_CARD)
 
 
 ADMIN_HTML = """

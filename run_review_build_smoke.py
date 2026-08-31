@@ -95,8 +95,8 @@ def main() -> int:
             if not health.get("handoff_ready"):
                 failures.append("Handoff mode is not ready for Nicholas-owned ownership")
         else:
-            if not health.get("review_hosted_by_ai_sprints"):
-                failures.append("Review mode is not marked as AI Sprints-hosted")
+            if not health.get("review_hosted_by_realtiq"):
+                failures.append("Review mode is not marked as Realtiq-hosted")
             if not health.get("review_ready"):
                 failures.append("Review mode is not ready to send to Nicholas/Lyn")
         if health.get("source_chunks", 0) < 1:
