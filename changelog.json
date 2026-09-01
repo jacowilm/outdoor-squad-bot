@@ -90,5 +90,9 @@
   {
     "date": "2026-08-31",
     "line": "Dashboard sign-in now takes your email address as the username (the old short username still works), and a Forgot password link on the sign-in page emails you a reset link so you can set a new password without signing in"
+  },
+  {
+    "date": "2026-09-01",
+    "line": "Weekly report: the ship log and WhatsApp sections now appear every week, saying \"Nothing shipped this week\" or showing zeros instead of disappearing"
   }
 ]

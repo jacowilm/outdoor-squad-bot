@@ -4550,18 +4550,20 @@ def format_report_text(stats: dict) -> str:
                 f"- {week['week_start']} to {week['week_end']}: {week['real_visitors']} real visitor(s){suffix}"
             )
 
-    if any(stats.get(k) for k in ("wa_conversations", "wa_messages", "wa_leads", "wa_manual_replies")):
-        lines += [
-            "",
-            "WHATSAPP (new channel)",
-            f"- Conversations: {stats.get('wa_conversations', 0)}",
-            f"- Messages received: {stats.get('wa_messages', 0)}",
-            f"- Leads captured: {stats.get('wa_leads', 0)}",
-            f"- Manual replies you sent: {stats.get('wa_manual_replies', 0)}",
-        ]
+    # WhatsApp and ship-log sections are permanent fixtures: a missing section
+    # and a zero week are different facts, and only the report can say which
+    # (Nicholas, 2026-09-01).
+    lines += [
+        "",
+        "WHATSAPP (new channel)",
+        f"- Conversations: {stats.get('wa_conversations', 0)}",
+        f"- Messages received: {stats.get('wa_messages', 0)}",
+        f"- Leads captured: {stats.get('wa_leads', 0)}",
+        f"- Manual replies you sent: {stats.get('wa_manual_replies', 0)}",
+    ]
     shipped = stats.get("shipped_lines") or []
-    if shipped:
-        lines += ["", "WENT LIVE THIS WEEK"] + [f"- {line}" for line in shipped]
+    lines += ["", "WENT LIVE THIS WEEK"]
+    lines += [f"- {line}" for line in shipped] if shipped else ["- Nothing shipped this week."]
     variants = stats.get("teaser_variants") or {}
     if len(variants) >= 2:
         variant_labels = {"control": "Original greeting", "nick": "Nick's greeting line"}
@@ -4712,12 +4714,13 @@ def format_report_html(stats: dict) -> str:
         "The strongest booking signal visible from the chat side — cross-check names against Momence.",
     ))
 
-    if any(stats.get(k) for k in ("wa_conversations", "wa_messages", "wa_leads", "wa_manual_replies")):
-        inner.append(_email_section("WhatsApp (new channel)"))
-        inner.append(_email_row("Conversations", str(stats.get("wa_conversations", 0))))
-        inner.append(_email_row("Messages received", str(stats.get("wa_messages", 0))))
-        inner.append(_email_row("Leads captured", str(stats.get("wa_leads", 0))))
-        inner.append(_email_row("Manual replies you sent", str(stats.get("wa_manual_replies", 0))))
+    # Permanent fixture, zeros included: a missing section and a zero week are
+    # different facts (Nicholas, 2026-09-01).
+    inner.append(_email_section("WhatsApp (new channel)"))
+    inner.append(_email_row("Conversations", str(stats.get("wa_conversations", 0))))
+    inner.append(_email_row("Messages received", str(stats.get("wa_messages", 0))))
+    inner.append(_email_row("Leads captured", str(stats.get("wa_leads", 0))))
+    inner.append(_email_row("Manual replies you sent", str(stats.get("wa_manual_replies", 0))))
 
     inner.append(_email_section("Human follow-up"))
     inner.append(_email_row("Bot-generated follow-up suggestions", str(stats.get("handoff_suggestions", 0))))
@@ -4739,13 +4742,15 @@ def format_report_html(stats: dict) -> str:
             inner.append(_email_row(f"{e(week['week_start'])} &rarr; {e(week['week_end'])}", f"{week['real_visitors']} visitor(s){note}"))
 
     shipped = stats.get("shipped_lines") or []
+    inner.append(_email_section("Went live this week"))
     if shipped:
-        inner.append(_email_section("Went live this week"))
         items = "".join(
             f'<li style="padding:3px 0;color:#334155;font-size:13.5px;line-height:1.45;">{e(line)}</li>'
             for line in shipped
         )
         inner.append(f'<ul style="margin:6px 0 0;padding-left:20px;">{items}</ul>')
+    else:
+        inner.append('<div style="padding:3px 0;color:#334155;font-size:13.5px;line-height:1.45;">Nothing shipped this week.</div>')
 
     variants = stats.get("teaser_variants") or {}
     if len(variants) >= 2:

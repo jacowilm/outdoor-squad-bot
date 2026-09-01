@@ -205,7 +205,12 @@ def test_missing_changelog_is_safe():
         _seed_funnel()
         stats = app.build_report_stats(days=7)
         assert stats["shipped_lines"] == []
-        assert "WENT LIVE THIS WEEK" not in app.format_report_text(stats)
+        text = app.format_report_text(stats)
+        assert "WENT LIVE THIS WEEK" in text
+        assert "Nothing shipped this week." in text
+        # WhatsApp is a permanent fixture too, zeros included.
+        assert "WHATSAPP (new channel)" in text
+        assert "- Conversations: 0" in text
     finally:
         app.CHANGELOG_FILE = old
 
