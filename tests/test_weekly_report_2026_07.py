@@ -168,8 +168,10 @@ def test_report_restates_four_non_overlapping_weeks_with_one_locked_visitor_defi
     assert [week["real_visitors"] for week in baseline] == [1, 1, 1, 1]
     assert all(week["definition"] == app.REAL_VISITOR_DEFINITION for week in baseline)
     text = app.format_report_text(stats)
-    assert "FOUR-WEEK TRAFFIC BASELINE" in text
-    assert "Definition locked:" in text
+    # Retired at Nicholas's request (2 Sep 2026): traffic lives in Squarespace/GA4.
+    assert "FOUR-WEEK TRAFFIC BASELINE" not in text
+    assert "real visitor" not in text.lower()
+    assert "Definition locked:" not in text
 
 
 def test_no_greeting_section_without_both_variants():
@@ -246,7 +248,7 @@ def test_report_stats_window_and_widget_filtering():
 def test_report_rates():
     _seed_funnel()
     stats = app.build_report_stats(days=7)
-    assert stats["engagement_rate"] == 1.0  # 3 conversations / 3 real visitors
+    assert stats["engagement_rate"] == 1.0  # 3 conversations / 3 greeting impressions
     assert stats["conversation_to_lead_rate"] == 0.667  # 2 / 3
     assert stats["handoff_rate"] == 0.333  # 1 / 3
 
@@ -311,7 +313,7 @@ def test_report_sms_digest_is_short_and_complete():
     stats = app.build_report_stats(days=7)
     sms = app.format_report_sms(stats)
     assert len(sms) <= 320
-    for fragment in ["3 real visitors", "3 chats", "2 leads", "1 trial clicks", "1 human requests", "1 alerts sent"]:
+    for fragment in ["3 greetings shown", "3 chats", "2 leads", "1 trial clicks", "1 human requests", "1 alerts sent"]:
         assert fragment in sms
 
 
@@ -509,7 +511,9 @@ def test_crawler_sessions_excluded_from_report_but_kept_in_raw_page_loads():
     assert stats["widget_impressions"] == 1
     assert stats["raw_page_loads"] == 6
     text = app.format_report_text(stats)
-    assert "Real visitors who saw the chat bubble: 1" in text
-    assert "Raw page loads including them: 6" in text
+    assert "Greeting impressions (chat bubble shown to a person): 1" in text
+    # Raw page loads no longer rendered (traffic retired from the report,
+    # 2 Sep 2026) but the stat itself still distinguishes crawlers from people.
+    assert stats.get("raw_page_loads") == 6
     # counting-change caveat so a jump around 24 Jul isn't read as growth
     assert "better counting, not" in text

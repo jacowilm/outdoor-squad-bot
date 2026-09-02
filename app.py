@@ -4498,13 +4498,13 @@ def format_report_text(stats: dict) -> str:
         f"Robo-Nick stats — last {days} days",
         "",
         "THE FUNNEL",
-        f"- Real visitors who saw the chat bubble: {stats['widget_impressions']}",
-        "  (Search-engine and AI crawlers are filtered out — they used to be",
-        f"   counted. Raw page loads including them: {stats.get('raw_page_loads', 0)}.)",
+        f"- Greeting impressions (chat bubble shown to a person): {stats['widget_impressions']}",
+        "  (Widget-side count; search-engine and AI crawlers filtered out.",
+        "   Site traffic lives in Squarespace/GA4, not in this report.)",
         f"- Chats opened: {stats['widget_opened_sessions']}",
         f"- Conversations started: {stats['conversations_started']}"
         + (
-            f"  ({_pct(stats['engagement_rate'])} of real visitors)"
+            f"  ({_pct(stats['engagement_rate'])} of greeting impressions)"
             if stats["widget_impressions"]
             else ""
         ),
@@ -4537,18 +4537,10 @@ def format_report_text(stats: dict) -> str:
         for version, visitors in sorted(versions.items()):
             lines.append(f"- {version}: {visitors} visitor(s)")
 
-    baseline = stats.get("traffic_baseline_4w") or []
-    if baseline:
-        lines += [
-            "",
-            "FOUR-WEEK TRAFFIC BASELINE",
-            f"- Definition locked: {stats.get('visitor_definition', REAL_VISITOR_DEFINITION)}",
-        ]
-        for week in baseline:
-            suffix = "" if week.get("comparable", True) else "  (pre-24 Jul counting, undercounts real visitors; not comparable)"
-            lines.append(
-                f"- {week['week_start']} to {week['week_end']}: {week['real_visitors']} real visitor(s){suffix}"
-            )
+    # Site traffic deliberately absent: the widget counts widget things, and the
+    # "real visitors" trend was retired at Nicholas's request (2 Sep 2026) —
+    # Squarespace/GA4 own traffic, one number one source. The internal
+    # traffic_baseline_4w stat still exists for diagnostics, just unrendered.
 
     # WhatsApp and ship-log sections are permanent fixtures: a missing section
     # and a zero week are different facts, and only the report can say which
@@ -4696,12 +4688,12 @@ def format_report_html(stats: dict) -> str:
 
     inner.append(_email_section("The funnel"))
     inner.append(_email_row(
-        "Real visitors who saw the chat bubble",
+        "Greeting impressions (chat bubble shown to a person)",
         str(stats["widget_impressions"]),
-        f"Crawlers filtered out. Raw page loads including them: {stats.get('raw_page_loads', 0)}.",
+        "Widget-side count, crawlers filtered out. Site traffic lives in Squarespace/GA4.",
     ))
     inner.append(_email_row("Chats opened", str(stats["widget_opened_sessions"])))
-    conv_note = f"{_pct(stats['engagement_rate'])} of real visitors" if stats["widget_impressions"] else ""
+    conv_note = f"{_pct(stats['engagement_rate'])} of greeting impressions" if stats["widget_impressions"] else ""
     inner.append(_email_row("Conversations started", str(stats["conversations_started"]), conv_note))
     lead_note = f"{_pct(stats['conversation_to_lead_rate'])} of conversations" if stats["conversations_started"] else ""
     inner.append(_email_row("Leads captured (contact details handed over)", str(stats["contact_leads"]), lead_note))
@@ -4734,12 +4726,8 @@ def format_report_html(stats: dict) -> str:
         for version, visitors in sorted(versions.items()):
             inner.append(_email_row(e(version), f"{visitors} visitor(s)"))
 
-    baseline = stats.get("traffic_baseline_4w") or []
-    if baseline:
-        inner.append(_email_section("Four-week traffic baseline"))
-        for week in baseline:
-            note = "" if week.get("comparable", True) else "<br><span style=\"color:#8a8f98;font-weight:normal;font-size:12px;\">(pre-24 Jul counting, not comparable)</span>"
-            inner.append(_email_row(f"{e(week['week_start'])} &rarr; {e(week['week_end'])}", f"{week['real_visitors']} visitor(s){note}"))
+    # Traffic baseline section retired at Nicholas's request (2 Sep 2026):
+    # Squarespace/GA4 own site traffic; the widget reports widget things.
 
     shipped = stats.get("shipped_lines") or []
     inner.append(_email_section("Went live this week"))
@@ -4844,7 +4832,7 @@ def format_lead_summary_html(lead_info: dict) -> str:
 
 def format_report_sms(stats: dict) -> str:
     return (
-        f"Robo-Nick weekly: {stats['widget_impressions']} real visitors, "
+        f"Robo-Nick weekly: {stats['widget_impressions']} greetings shown, "
         f"{stats['conversations_started']} chats, {stats['contact_leads']} leads "
         f"({_pct(stats['conversation_to_lead_rate'])} of chats), "
         f"{stats['trial_link_clicks']} trial clicks, "
