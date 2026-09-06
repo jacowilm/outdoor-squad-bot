@@ -4316,6 +4316,39 @@ def read_changelog_entries(since_iso: str) -> list[str]:
     ]
 
 
+# Owner-confirmed QA/test sessions stripped from every report metric. Nicholas
+# tested the live widget from three devices around 31 Aug–1 Sep 2026 and asked
+# (1 Sep email) for those sessions to be excluded from the Monday numbers; the
+# list lives in the settings table so future test sessions can be added without
+# a deploy. Missing row or unreadable value = empty set (numbers stay inclusive
+# rather than the report crashing).
+_REPORT_EXCLUDED_SETTING_KEY = "report::excluded_sessions"
+_report_excluded_cache: dict[str, tuple[float, frozenset]] = {}
+_REPORT_EXCLUDED_CACHE_TTL = 60.0
+
+
+def report_excluded_session_ids() -> frozenset:
+    hit = _report_excluded_cache.get("ids")
+    if hit and time.time() - hit[0] < _REPORT_EXCLUDED_CACHE_TTL:
+        return hit[1]
+    ids: frozenset = frozenset()
+    if supabase_enabled():
+        try:
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["settings"],
+                params={"select": "value", "key": f"eq.{_REPORT_EXCLUDED_SETTING_KEY}", "limit": "1"},
+            )
+            if rows:
+                parsed = json.loads(rows[0].get("value") or "[]")
+                if isinstance(parsed, list):
+                    ids = frozenset(str(sid) for sid in parsed if sid)
+        except Exception:
+            pass
+    _report_excluded_cache["ids"] = (time.time(), ids)
+    return ids
+
+
 def _report_events_between(start: datetime, end: datetime) -> list[dict]:
     """Return report-eligible events in [start, end), using one locked source filter."""
     # `since=` pushes the window into the Supabase query itself: read_events()
@@ -4323,11 +4356,13 @@ def _report_events_between(start: datetime, end: datetime) -> list[dict]:
     # the table crossed that size on 2026-08-19 — without the filter the
     # baseline's earliest week silently loses events as the table grows (the
     # same failure mode as the 2026-07-27 truncation incident).
+    excluded = report_excluded_session_ids()
     return [
         event
         for event in read_events(since=start.isoformat())
         if start.isoformat() <= _event_ts(event) < end.isoformat()
         and str(event.get("session_id") or "").startswith("widget-")
+        and str(event.get("session_id") or "") not in excluded
     ]
 
 
@@ -4422,6 +4457,7 @@ def build_report_stats(days: int = 7) -> dict:
         if "conversation_started" in session_event_types:
             bucket["conversations"] += 1
 
+    excluded_sessions = report_excluded_session_ids()
     lead_lines = []
     for lead in read_leads():
         ts = _event_ts(lead)
@@ -4429,6 +4465,7 @@ def build_report_stats(days: int = 7) -> dict:
             ts >= cutoff
             and (lead.get("route") or "") != "trial-link-clicked"
             and str(lead.get("session_id") or "").startswith("widget-")
+            and str(lead.get("session_id") or "") not in excluded_sessions
         ):
             label = lead.get("name") or "unknown name"
             detail = lead.get("route") or "enquiry"
@@ -4440,6 +4477,7 @@ def build_report_stats(days: int = 7) -> dict:
         e for e in read_events()
         if _event_ts(e) >= cutoff and str(e.get("session_id") or "").startswith("wa-")
         and e.get("session_id") != "wa-system"
+        and str(e.get("session_id") or "") not in excluded_sessions
     ]
     wa_conversations = {e.get("session_id") for e in wa_events if e.get("event_type") == "conversation_started"}
     wa_messages = sum(1 for e in wa_events if e.get("event_type") == "message_received")

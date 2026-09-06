@@ -517,3 +517,30 @@ def test_crawler_sessions_excluded_from_report_but_kept_in_raw_page_loads():
     assert stats.get("raw_page_loads") == 6
     # counting-change caveat so a jump around 24 Jul isn't read as growth
     assert "better counting, not" in text
+
+
+def test_owner_test_sessions_are_stripped_from_every_report_metric():
+    """Nicholas's 31 Aug–1 Sep QA sessions (1 Sep email): session ids listed in
+    the report::excluded_sessions setting vanish from visitors, opens,
+    conversations, outcomes and lead lines — window and crawler logic unchanged."""
+    _seed_funnel()
+    app._report_excluded_cache["ids"] = (__import__("time").time(), frozenset({"widget-a3"}))
+    try:
+        stats = app.build_report_stats(days=7)
+        assert stats["widget_impressions"] == 2  # widget-a3 no longer a visitor
+        assert stats["raw_page_loads"] == 3  # its page load goes too
+        assert stats["widget_opened_sessions"] == 2
+        assert stats["conversations_started"] == 2
+        assert stats["contact_leads"] == 1  # widget-a3's handoff lead stripped
+        assert stats["human_requests"] == 0
+        assert stats["handoff_alerts_sent"] == 0
+        assert all("human handoff" not in line for line in stats["lead_lines"])
+    finally:
+        app._report_excluded_cache.clear()
+
+
+def test_missing_exclusion_setting_leaves_numbers_inclusive():
+    _seed_funnel()
+    app._report_excluded_cache.clear()  # Supabase disabled in tests -> empty set
+    stats = app.build_report_stats(days=7)
+    assert stats["conversations_started"] == 3
