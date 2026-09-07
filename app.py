@@ -286,6 +286,9 @@ WA_WEBHOOK_VERIFY_TOKEN = os.environ.get("OUTDOOR_SQUAD_WA_VERIFY_TOKEN", "").st
 # rewrite them) — validate against the explicitly configured webhook URL, or
 # failing that against the two hosts this service is actually reachable on.
 TWILIO_WA_WEBHOOK_URL = os.environ.get("OUTDOOR_SQUAD_TWILIO_WA_WEBHOOK_URL", "").strip()
+# Where the business number forwards voice calls. Defaults to Nick's mobile;
+# overridden in Render while the forwarding is being test-called.
+VOICE_FORWARD_TO = os.environ.get("OUTDOOR_SQUAD_VOICE_FORWARD_TO", "+61402439361").strip()
 TWILIO_WA_FALLBACK_HOSTS = (
     "https://outdoorsquad.realtiq.ai",
     "https://outdoor-squad-bot.onrender.com",
@@ -5462,6 +5465,67 @@ def _wa_capture_lead(message: str, session_id: str, human_request_handled: bool,
     # CRM push: NOT deduped against alerts (different concern); the shared
     # gate handles the email requirement and the once-per-session dedupe.
     maybe_push_lead_to_momence(lead_info, session_id, source="whatsapp")
+
+
+@app.post("/twilio-voice-webhook")
+async def twilio_voice_webhook(request: Request):
+    """Voice for the business number: forward to a human, speak a fallback.
+
+    Exists so the GBP-listed number can become the Twilio number without
+    killing the Call button: the caller's own number passes through as the
+    caller ID (Twilio's <Dial> default), so answering feels unchanged. The
+    no-answer path deliberately does NOT text the caller back — missed-call
+    text-back is a separately quoted product, not a freebie side effect.
+    """
+    if not TWILIO_AUTH_TOKEN:
+        return Response(status_code=503)
+    form = dict(await request.form())
+    path_qs = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    if not twilio_signature_valid(path_qs, form, request.headers.get("x-twilio-signature", "")):
+        log_event("voice_twilio_bad_signature", session_id="voice-system")
+        return Response(status_code=403)
+    log_event("voice_call_inbound", session_id="voice-system",
+              caller=str(form.get("From", ""))[:24])
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<Response><Dial timeout="25">{_html_escape(VOICE_FORWARD_TO)}</Dial>'
+        '<Say>Sorry, no one could pick up right now. '
+        'Send us a message on WhatsApp or try again a little later.</Say>'
+        "</Response>"
+    )
+    return Response(content=twiml, media_type="application/xml")
+
+
+@app.post("/twilio-sms-webhook")
+async def twilio_sms_webhook(request: Request):
+    """Inbound SMS to the business number: record it and email the owner.
+
+    No auto-reply SMS: outbound texts cost money per segment and text-back is
+    a separately quoted product. The email alert reuses the same owner-alert
+    channel the lead notifications already use.
+    """
+    if not TWILIO_AUTH_TOKEN:
+        return Response(status_code=503)
+    form = dict(await request.form())
+    path_qs = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    if not twilio_signature_valid(path_qs, form, request.headers.get("x-twilio-signature", "")):
+        log_event("sms_twilio_bad_signature", session_id="sms-system")
+        return Response(status_code=403)
+    sender = str(form.get("From", ""))
+    body = str(form.get("Body", ""))[:800]
+    log_event("sms_inbound", session_id="sms-system", sender=sender[:24], length=len(body))
+    threading.Thread(
+        target=send_email_resend,
+        args=(
+            f"Text message to the business number from {sender}",
+            f"{sender} texted the Outdoor Squad number:\n\n{body}\n\n"
+            "Reply from your own phone if it needs an answer — this number does not auto-reply.",
+            [LEAD_SUMMARY_EMAIL_TO] if LEAD_SUMMARY_EMAIL_TO else [],
+        ),
+        daemon=True,
+    ).start()
+    return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+                    media_type="application/xml")
 
 
 @app.post("/twilio-wa-webhook")
