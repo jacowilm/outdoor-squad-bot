@@ -442,6 +442,18 @@ def sanitize_session_id(raw) -> str:
     return sid or "default"
 
 
+RESERVED_SESSION_PREFIXES = ("wa-",)
+
+
+def is_reserved_channel_session_id(session_id: str) -> bool:
+    """Session ids that belong to a signature-authenticated channel. Public
+    endpoints (/api/chat, /api/event) must never act on one of these: the id is
+    the customer's phone number, so it is guessable, and the thread behind it is
+    their private WhatsApp conversation."""
+    sid = str(session_id or "").lower()
+    return any(sid.startswith(prefix) for prefix in RESERVED_SESSION_PREFIXES)
+
+
 def mint_widget_session() -> tuple[str, str]:
     """Mint a server-authenticated public widget session."""
     if not WIDGET_SIGNING_KEY:
@@ -3924,6 +3936,15 @@ async def chat(request: Request):
         session_id = "s-" + secrets.token_urlsafe(18)
     else:
         session_id = sanitize_session_id(raw_session_id)
+    if is_reserved_channel_session_id(session_id):
+        # A "wa-<mobile>" id is minted ONLY by the signed Twilio webhook. Honouring
+        # it here let anyone who guessed a customer's mobile read that customer's
+        # WhatsApp thread back through the model and append turns to it (11 Sep
+        # 2026 website-vs-WhatsApp diff, finding #1). Never share history across
+        # the trust boundary: give the caller a fresh anonymous session instead.
+        log_event("session_id_rejected_reserved", session_id="wa-system",
+                  requested_prefix=session_id[:3])
+        session_id = "s-" + secrets.token_urlsafe(18)
 
     if not message:
         return JSONResponse({"error": "No message provided"}, status_code=400)
@@ -4212,6 +4233,12 @@ async def track_event(request: Request):
         return JSONResponse({"error": "Invalid request body"}, status_code=400)
     raw_event_type = str(body.get("event_type", "widget_event"))[:80]
     session_id = sanitize_session_id(body.get("session_id", "unknown"))
+    if is_reserved_channel_session_id(session_id):
+        # Same boundary as /api/chat: a public caller cannot attach analytics or
+        # a trial-click lead to a WhatsApp customer's thread.
+        log_event("session_id_rejected_reserved", session_id="wa-system",
+                  requested_prefix=session_id[:3], endpoint="event")
+        return JSONResponse({"ok": True})
     metadata = sanitize_event_metadata(body.get("metadata"))
     url = str(metadata.get("url", ""))[:240]
     is_trial_click = raw_event_type == "trial_link_clicked" or (
@@ -5730,6 +5757,13 @@ async def twilio_wa_webhook(request: Request):
 
     sender = str(form.get("From", ""))
     if not sender.startswith("whatsapp:"):
+        return _twiml_message(None)
+    recipient = str(form.get("To", ""))
+    if TWILIO_WA_FROM and re.sub(r"\D", "", recipient) != re.sub(r"\D", "", TWILIO_WA_FROM):
+        # Signed by Twilio, but addressed to some other number on the same
+        # account. Robo-Nick answers for exactly one sender.
+        log_event("wa_twilio_wrong_recipient", session_id="wa-system",
+                  to=re.sub(r"\D", "", recipient)[-6:])
         return _twiml_message(None)
     session_id = sanitize_session_id("wa-" + re.sub(r"\D", "", sender))
 
