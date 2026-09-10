@@ -4584,10 +4584,10 @@ def wa_channel_status_line(stats: dict) -> str:
     setting, flipped when the public buttons/links actually point at the
     number — bot state alone can't know that."""
     if not stats.get("wa_channel_enabled", True):
-        return "OFF (kill switch) — enquiries still logged and alerted, bot replies paused"
+        return "OFF (kill switch): enquiries still logged and alerted, bot replies paused"
     if not stats.get("wa_entry_points_live", False):
-        return "LIVE but not yet publicly reachable — the number answers, but no public buttons or links point to it yet, so zero conversations means zero entry points, not zero interest"
-    return "LIVE and publicly reachable — entry points are pointing at the number"
+        return "LIVE but not yet publicly reachable: the number answers, but no public buttons or links point to it yet, so zero conversations means zero entry points, not zero interest"
+    return "LIVE and publicly reachable: entry points are pointing at the number"
 
 
 def format_report_text(stats: dict) -> str:

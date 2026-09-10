@@ -101,7 +101,7 @@
   },
   {
     "date": "2026-09-10",
-    "line": "WhatsApp: replies no longer race Twilio's 15-second webhook limit — the bot acknowledges instantly and delivers the answer as its own message, so a first message can never be silently dropped again"
+    "line": "WhatsApp: replies no longer race Twilio's 15-second webhook limit. The bot acknowledges instantly and delivers the answer as its own message, so a first message can never be silently dropped again"
   },
   {
     "date": "2026-09-10",
