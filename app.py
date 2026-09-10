@@ -1609,13 +1609,23 @@ def non_repeating_followup(message: str, session_id: str) -> str:
     # falling to the generic "drop your mobile" terminal (2026-07-02 safety fix).
     if mentions_eating_disorder(clean):
         return eating_disorder_handoff_reply()
+    # Handing over contact details again (or adding an email to a phone given
+    # earlier) is never repetition worth dodging: the person must hear that it
+    # landed. The standard acknowledgement matched the previous turn word for
+    # word, the repeat-detector rerouted here, and a visitor who had just typed
+    # their name and email was told "that one's outside what Robo-Nick can
+    # reliably do" and asked for a first name and mobile (sign-off dry run,
+    # 2026-09-10). Worse than a repeat, so confirm the details in a fresh line.
+    if has_contact_details(message):
+        return contact_capture_confirmation(message, session_id)
     if is_location_choice_reply(clean, session_id):
         location = "Redfern" if "redfern" in clean else "Camperdown"
         return location_choice_followup(location, session_id)
     if is_location_question(clean):
-        # A parking/transport DETAIL question gets the real logistics answer, not
-        # a "which suburb?" pivot — even when rerouted here by the repeat detector.
-        if asks_location_detail(clean):
+        # A parking/transport DETAIL question, or an explicit "where is <venue>",
+        # gets the real logistics answer, not a "which suburb?" pivot, even when
+        # rerouted here by the repeat detector.
+        if asks_location_detail(clean) or asks_venue_address(clean):
             return location_detail_reply(clean)
         if "redfern" in clean:
             return (
@@ -3143,6 +3153,10 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
     if is_location_choice_reply(clean, session_id):
         location = "Redfern" if "redfern" in clean else "Camperdown"
         return location_choice_followup(location, session_id)
+    # An explicit "where is the Camperdown session?" is a request for the
+    # address, even right after a turn that already mentioned that venue.
+    if asks_venue_address(clean):
+        return location_detail_reply(clean)
     # A parking/transport DETAIL question ("is there parking at Camperdown?")
     # must NOT be read as the visitor picking a location — let it fall through to
     # the full per-location answer (which includes parking/transport facts).
@@ -3811,6 +3825,9 @@ def notify_human_request_if_needed(
         **contact_details_from_history(session_id),
         **build_lead_summary(session_id, message),
     }
+    name = extract_contact_name(message, session_id=session_id)
+    if name:
+        lead_info["name"] = name
     lead_info["route"] = "human handoff"
     lead_info["alert_type"] = "human_request"
     notify_lead_summary_async(lead_info, reason="explicit_human_request")
@@ -5880,15 +5897,21 @@ def _set_wa_setting_full(key: str, value: str) -> tuple[bool, bool]:
             db_ok = True
         except Exception:
             pass
-    data = _wa_state_file_load()
-    data[key] = {"value": value, "updated_at": stamp}
-    file_ok = _json_dict_save(WA_STATE_FILE, data)
+    # The file is a read-modify-write of the whole dict, and two worker
+    # threads write it at once on every captured lead (the Momence push flag
+    # and the owner-alert dedupe marker). Without the lock one write clobbered
+    # the other and a lead was pushed to Momence twice (dry run, 2026-09-10).
+    with _wa_state_file_lock:
+        data = _wa_state_file_load()
+        data[key] = {"value": value, "updated_at": stamp}
+        file_ok = _json_dict_save(WA_STATE_FILE, data)
     _wa_setting_cache.pop(key, None)
     return (db_ok or file_ok), db_ok
 
 
 _wa_setting_cache: dict[str, tuple[float, str]] = {}
 _WA_SETTING_CACHE_TTL = 20.0
+_wa_state_file_lock = threading.Lock()
 
 
 def _cached_wa_setting(key: str, default: str = "") -> str:
@@ -7308,6 +7331,25 @@ def asks_location_detail(text: str) -> bool:
     return bool(LOCATION_DETAIL_RE.search(text))
 
 
+# An explicit "where is / what's the address of <venue>" must ALWAYS get that
+# venue's address block. The main flow used to read a venue name, after a turn
+# that had already described that venue, as the visitor PICKING it ("Camperdown
+# it is."), so "where exactly is the Camperdown session?" asked straight after
+# the parking answer got a goals question instead of Mallett St (sign-off dry
+# run, 2026-09-10). A bare venue mention is still not a location question, and
+# naming BOTH venues is a comparison, which stays with the chooser logic.
+VENUE_ADDRESS_RE = re.compile(
+    r"\b(?:where(?:'s| is| are| exactly| abouts| do)?|whereabouts|address|located|location of|which park|what park)\b"
+)
+
+
+def asks_venue_address(text: str) -> bool:
+    if not VENUE_ADDRESS_RE.search(text):
+        return False
+    named = [venue for venue in ("camperdown", "redfern") if venue in text]
+    return len(named) == 1
+
+
 def location_detail_reply(text: str) -> str:
     """Per-venue logistics answer (address + parking + transport). Shared so a
     parking/transport question is answered the same whether it lands in the main
@@ -7478,7 +7520,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
         # the venue chooser — same rule as the repeat-detector and main-flow
         # branches. "Do you have parking?" with no venue named was answered with
         # the two-venues block on WhatsApp (Nicholas's stranger pass, 2026-09-10).
-        if asks_location_detail(clean):
+        if asks_location_detail(clean) or asks_venue_address(clean):
             return location_detail_reply(clean)
         if "redfern" in text:
             return (
@@ -7770,6 +7812,21 @@ def contact_capture_reply(message: str, session_id: str) -> str:
     )
 
 
+def contact_capture_confirmation(message: str, session_id: str) -> str:
+    """Second acknowledgement when details arrive again or get completed
+    (phone first, email later). Deliberately a different shape from
+    contact_capture_reply so the repeat-detector has nothing to catch, and it
+    echoes the details back so the person can see what was saved."""
+    details = extract_contact_details(message)
+    name = extract_contact_name(message, session_id=session_id)
+    saved = " and ".join(value for value in (details.get("phone"), details.get("email")) if value)
+    who = f", {name.split()[0]}" if name else ""
+    return (
+        f"All received{who}: {saved}. Humanoid-Nick or Lyn have it and will follow up, usually the same day.\n\n"
+        "Nothing else you need to do. If it is urgent, you can also email innerwest@outdoorsquad.com.au."
+    )
+
+
 # Inner West suburbs → the closest Outdoor Squad venue. Camperdown serves
 # Camperdown/Newtown/Stanmore & nearby; Redfern serves Redfern/Waterloo/Surry
 # Hills. Used so a lead's location isn't logged as "unknown" when the visitor
@@ -7824,10 +7881,11 @@ def build_lead_summary(session_id: str, latest_message: str = "") -> dict:
         "injury/limitation": ["injury", "injured", "knee", "back", "shoulder", "pain", "pregnant", "postnatal"],
         "schedule": ["busy", "schedule", "full-time", "full time", "after work", "availability"],
         "price": ["price", "cost", "how much", "membership", "$"],
-        "child/youth": ["kid", "child", "son", "daughter", "teen", "ytp"],
     }.items():
         if any(word in lower for word in words):
             concerns.append(label)
+    if _ROUTE_YOUTH_RE.search(lower):
+        concerns.append("child/youth")
 
     return {
         "route": route,
@@ -7838,14 +7896,25 @@ def build_lead_summary(session_id: str, latest_message: str = "") -> dict:
     }
 
 
+# Word-boundary matching, NOT bare substrings: "son" used to match "real
+# perSON", so "can I talk to a real person?" was filed as a YTP / parent
+# enquiry in the owner alert (sign-off dry run, 2026-09-10). Same collision
+# class as bus/busy and pt/prompt.
+_ROUTE_YOUTH_RE = re.compile(r"\b(?:kids?|child(?:ren)?|son|daughter|teens?|teenagers?|ytp|young'n'strong|youth)\b")
+_ROUTE_CASUAL_RE = re.compile(r"\b(?:casual|drop-?in|visiting)\b")
+_ROUTE_HUMAN_RE = re.compile(
+    r"\b(?:human|nick|call me|talk to someone|speak to someone|real person|medical|rehab|pregnant|postnatal)\b"
+)
+
+
 def classify_route(text: str) -> str:
-    if any(word in text for word in ["kid", "kids", "child", "son", "daughter", "teen", "ytp", "young'n'strong"]):
+    if _ROUTE_YOUTH_RE.search(text):
         return "YTP / parent enquiry"
     if re.search(r"\b(?:spt|semi-private|semi private|personal training|pt|program|programming|partner|kickstarter|hyrox|powerlifting|crossfit)\b", text):
         return "SPT / 28-Day Kickstarter"
-    if any(word in text for word in ["casual", "drop-in", "drop in", "visiting"]):
+    if _ROUTE_CASUAL_RE.search(text):
         return "casual drop-in"
-    if any(word in text for word in ["human", "nick", "call me", "talk to someone", "medical", "rehab", "pregnant", "postnatal"]):
+    if _ROUTE_HUMAN_RE.search(text):
         return "human handoff"
     return "1-Day Free Trial Pass"
 
@@ -8125,6 +8194,20 @@ def notify_lead_summary(lead_info: dict, *, reason: str) -> bool:
         )
         return False
 
+    # One alert per set of details per conversation. A visitor who repeats
+    # their name and email ("did that go through?") used to fire the owner a
+    # second identical email and SMS; the Momence push was already deduped,
+    # the alert was not (sign-off dry run, 2026-09-10). NEW details (an email
+    # added to a phone given earlier) still alert, and an explicit human
+    # request always alerts: it is a hotter event with its own once-per-session
+    # claim, so it only records its fingerprint here.
+    session_id = lead_info.get("session_id", "unknown")
+    fingerprint = _lead_alert_fingerprint(lead_info)
+    flag_key = f"lead_alerted:{session_id}"
+    if fingerprint and reason != "explicit_human_request" and get_wa_setting(flag_key) == fingerprint:
+        log_event("lead_summary_notification_deduped", session_id=session_id, reason=reason)
+        return False
+
     sent_channels = []
     failures = []
     try:
@@ -8152,7 +8235,15 @@ def notify_lead_summary(lead_info: dict, *, reason: str) -> bool:
             error="; ".join(failures)[:240],
             reason=reason,
         )
+    if sent_channels and fingerprint:
+        set_wa_setting(flag_key, fingerprint)
     return bool(sent_channels)
+
+
+def _lead_alert_fingerprint(lead_info: dict) -> str:
+    phone = re.sub(r"\D", "", str(lead_info.get("phone") or ""))
+    email = str(lead_info.get("email") or "").strip().lower()
+    return f"{phone}|{email}" if (phone or email) else ""
 
 
 def notify_lead_summary_async(lead_info: dict, *, reason: str) -> None:

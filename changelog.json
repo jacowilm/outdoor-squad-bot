@@ -126,5 +126,25 @@
   {
     "date": "2026-09-10",
     "line": "Owner alerts now go out by SMS from the business number as well as email"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "WhatsApp and website: handing over your details a second time (or adding an email after a phone) now gets a confirmation echoing what was saved, instead of a generic handoff line"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "\"Where exactly is the Camperdown session?\" asked right after a parking or timetable answer now gets the address, not a venue-choice question"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "Owner alerts: repeating the same contact details in one conversation no longer sends Nick a second identical email and SMS; new details still alert"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "Owner alerts: the enquiry type is matched on whole words, so \"real person\" is no longer filed as a kids/YTP enquiry"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "Owner alerts for \"talk to a real person\" now carry the person's name when they gave one"
   }
 ]
