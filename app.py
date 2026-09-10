@@ -1089,10 +1089,67 @@ Latest-message primacy rule: the user's newest message may be a completely new t
 
 Contact rule: if the conversation history already includes a phone number or email, never ask for contact details again. Do not repeatedly say the team will SMS/call; say it once, or ask the user's preference once, then close cleanly."""
     recent = load_conversation(session_id)[-16:]
-    return [
+    system_blocks = [
         {"role": "system", "content": BASE_AGENT_PROMPT},
         {"role": "system", "content": source_prompt},
-    ] + recent
+    ]
+    if is_whatsapp_session(session_id):
+        system_blocks.append({"role": "system", "content": whatsapp_channel_prompt(session_id)})
+    return system_blocks + recent
+
+
+def is_whatsapp_session(session_id: str) -> bool:
+    return str(session_id or "").startswith("wa-")
+
+
+def whatsapp_channel_prompt(session_id: str) -> str:
+    """The shared brain was written for the website widget and was never told
+    when it is answering on WhatsApp (11 Sep 2026 diff, findings #6 and #7):
+    it produced **bold** markdown that WhatsApp shows as literal asterisks,
+    asked people for the mobile they were messaging from, offered "SMS or a
+    call", quoted a phone number as the contact, and relied on the widget's
+    header for the bot disclosure. This block corrects each of those for a
+    wa- session; the deterministic render pass in render_for_whatsapp() is
+    the backstop when the model ignores it."""
+    first_reply = not any(m.get("role") == "assistant" for m in load_conversation(session_id))
+    intro = (
+        "This is your FIRST reply in this WhatsApp conversation: open by saying you are Robo-Nick, "
+        "the automated helper, in one light line (Humanoid-Nick is coaching, asleep or near coffee), then answer. "
+        if first_reply else
+        "You have already introduced yourself as Robo-Nick in this conversation; do not introduce yourself again. "
+    )
+    return (
+        "Channel: you are replying on WhatsApp, not the website widget. "
+        + intro
+        + "Plain text only: no markdown, no **bold**, no headings, no [label](url) links; paste any link bare on its own line. "
+        "Short paragraphs, one blank line between them; a list is one item per line starting with '- '. "
+        "The person is messaging from their own mobile, so NEVER ask for their mobile or phone number; "
+        "if a name would help, ask for a first name only. "
+        "Do not offer 'SMS or a call'; if you need a preference, offer 'reply here or a quick call'. "
+        "Do not quote a phone number as the way to reach the team: Humanoid-Nick or Lyn reply in this same chat. "
+        "The app may send ONE short follow-up message later if the person goes quiet; never promise reminders beyond that."
+    )
+
+
+_WA_BOLD_RE = re.compile(r"\*\*([^*\n]+?)\*\*")
+_WA_MD_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s]+)\)")
+_WA_HEADING_RE = re.compile(r"(?m)^#{1,6}\s+")
+
+
+def render_for_whatsapp(text: str) -> str:
+    """Deterministic backstop for the WhatsApp channel: the server injects
+    **bold** labels for the widget (bold_bullet_labels, inline-list expansion)
+    and the model sometimes emits markdown anyway. WhatsApp renders *single*
+    asterisks as bold and shows double ones literally, and shows [label](url)
+    as-is. Convert, never strip: the emphasis and the link both survive."""
+    if not text:
+        return text
+    out = _WA_HEADING_RE.sub("", text)
+    out = _WA_MD_LINK_RE.sub(lambda m: f"{m.group(1).strip()}: {m.group(2)}", out)
+    out = _WA_BOLD_RE.sub(lambda m: f"*{m.group(1).strip()}*", out)
+    out = out.replace("**", "")
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
 
 
 def build_openai_request_params(message: str, session_id: str) -> dict:
@@ -2305,9 +2362,61 @@ def last_known_name(session_id: str) -> str | None:
         return None
 
 
+_CLOSING_VOCAB = {
+    "no", "nope", "nah", "na", "not", "im", "i'm", "all", "good", "goods", "thanks",
+    "thank", "thankyou", "you", "cheers", "done", "ta", "ty", "thx", "nothing", "else",
+    "thats", "that's", "that", "its", "it's", "it", "cool", "great", "awesome", "perfect",
+    "fine", "sweet", "sorted", "set", "legend", "mate", "appreciate", "appreciated",
+    "bye", "cya", "later", "much", "for", "now", "to", "go", "is", "worries", "worry",
+}
+_POSITIVE_CLOSE = {
+    "good", "thanks", "thank", "thankyou", "cheers", "done", "nothing", "cool", "great",
+    "awesome", "perfect", "sweet", "sorted", "set", "legend", "ta", "ty", "thx",
+    "appreciate", "appreciated", "bye", "cya", "later",
+}
+_OPT_OUT_RE = re.compile(
+    r"\b(?:unsubscribe|opt\s*out|stop\s+(?:messaging|texting|contacting|sending|writing)(?:\s+me)?|"
+    r"(?:don'?t|do\s+not|never)\s+(?:message|text|contact|write\s+to)\s+me|leave\s+me\s+alone|"
+    r"remove\s+(?:me|my\s+number)|no\s+more\s+(?:messages|texts)|lose\s+my\s+number)\b"
+)
+_ACK_AFTER_QUESTION = {"ok", "okay", "k", "kk", "sure", "yep", "yes", "yeah", "yea", "yup", "go on", "please", "yes please", "send it", "sounds good"}
+
+
+def is_definite_close(clean: str) -> bool:
+    tokens = [t.strip(",.!?;:") for t in clean.split()]
+    tokens = [t for t in tokens if t]
+    return bool(tokens) and all(t in _CLOSING_VOCAB for t in tokens) and any(t in _POSITIVE_CLOSE for t in tokens)
+
+
+def is_opt_out_message(clean: str) -> bool:
+    """"stop", "unsubscribe", "don't message me". Matched on whole words so
+    "stop messaging me" is an opt-out and "non-stop" or "aging" inside
+    "messaging" never fires anything (11 Sep 2026 diff, finding #4)."""
+    if clean in {"stop", "stop it", "stop please", "please stop", "stop!"}:
+        return True
+    return bool(_OPT_OUT_RE.search(clean))
+
+
 def contextual_short_reply(message: str, session_id: str) -> str | None:
     clean = normalise_chat_text(message)
     previous = recent_assistant_message(session_id).lower()
+
+    # Opt-out wins over everything: acknowledge once, go quiet, and mark the
+    # thread so the follow-up nudge never fires (finding #4).
+    if is_opt_out_message(clean):
+        if is_whatsapp_session(session_id):
+            set_wa_setting(f"opted_out:{session_id}", "1")
+            log_event("wa_opted_out", session_id=session_id, channel="whatsapp")
+        return "No worries, I'll stop here. If you ever want to pick this up again, just message and I'll be around."
+
+    # "Yes" to the follow-up nudge must produce the link the nudge offered,
+    # without depending on the model (finding #32).
+    if "want me to send the free trial link" in previous and clean.strip("!.") in _ACK_AFTER_QUESTION:
+        return (
+            f"Here you go: {TRIAL_LINK}\n\n"
+            "Pick any session on the timetable, the first one's free. Sing out if you want a hand choosing."
+        )
+
 
     # Answer to "would you prefer a quick SMS or a call?" — this is the LAST step
     # of the lead-capture flow, so it must be handled cleanly. Without this, "sms"
@@ -2363,6 +2472,16 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "No worries at all. I'm here whenever you need: trials, prices, classes, or getting a human to help.\n\n"
             "Come back any time and we'll sort you out."
         )
+
+    # A bare acknowledgement of a bot question ("ok", "sure", a thumbs-up) is
+    # not vagueness; it deserves a short next step, not "still in the fog"
+    # (finding #17). Sits BELOW the closing block so a thumbs-up after
+    # "are you good to go?" still signs off.
+    emoji_ack = bool(clean) and not re.search(r"[a-z0-9]", clean)
+    if previous.rstrip().endswith("?") and (clean.strip("!.") in _ACK_AFTER_QUESTION or emoji_ack) \
+            and not winding_down and not captured \
+            and not any(p in previous for p in ["sms or a call", "sms or call", "reply here or"]):
+        return "Sweet. Want the timetable, the prices, or the free trial link?"
 
     # Prompt-injection / instruction-extraction — checked first so it can't be
     # swallowed by an unrelated keyword branch (e.g. "system prompt" -> "pt").
@@ -2891,9 +3010,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         re.search(r"\b(?:i'?m|im|i am|age|aged|turning|nearly|almost|now|i’m)\s+(?:4[5-9]|[5-9]\d)\b", clean)
         or re.search(r"\b(?:4[5-9]|[5-9]\d)\s*(?:yo|y/?o|years?\s*old)\b", clean)
         or any(phrase in clean for phrase in [
-            "stay strong as i age", "strong as i age", "ageing", "aging", "longevity",
+            "stay strong as i age", "strong as i age", "longevity",
             "as i age", "as we age", "getting older", "in my 50s", "in my 60s", "in my 70s",
         ])
+        # Whole words only: "aging" also lives inside "messaging" (the bus/busy
+        # and son/person collision class; 11 Sep 2026 diff, section 8).
+        or re.search(r"\b(?:ageing|aging)\b", clean)
     ):
         return (
             "Yep. That’s a very Outdoor Squad reason to train.\n\n"
@@ -3874,8 +3996,25 @@ def notify_human_request_if_needed(
         lead_info["name"] = name
     lead_info["route"] = "human handoff"
     lead_info["alert_type"] = "human_request"
+    annotate_lead_channel(lead_info, session_id)
     notify_lead_summary_async(lead_info, reason="explicit_human_request")
     return True
+
+
+def annotate_lead_channel(lead_info: dict, session_id: str) -> dict:
+    """Owner alerts and lead rows must say which channel they came from and,
+    on WhatsApp, carry the number the person is writing from even when they
+    never typed it (11 Sep 2026 diff, findings #3 and #18). Nick reads the
+    alert on his phone and needs to know to answer in the WhatsApp thread
+    inside the 24 h window, not to ring a website visitor."""
+    if is_whatsapp_session(session_id):
+        lead_info["channel"] = "whatsapp"
+        digits = re.sub(r"\D", "", str(session_id).removeprefix("wa-"))
+        if digits and not lead_info.get("phone"):
+            lead_info["phone"] = f"+{digits} (the WhatsApp they are messaging from)"
+    else:
+        lead_info.setdefault("channel", "website")
+    return lead_info
 
 
 def verify_turnstile_token(token: str, remote_ip: str = "") -> bool:
@@ -5570,6 +5709,8 @@ def _twiml_escape(text: str) -> str:
 
 
 def _twiml_message(reply: str | None) -> Response:
+    if reply:
+        reply = render_for_whatsapp(reply)
     inner = f"<Message>{_twiml_escape(reply)}</Message>" if reply else ""
     return Response(
         content=f'<?xml version="1.0" encoding="UTF-8"?><Response>{inner}</Response>',
@@ -5609,6 +5750,7 @@ def _wa_capture_lead(message: str, session_id: str, human_request_handled: bool,
     lead_info = extract_lead_info(message, session_id)
     if not lead_info:
         return
+    annotate_lead_channel(lead_info, session_id)
     save_lead(lead_info)
     has_contact = has_contact_details(message)
     log_event("lead_captured" if has_contact else "lead_updated", **lead_info)
@@ -5708,11 +5850,26 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
         fallback = False
     except Exception:
         fallback = True
-        if os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message):
+        if (os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message)
+                or is_vague_message(normalise_chat_text(message))):
+            # A vague opener ("hi") during an outage gets the scripted ladder,
+            # not an error line as the first impression (diff finding #16).
             reply = demo_fallback_reply(message, session_id=session_id)
         else:
             reply = "I\u2019m having a moment reaching my brain. Give me a minute and message again."
 
+    # The kill switch and the per-thread mute were checked when the message
+    # arrived, but the answer takes seconds to write. If Nick flipped the
+    # switch or replied by hand in the meantime, this answer must not land on
+    # top of his (diff finding #12). Checked BEFORE persisting so the
+    # transcript never shows a reply the customer did not get.
+    if not wa_channel_enabled() or wa_muted(session_id):
+        log_event("wa_reply_suppressed", session_id=session_id, channel="whatsapp",
+                  reason="channel_off" if not wa_channel_enabled() else "muted")
+        _wa_capture_lead(message, session_id, human_request_handled, "wa_suppressed_contact_capture")
+        return
+
+    reply = render_for_whatsapp(reply)
     try:
         reply = prevent_repetitive_reply(reply, message, session_id)
         history = load_conversation(session_id)
@@ -5734,11 +5891,15 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
         log_event("wa_reply_fallback" if fallback else "wa_reply_sent",
                   session_id=session_id, channel="whatsapp",
                   ai_provider=ai_provider, delivery="rest")
+        if get_wa_setting(f"undelivered:{session_id}") == "1":
+            set_wa_setting(f"undelivered:{session_id}", "")
     else:
         # An answer that was generated but never reached the person is a LOST
         # reply, not a delivered one, and must not look the same in the log.
         log_event("wa_reply_undelivered", session_id=session_id, channel="whatsapp",
                   error=str(detail)[:200])
+        # The nudge must not follow a reply that never arrived (finding #13).
+        set_wa_setting(f"undelivered:{session_id}", "1")
 
 
 @app.post("/twilio-wa-webhook")
@@ -5778,6 +5939,13 @@ async def twilio_wa_webhook(request: Request):
         while len(_twilio_wa_seen_sids) > _TWILIO_WA_SEEN_MAX:
             _twilio_wa_seen_sids.popitem(last=False)
 
+    sender_digits = re.sub(r"\D", "", sender)
+    if is_rate_limited(sender_digits, scope="wa", max_per_window=WA_SENDER_MAX_PER_10_MIN, window=600):
+        # One number cannot drive unlimited model calls and paid sends (diff
+        # finding #24). A flood is not an enquiry: log it, ack Twilio, stop.
+        log_event("wa_rate_limited", session_id=session_id, channel="whatsapp")
+        return _twiml_message(None)
+
     message = str(form.get("Body", "")).strip()[:MAX_MESSAGE_LEN]
     if not message:
         if int(form.get("NumMedia", "0") or 0) > 0:
@@ -5807,6 +5975,10 @@ async def twilio_wa_webhook(request: Request):
     human_request_handled = notify_human_request_if_needed(
         message, session_id, trusted_widget=True, internal_qa=False
     )
+    if human_request_handled:
+        # Someone Nick is about to phone must not get the automated nudge
+        # ninety minutes later (diff finding #13).
+        set_wa_setting(f"handoff:{session_id}", "1")
 
     if not wa_channel_enabled():
         # Kill switch: the BOT is silent, the business is not. The enquiry is
@@ -6009,6 +6181,44 @@ TWILIO_WA_FROM = (
 ).removeprefix("whatsapp:")
 
 
+WA_BODY_LIMIT = 1600
+
+
+def split_whatsapp_body(body: str, limit: int = WA_BODY_LIMIT) -> list[str]:
+    """Split at blank lines, then single lines, then hard-cut, so each part fits
+    Twilio's WhatsApp body limit. Returns [body] when it already fits."""
+    text = (body or "").strip()
+    if len(text) <= limit:
+        return [text]
+    parts: list[str] = []
+    current = ""
+    for para in re.split(r"\n{2,}", text):
+        candidate = f"{current}\n\n{para}" if current else para
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            parts.append(current)
+            current = ""
+        if len(para) <= limit:
+            current = para
+            continue
+        for line in para.split("\n"):
+            candidate = f"{current}\n{line}" if current else line
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+            if current:
+                parts.append(current)
+            while len(line) > limit:
+                parts.append(line[:limit])
+                line = line[limit:]
+            current = line
+    if current:
+        parts.append(current)
+    return parts
+
+
 def send_whatsapp_via_twilio(to_digits: str, body: str) -> tuple[bool, str]:
     """Outbound WhatsApp via Twilio REST. Returns (ok, message_sid_or_error).
 
@@ -6017,10 +6227,23 @@ def send_whatsapp_via_twilio(to_digits: str, body: str) -> tuple[bool, str]:
     """
     if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WA_FROM):
         return False, "twilio sending not configured"
+    parts = split_whatsapp_body(body)
+    if len(parts) > 1:
+        # Twilio caps a WhatsApp body at 1600 characters. A long answer used to
+        # be cut mid-sentence, usually losing the link at the end (finding #25).
+        # Send it as consecutive messages split at paragraph boundaries.
+        log_event("wa_reply_split", session_id="wa-" + re.sub(r"[^0-9]", "", to_digits),
+                  channel="whatsapp", parts=len(parts))
+        last = (False, "empty")
+        for part in parts:
+            last = send_whatsapp_via_twilio(to_digits, part)
+            if not last[0]:
+                return last
+        return last
     payload = urllib.parse.urlencode({
         "From": f"whatsapp:{TWILIO_WA_FROM}",
         "To": f"whatsapp:+{re.sub(r'[^0-9]', '', to_digits)}",
-        "Body": body[:1600],
+        "Body": parts[0] if parts else "",
     }).encode()
     request = urllib.request.Request(
         f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
@@ -6175,6 +6398,7 @@ def wa_dashboard_payload() -> dict:
                 "last_inbound_at": last_in.isoformat(),
             })
         entry["muted"] = wa_muted(sid)
+        entry["opted_out"] = get_wa_setting(f"opted_out:{sid}") == "1"
     return {
         "channel_enabled": wa_channel_enabled(),
         "conversations": sorted(
@@ -6192,6 +6416,11 @@ async def wa_conversations(_: str = Depends(require_admin)):
 
 # ── Follow-up nudge (the "single follow-up nudge" on the invoice) ────────────
 WA_NUDGE_MINUTES = int(os.environ.get("OUTDOOR_SQUAD_WA_NUDGE_MINUTES", "90"))
+WA_SENDER_MAX_PER_10_MIN = int(os.environ.get("OUTDOOR_SQUAD_WA_SENDER_MAX_PER_10_MIN", "20"))
+# The nudge is an unsolicited message: keep it to waking hours in the
+# customer's timezone (Sydney), or it lands at 2 am and gets the number
+# blocked and reported (finding #13).
+WA_NUDGE_HOURS = (8, 20)
 WA_NUDGE_TEXT = (
     "No stress if now's not the time, I'm here whenever you're ready. "
     "Want me to send the free trial link, or answer anything else?"
@@ -6207,6 +6436,7 @@ def wa_sessions_needing_nudge(now: datetime | None = None) -> list[str]:
         return []
     now = now or datetime.now()
     latest: dict[str, dict] = {}
+    last_user: dict[str, dict] = {}
     for row in read_conversation_logs():
         sid = str(row.get("session_id", ""))
         if not sid.startswith("wa-"):
@@ -6214,6 +6444,8 @@ def wa_sessions_needing_nudge(now: datetime | None = None) -> list[str]:
         ts = str(row.get("timestamp", ""))
         if sid not in latest or ts > latest[sid]["timestamp"]:
             latest[sid] = {"timestamp": ts, "role": row.get("role")}
+        if row.get("role") == "user" and (sid not in last_user or ts > last_user[sid]["timestamp"]):
+            last_user[sid] = {"timestamp": ts, "content": str(row.get("content", ""))}
     due = []
     for sid, last in latest.items():
         if last["role"] != "assistant":
@@ -6221,6 +6453,13 @@ def wa_sessions_needing_nudge(now: datetime | None = None) -> list[str]:
         if get_wa_setting(f"nudged:{sid}") == "1":
             continue
         if wa_muted(sid):
+            continue
+        # Finding #13: never nudge someone who said goodbye, asked to stop,
+        # is already being phoned by Nick, or whose last answer never arrived.
+        if any(get_wa_setting(f"{flag}:{sid}") == "1" for flag in ("opted_out", "handoff", "undelivered")):
+            continue
+        last_text = normalise_chat_text(last_user.get(sid, {}).get("content", ""))
+        if last_text and (is_definite_close(last_text) or is_opt_out_message(last_text)):
             continue
         try:
             last_ts = datetime.fromisoformat(last["timestamp"][:26].rstrip("Z").split("+")[0])
@@ -6235,10 +6474,22 @@ def wa_sessions_needing_nudge(now: datetime | None = None) -> list[str]:
     return due
 
 
+def wa_nudge_hours_open(now_sydney: datetime | None = None) -> bool:
+    """True inside the sending window, Sydney time. Selection still requires
+    90 minutes of silence and an open 24 h window, so a thread that goes quiet
+    at 23:00 is nudged the next morning if the window is still open."""
+    if now_sydney is None:
+        from zoneinfo import ZoneInfo
+        now_sydney = datetime.now(ZoneInfo("Australia/Sydney"))
+    return WA_NUDGE_HOURS[0] <= now_sydney.hour < WA_NUDGE_HOURS[1]
+
+
 def _wa_nudge_loop() -> None:
     while True:
         time.sleep(600)
         try:
+            if not wa_nudge_hours_open():
+                continue
             for sid in wa_sessions_needing_nudge():
                 ok, detail = send_whatsapp_via_twilio(sid.removeprefix("wa-"), WA_NUDGE_TEXT)
                 # Mark even on failure: one attempt per thread, never a loop
@@ -7278,6 +7529,8 @@ def should_use_local_tone_handler(message: str, session_id: str, *, ignore_vague
         return True
     if mentions_youth(text):
         return True
+    if re.search(r"\b(?:ageing|aging)\b", text):
+        return True
     if mentions_eating_disorder(text):
         return True
     if mentions_injury(text) or mentions_pregnancy(text) or is_prompt_injection(text):
@@ -7287,7 +7540,7 @@ def should_use_local_tone_handler(message: str, session_id: str, *, ignore_vague
         "student", "concession", "sign up", "sign me up", "book a trial",
         "crossfit", "hyrox", "powerlifting", "strongman", "serious programming",
         "28-day kickstarter", "28 day kickstarter", "kickstarter",
-        "stay strong as i age", "strong as i age", "ageing", "aging", "longevity",
+        "stay strong as i age", "strong as i age", "longevity",
         "have a think", "need to think", "think about it", "not sure", "keen but not sure", "looking at options", "checking options", "next step", "come along", "how do i start", "how to start", "what should i do first", "do first",
         "tossing up", "torn between", "deciding between", "choosing between", "between you and", "decide next month", "decide next week", "decide later", "i'll probably decide", "ill probably decide", "get back to you", "circle back", "after the holidays", "next quarter",
         "doctor told me", "doctor said", "gp told me", "blood pressure", "cholesterol", "wife and i", "husband and i", "all three of us", "all of us",
@@ -7559,6 +7812,12 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
             for m in load_conversation(session_id)
             if m.get("role") == "user" and is_vague_message(normalise_chat_text(m.get("content", "")))
         )
+        if is_whatsapp_session(session_id):
+            # On WhatsApp the first vague opener ("hi") is answered by the AI
+            # (wa_first_contact_greeting), so the ladder must start at rung one
+            # on the NEXT vague message, not skip straight to "Still in the fog"
+            # (11 Sep 2026 diff, finding #17).
+            vague_count -= 1
         if vague_count <= 1:
             return (
                 "Fair. Easiest place to start: is this for you, your kid, or are you just checking prices?"
@@ -8071,13 +8330,22 @@ def format_lead_summary(lead_info: dict) -> str:
         concerns_text = ", ".join(concerns) or "none captured"
     else:
         concerns_text = str(concerns)
+    channel = str(lead_info.get("channel") or "website")
+    channel_label = "WhatsApp" if channel == "whatsapp" else "Website"
     heading = (
-        "Outdoor Squad visitor asked for a human"
+        f"Outdoor Squad {channel_label} customer asked for a human"
         if lead_info.get("alert_type") == "human_request"
-        else "New Outdoor Squad lead"
+        else f"New Outdoor Squad lead ({channel_label})"
+    )
+    reply_hint = (
+        "Reply to them inside the WhatsApp thread on the dashboard within 24 hours "
+        "(after that WhatsApp only allows an approved template).\n"
+        if channel == "whatsapp" else ""
     )
     return (
         f"{heading}\n\n"
+        f"Channel: {channel_label}\n"
+        f"{reply_hint}"
         f"Name: {lead_info.get('name') or 'unknown'}\n"
         f"Email: {lead_info.get('email') or 'not provided'}\n"
         f"Phone: {lead_info.get('phone') or 'not provided'}\n"
@@ -8222,10 +8490,12 @@ def _send_twilio_sms(body: str) -> bool:
 def send_lead_summary_twilio(lead_info: dict) -> bool:
     if not lead_summary_twilio_configured():
         return False
-    name = lead_info.get("name") or lead_info.get("route") or "website enquiry"
+    channel_label = "WhatsApp" if lead_info.get("channel") == "whatsapp" else "website"
+    name = lead_info.get("name") or lead_info.get("route") or f"{channel_label} enquiry"
+    phone = str(lead_info.get("phone") or "no phone").split(" (")[0]
     body = (
-        f"New Outdoor Squad lead: {name} "
-        f"({lead_info.get('phone') or 'no phone'}) — {lead_info.get('route') or 'enquiry'}. "
+        f"New Outdoor Squad {channel_label} lead: {name} "
+        f"({phone}), {lead_info.get('route') or 'enquiry'}. "
         "Full summary in your email."
     )
     return _send_twilio_sms(body)

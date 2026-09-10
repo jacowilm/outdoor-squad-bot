@@ -154,5 +154,33 @@
   {
     "date": "2026-09-11",
     "line": "Closed a gap where the public website chat endpoint could be pointed at a WhatsApp conversation by guessing the customer's mobile. Checked the logs: it was never used. The WhatsApp webhook now also ignores messages addressed to any number other than the Outdoor Squad one."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "WhatsApp replies are now written for WhatsApp: the bot knows which channel it is on, introduces itself as Robo-Nick on its first reply, never asks for the mobile you are messaging from, and bold or links no longer arrive as raw asterisks and brackets."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "If Nick flips the kill switch or replies by hand while the bot is still writing an answer, that answer is dropped instead of landing on top of his."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "\"Stop\", \"unsubscribe\" or \"don't message me\" now get a one-line acknowledgement and switch off the follow-up for that thread."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "The 90-minute follow-up no longer fires after a goodbye, after someone asked for a human, after a reply that failed to send, or outside 8am to 8pm Sydney time."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "Owner alerts now say WhatsApp or Website, and WhatsApp alerts carry the number the person is writing from plus a reminder to reply inside the thread within 24 hours."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "Fixed \"messaging\" being read as \"aging\": a parent messaging about their kid no longer gets the over-45 pitch."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "Long WhatsApp answers are split into consecutive messages instead of being cut at 1600 characters; one number cannot flood the bot with unlimited messages."
   }
 ]
