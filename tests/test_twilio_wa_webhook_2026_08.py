@@ -1,8 +1,12 @@
 """Regression guards for the Twilio WhatsApp channel.
 
 The contract under test: inbound WhatsApp rides the SAME brain as the website
-widget, authenticated by Twilio's signature instead of Turnstile, replying via
-TwiML so no REST credentials are needed for conversation.
+widget, authenticated by Twilio's signature instead of Turnstile.
+
+Deterministic answers still ride TwiML inside the request. The AI answer does
+NOT: it takes longer than Twilio's 15s webhook timeout, so the request is
+acknowledged empty and the answer is delivered over the REST API. "The bot
+replied" therefore means DELIVERED, not returned in the response body.
 """
 
 import base64
@@ -66,7 +70,17 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "generate_ai_reply", lambda m, s: ("Deterministic test reply <3", "test"))
     monkeypatch.setattr(app, "should_use_local_tone_handler", lambda m, s: False)
     monkeypatch.setattr(app, "notify_lead_summary_async", lambda *a, **k: None)
-    return TestClient(app.app)
+    # Run the deferred reply worker inline so tests exercise the real path,
+    # and capture what would have gone out over Twilio's REST API.
+    monkeypatch.setattr(app, "_wa_async_dispatch", lambda target, args: target(*args))
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        app, "send_whatsapp_via_twilio",
+        lambda to_digits, body: (sent.append((to_digits, body)), (True, "SMfake"))[1],
+    )
+    test_client = TestClient(app.app)
+    test_client.wa_sent = sent
+    return test_client
 
 
 def _post(client, params, signature=None, base=None):
@@ -97,15 +111,17 @@ def test_valid_signature_replies_with_twiml(client):
     r = _post(client, _params(sid="SMtwiml1"))
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/xml")
-    # XML-escaped reply from the deterministic brain, inside <Message>.
-    assert "<Message>Deterministic test reply &lt;3</Message>" in r.text
+    # The AI answer is deferred: the request is acked empty and the reply is
+    # DELIVERED over REST (the 15s timeout used to discard it entirely).
+    assert "<Message>" not in r.text
+    assert [body for _, body in client.wa_sent] == ["Deterministic test reply <3"]
 
 
 def test_signature_accepts_secondary_host(client):
     params = _params(sid="SMhost2")
     r = _post(client, params, signature=_sign(app.TWILIO_WA_FALLBACK_HOSTS[1], params))
     assert r.status_code == 200
-    assert "<Message>" in r.text
+    assert client.wa_sent, "accepted signature must still produce a delivered reply"
 
 
 def test_session_is_wa_prefixed_and_shared_brain(client):
@@ -120,10 +136,12 @@ def test_duplicate_message_sid_reserves_same_reply(client):
     reply, not silence: returning empty on the dupe leaves the customer with
     nothing while the transcript records a reply as sent."""
     first = _post(client, _params(sid="SMdup1"))
-    assert "<Message>Deterministic test reply &lt;3</Message>" in first.text
+    assert first.status_code == 200
+    assert len(client.wa_sent) == 1
     second = _post(client, _params(sid="SMdup1"))
     assert second.status_code == 200
-    assert "<Message>Deterministic test reply &lt;3</Message>" in second.text
+    # A Twilio retry must not generate or deliver a SECOND answer.
+    assert len(client.wa_sent) == 1
     # And the duplicate did NOT double-log: still exactly one user turn.
     history = app.load_conversation("wa-61400111222")
     assert sum(1 for m in history if m["role"] == "user" and m["content"] == "When are classes?") >= 1
@@ -140,12 +158,15 @@ def test_mute_suppresses_reply_but_still_captures(client):
     app.set_wa_mute("wa-61400111222", 30)
     r = _post(client, _params(body="my number is 0400 123 456, call me", sid="SMmute1"))
     assert r.status_code == 200
-    assert "<Message>" not in r.text  # bot stays silent
+    # Silence must mean NOTHING WENT OUT. An empty body alone no longer proves
+    # that, because a deferred AI reply also acks empty and delivers by REST.
+    assert "<Message>" not in r.text
+    assert client.wa_sent == []
     history = app.load_conversation("wa-61400111222")
     assert history[-1]["role"] == "user"  # inbound still recorded
     app.set_wa_mute("wa-61400111222", None)
-    r = _post(client, _params(sid="SMmute2"))
-    assert "<Message>" in r.text  # handed back, bot speaks again
+    _post(client, _params(sid="SMmute2"))
+    assert client.wa_sent, "handed back: the bot speaks again, over REST"
 
 
 def test_mute_endpoint_requires_wa_session(client, monkeypatch):
@@ -174,10 +195,12 @@ def test_kill_switch_silences_channel(client, wa_state, monkeypatch):
     assert r.status_code == 200 and r.json()["enabled"] is False
     r = _post(client, _params(sid="SMkill1", sender="whatsapp:+61400777666"))
     assert r.status_code == 200
-    assert "<Message>" not in r.text  # channel off: bot says nothing
+    # Channel off means nothing is delivered by ANY route, TwiML or REST.
+    assert "<Message>" not in r.text
+    assert client.wa_sent == []
     client.post("/api/wa/kill", json={"enabled": True}, auth=("u", "p"))
-    r = _post(client, _params(sid="SMkill2", sender="whatsapp:+61400777666"))
-    assert "<Message>" in r.text
+    _post(client, _params(sid="SMkill2", sender="whatsapp:+61400777666"))
+    assert client.wa_sent, "channel back on: the bot speaks again, over REST"
 
 
 def test_manual_reply_sends_mutes_and_respects_window(client, wa_state, monkeypatch):

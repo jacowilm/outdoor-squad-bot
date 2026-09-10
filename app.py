@@ -5528,6 +5528,64 @@ async def twilio_sms_webhook(request: Request):
                     media_type="application/xml")
 
 
+def _wa_async_dispatch(target, args) -> None:
+    """Run the slow reply work off the request thread.
+
+    A named seam rather than an inline Thread() so tests can execute it
+    synchronously and still exercise the real code path.
+    """
+    threading.Thread(target=target, args=args, daemon=True).start()
+
+
+def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
+                          human_request_handled: bool, message_sid: str) -> None:
+    """Generate the AI answer and deliver it over REST, off the webhook thread.
+
+    Twilio gives a webhook 15 seconds and then DISCARDS whatever it returns
+    (error 11200). A real answer takes about 18, so replying inside the request
+    silently lost messages: the very first message sent to this number was lost
+    exactly that way. The inbound message is already persisted by the caller,
+    so a failure in here costs the answer, never the enquiry.
+    """
+    ai_provider = None
+    try:
+        reply, ai_provider = generate_ai_reply(message, session_id)
+        fallback = False
+    except Exception:
+        fallback = True
+        if os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message):
+            reply = demo_fallback_reply(message, session_id=session_id)
+        else:
+            reply = "I\u2019m having a moment reaching my brain. Give me a minute and message again."
+
+    try:
+        reply = prevent_repetitive_reply(reply, message, session_id)
+        history = load_conversation(session_id)
+        history.append({"role": "assistant", "content": reply})
+        persist_conversation(session_id)
+        log_chat_message(session_id, "assistant", reply)
+        _wa_capture_lead(
+            message, session_id, human_request_handled,
+            "wa_fallback_contact_capture" if fallback else "wa_ai_contact_capture",
+        )
+        if message_sid:
+            _twilio_wa_seen_sids[message_sid] = reply
+        log_bot_reply(session_id, reply, fallback=fallback)
+    except Exception as exc:
+        log_event("wa_async_persist_error", session_id=session_id, error=str(exc)[:200])
+
+    ok, detail = send_whatsapp_via_twilio(sender_digits, reply)
+    if ok:
+        log_event("wa_reply_fallback" if fallback else "wa_reply_sent",
+                  session_id=session_id, channel="whatsapp",
+                  ai_provider=ai_provider, delivery="rest")
+    else:
+        # An answer that was generated but never reached the person is a LOST
+        # reply, not a delivered one, and must not look the same in the log.
+        log_event("wa_reply_undelivered", session_id=session_id, channel="whatsapp",
+                  error=str(detail)[:200])
+
+
 @app.post("/twilio-wa-webhook")
 async def twilio_wa_webhook(request: Request):
     # Fail-closed: without the auth token there is no way to authenticate
@@ -5614,33 +5672,17 @@ async def twilio_wa_webhook(request: Request):
             _twilio_wa_seen_sids[message_sid] = reply
         return _twiml_message(reply)
 
-    try:
-        reply, ai_provider = generate_ai_reply(message, session_id)
-        reply = prevent_repetitive_reply(reply, message, session_id)
-        history.append({"role": "assistant", "content": reply})
-        persist_conversation(session_id)
-        log_chat_message(session_id, "assistant", reply)
-        _wa_capture_lead(message, session_id, human_request_handled, "wa_ai_contact_capture")
-        log_event("wa_reply_sent", session_id=session_id, channel="whatsapp", ai_provider=ai_provider)
-        log_bot_reply(session_id, reply, fallback=False)
-        if message_sid:
-            _twilio_wa_seen_sids[message_sid] = reply
-        return _twiml_message(reply)
-    except Exception:
-        if os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message):
-            reply = demo_fallback_reply(message, session_id=session_id)
-        else:
-            reply = "I’m having a moment reaching my brain. Give me a minute and message again."
-        reply = prevent_repetitive_reply(reply, message, session_id)
-        history.append({"role": "assistant", "content": reply})
-        persist_conversation(session_id)
-        log_chat_message(session_id, "assistant", reply)
-        _wa_capture_lead(message, session_id, human_request_handled, "wa_fallback_contact_capture")
-        log_event("wa_reply_fallback", session_id=session_id, channel="whatsapp")
-        log_bot_reply(session_id, reply, fallback=True)
-        if message_sid:
-            _twilio_wa_seen_sids[message_sid] = reply
-        return _twiml_message(reply)
+    # Everything above answers inside the request because it is deterministic
+    # and instant. The AI answer is not: it takes ~18s and Twilio hangs up at
+    # 15, discarding the reply. So acknowledge Twilio now and deliver the real
+    # answer over REST from a worker thread.
+    _wa_async_dispatch(
+        target=_wa_generate_and_send,
+        args=(message, session_id, re.sub(r"\D", "", sender), human_request_handled, message_sid),
+    )
+    log_event("wa_reply_deferred", session_id=session_id, channel="whatsapp")
+    return _twiml_message(None)
+
 
 
 @app.post("/api/wa/mute")
@@ -5801,8 +5843,10 @@ TWILIO_WA_FROM = (
 
 def send_whatsapp_via_twilio(to_digits: str, body: str) -> tuple[bool, str]:
     """Outbound WhatsApp via Twilio REST. Returns (ok, message_sid_or_error).
-    Used for manual replies and the follow-up nudge — inbound conversation
-    replies ride TwiML and never touch this path."""
+
+    Carries manual replies, the follow-up nudge, AND (since the 15s TwiML
+    timeout kept discarding real answers) the bot's own conversation replies.
+    """
     if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WA_FROM):
         return False, "twilio sending not configured"
     payload = urllib.parse.urlencode({
