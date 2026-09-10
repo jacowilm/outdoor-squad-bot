@@ -2040,7 +2040,10 @@ def timetable_reply(text: str, session_id: str) -> str:
         "- Saturday: 8am Strength'N'Stamina at both Camperdown and Redfern, plus 9:15am Youth Training Program at Camperdown.\n"
         "- Sunday: no sessions.\n\n"
         "Class types rotate across the week: Strength'N'Stamina, HiiT'N'Run, Core'N'Sore and Flow'N'Flex (the yoga/Pilates/mobility umbrella).\n\n"
-        "Exact live spots can change in the booking view. " + trial_close(session_id)
+        # The booking link belongs on every timetable answer, not only the
+        # filtered ones — a timetable answer you can't act on is half an answer
+        # (Nicholas's stranger pass, 2026-09-10).
+        f"Exact live spots can change in the booking view: {TRIAL_LINK}\n\n" + trial_close(session_id)
     )
 
 
@@ -2726,13 +2729,18 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
                 "No sibling discounts (so two kids is $50/wk all up), but for families training together the team can sometimes value-stack extras after a quick chat.\n\n"
                 "Want me to flag a first session for them?"
             )
+        # Exact prices get stated exactly — no "Roughly" hedge (Nicholas's
+        # stranger pass, 2026-09-10). Squad Student belongs on the ladder, and
+        # the booking link rides along so the person can act on the answer.
         return (
-            "Roughly, the main doors are:\n\n"
+            "The main doors are:\n\n"
             "- Free trial: $0, one class to see if the Squad fits.\n"
             "- Squad Ascent: $51/wk for unlimited coached group classes.\n"
+            "- Squad Student: $25/wk for verified students, same unlimited group classes.\n"
             "- 28-Day Kickstarter: $397 total for 28 days on the SPT trial path, with more coaching, assessment, programming and nutrition support.\n"
             "- SPT 2x + Group: $125/wk after that if you want ongoing semi-private coaching plus group classes.\n"
             "- Casual drop-in: $37 if you just need a one-off.\n\n"
+            f"You can grab the free trial here: {TRIAL_LINK}\n\n"
             "If you’re not sure which bucket you’re in, the free trial is usually the least silly first step."
         )
     if any(phrase in clean for phrase in ["pay for the year", "pay for the whole year", "pay yearly", "pay annually", "annual payment", "annual membership", "yearly membership", "upfront for the year", "pay up front", "pay upfront", "year up front", "prepay", "pay in advance", "pay it all up front"]):
@@ -4376,6 +4384,11 @@ def _human_session_ids(events: list[dict]) -> set:
     return {sid for sid, session_events in by_session.items() if is_human_session(session_events)}
 
 
+# The greeting A/B went live 6 Aug 2026; running totals in the report count
+# from here so the "running since 6 Aug" label matches the numbers under it.
+GREETING_TEST_START = datetime(2026, 8, 6)
+
+
 def build_report_stats(days: int = 7) -> dict:
     now = datetime.now()
     cutoff_dt = now - timedelta(days=days)
@@ -4487,6 +4500,32 @@ def build_report_stats(days: int = 7) -> dict:
     wa_leads = {e.get("session_id") for e in wa_events if e.get("event_type") == "lead_captured"}
     wa_manual_replies = sum(1 for e in wa_events if e.get("event_type") == "wa_manual_reply_sent")
 
+    # Greeting A/B running totals since the test started (6 Aug): the weekly
+    # window alone made "running since 6 Aug" a mislabel — Nicholas asked for
+    # running totals with the weekly figures underneath (2026-09-07).
+    teaser_variants_total: dict[str, dict] = {}
+    try:
+        all_events = _report_events_between(GREETING_TEST_START, now)
+        all_by_session: dict = {}
+        for e in all_events:
+            all_by_session.setdefault(e.get("session_id"), []).append(e)
+        for sid in _human_session_ids(all_events):
+            variant = next(
+                (str(e.get("teaser_variant")) for e in all_by_session.get(sid, []) if e.get("teaser_variant")),
+                None,
+            )
+            if not variant:
+                continue
+            bucket = teaser_variants_total.setdefault(variant, {"visitors": 0, "opened": 0, "conversations": 0})
+            bucket["visitors"] += 1
+            session_event_types = {e.get("event_type") for e in all_by_session.get(sid, [])}
+            if "widget_opened" in session_event_types:
+                bucket["opened"] += 1
+            if "conversation_started" in session_event_types:
+                bucket["conversations"] += 1
+    except Exception:
+        pass  # the weekly split still renders; totals are additive, not load-bearing
+
     return {
         "window_days": days,
         "since": cutoff,
@@ -4494,6 +4533,10 @@ def build_report_stats(days: int = 7) -> dict:
         "wa_messages": wa_messages,
         "wa_leads": len(wa_leads),
         "wa_manual_replies": wa_manual_replies,
+        # A live channel with zero conversations and a switched-off channel must
+        # never look the same in the report (Nicholas, 2026-09-10).
+        "wa_channel_enabled": wa_channel_enabled(),
+        "wa_entry_points_live": get_wa_setting("entry_points_live", "0") == "1",
         "widget_impressions": impressions,
         "raw_page_loads": page_loads,
         "widget_opened_sessions": len(opened),
@@ -4512,6 +4555,7 @@ def build_report_stats(days: int = 7) -> dict:
         "handoff_rate": safe_rate(len(human_requests), len(conversations)),
         "lead_lines": lead_lines[:20],
         "teaser_variants": teaser_variants,
+        "teaser_variants_total": teaser_variants_total,
         "widget_versions": widget_versions,
         "traffic_baseline_4w": traffic_baseline_4w,
         "visitor_definition": REAL_VISITOR_DEFINITION,
@@ -4531,6 +4575,19 @@ def report_subject() -> str:
     except Exception:
         today = datetime.now().strftime("%d %b %Y")
     return f"Robo-Nick weekly report — {today}"
+
+
+def wa_channel_status_line(stats: dict) -> str:
+    """One honest sentence on whether WhatsApp is live AND reachable. A live
+    channel with zero conversations and a closed channel must never look the
+    same (Nicholas, 2026-09-10). Reachability comes from the entry_points_live
+    setting, flipped when the public buttons/links actually point at the
+    number — bot state alone can't know that."""
+    if not stats.get("wa_channel_enabled", True):
+        return "OFF (kill switch) — enquiries still logged and alerted, bot replies paused"
+    if not stats.get("wa_entry_points_live", False):
+        return "LIVE but not yet publicly reachable — the number answers, but no public buttons or links point to it yet, so zero conversations means zero entry points, not zero interest"
+    return "LIVE and publicly reachable — entry points are pointing at the number"
 
 
 def format_report_text(stats: dict) -> str:
@@ -4589,6 +4646,7 @@ def format_report_text(stats: dict) -> str:
     lines += [
         "",
         "WHATSAPP (new channel)",
+        f"- Channel status: {wa_channel_status_line(stats)}",
         f"- Conversations: {stats.get('wa_conversations', 0)}",
         f"- Messages received: {stats.get('wa_messages', 0)}",
         f"- Leads captured: {stats.get('wa_leads', 0)}",
@@ -4598,16 +4656,28 @@ def format_report_text(stats: dict) -> str:
     lines += ["", "WENT LIVE THIS WEEK"]
     lines += [f"- {line}" for line in shipped] if shipped else ["- Nothing shipped this week."]
     variants = stats.get("teaser_variants") or {}
-    if len(variants) >= 2:
+    totals = stats.get("teaser_variants_total") or {}
+    if len(variants) >= 2 or len(totals) >= 2:
         variant_labels = {"control": "Original greeting", "nick": "Nick's greeting line"}
         lines += ["", "GREETING TEST (running since 6 Aug)"]
-        for key in sorted(variants):
-            bucket = variants[key]
+        # Running totals are the headline; the week is context underneath
+        # (Nicholas, 2026-09-07: totals with weekly figures under them).
+        headline = totals if len(totals) >= 2 else variants
+        for key in sorted(headline):
+            bucket = headline[key]
             rate = safe_rate(bucket["opened"], bucket["visitors"])
             lines.append(
                 f"- {variant_labels.get(key, key)}: {bucket['visitors']} visitors, "
-                f"{bucket['opened']} chats opened ({_pct(rate)})"
+                f"{bucket['opened']} chats opened ({_pct(rate)}) since 6 Aug"
             )
+        if len(totals) >= 2 and variants:
+            week_bits = []
+            for key in sorted(variants):
+                bucket = variants[key]
+                week_bits.append(
+                    f"{variant_labels.get(key, key)} {bucket['opened']}/{bucket['visitors']}"
+                )
+            lines.append("  This week: " + ", ".join(week_bits) + " (chats opened / visitors).")
         lines.append("  (Long game: at current traffic this needs months, not weeks —")
         lines.append("   it runs in the background; nobody decides off early numbers.)")
     if stats["lead_lines"]:
@@ -4750,6 +4820,7 @@ def format_report_html(stats: dict) -> str:
     # Permanent fixture, zeros included: a missing section and a zero week are
     # different facts (Nicholas, 2026-09-01).
     inner.append(_email_section("WhatsApp (new channel)"))
+    inner.append(_email_row("Channel status", e(wa_channel_status_line(stats))))
     inner.append(_email_row("Conversations", str(stats.get("wa_conversations", 0))))
     inner.append(_email_row("Messages received", str(stats.get("wa_messages", 0))))
     inner.append(_email_row("Leads captured", str(stats.get("wa_leads", 0))))
@@ -4782,16 +4853,24 @@ def format_report_html(stats: dict) -> str:
         inner.append('<div style="padding:3px 0;color:#334155;font-size:13.5px;line-height:1.45;">Nothing shipped this week.</div>')
 
     variants = stats.get("teaser_variants") or {}
-    if len(variants) >= 2:
+    totals = stats.get("teaser_variants_total") or {}
+    if len(variants) >= 2 or len(totals) >= 2:
         labels = {"control": "Original greeting", "nick": "Nick's greeting line"}
         inner.append(_email_section("Greeting test (running since 6 Aug)"))
-        for key in sorted(variants):
-            bucket = variants[key]
+        headline = totals if len(totals) >= 2 else variants
+        for key in sorted(headline):
+            bucket = headline[key]
             rate = safe_rate(bucket["opened"], bucket["visitors"])
             inner.append(_email_row(
                 labels.get(key, e(key)),
-                f"{bucket['opened']}/{bucket['visitors']} opened ({_pct(rate)})",
+                f"{bucket['opened']}/{bucket['visitors']} opened ({_pct(rate)}) since 6 Aug",
             ))
+        if len(totals) >= 2 and variants:
+            week_bits = ", ".join(
+                f"{labels.get(key, e(key))} {variants[key]['opened']}/{variants[key]['visitors']}"
+                for key in sorted(variants)
+            )
+            inner.append(f'<div style="font-size:12.5px;color:#64748b;padding-top:4px;line-height:1.45;">This week: {week_bits} (chats opened / visitors).</div>')
         inner.append('<div style="font-size:12px;color:#94a3b8;padding-top:6px;line-height:1.45;">Long game: at current traffic this needs months, not weeks. It runs in the background; nobody decides off early numbers.</div>')
 
     if stats["lead_lines"]:
@@ -7395,6 +7474,12 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
         return contact_capture_reply(message, session_id)
 
     if is_location_question(normalise_chat_text(message)):
+        # A parking/transport DETAIL question gets the real logistics facts, not
+        # the venue chooser — same rule as the repeat-detector and main-flow
+        # branches. "Do you have parking?" with no venue named was answered with
+        # the two-venues block on WhatsApp (Nicholas's stranger pass, 2026-09-10).
+        if asks_location_detail(clean):
+            return location_detail_reply(clean)
         if "redfern" in text:
             return (
                 "Redfern sessions are at Redfern Park, Redfern St, Redfern NSW 2016.\n\n"

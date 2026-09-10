@@ -98,5 +98,33 @@
   {
     "date": "2026-09-07",
     "line": "Weekly report: your own test chats (the 31 Aug–1 Sep sessions from your three devices) are now excluded from the numbers, and future test sessions can be excluded the same way without a code change"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "WhatsApp: replies no longer race Twilio's 15-second webhook limit — the bot acknowledges instantly and delivers the answer as its own message, so a first message can never be silently dropped again"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "Price list answer: the \"Roughly\" hedge is gone (prices are exact), the Squad Student rate ($25/wk, verified students) is on the ladder, and the free-trial booking link is included"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "Timetable answers now always carry the live booking link, not just a mention of the booking view"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "\"Do you have parking?\" now gets the actual parking and transport facts for both venues instead of the location chooser"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "Weekly report: the WhatsApp section now states plainly whether the channel is live and publicly reachable, so a quiet week and a closed channel can never look the same"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "Weekly report: the greeting test now shows running totals since 6 Aug with this week's figures underneath"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "Owner alerts now go out by SMS from the business number as well as email"
   }
 ]
