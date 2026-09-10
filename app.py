@@ -1188,18 +1188,50 @@ def build_anthropic_request(message: str, session_id: str) -> dict:
             })
     if system_blocks:
         system_blocks[-1]["cache_control"] = {"type": "ephemeral"}
-    return {
-        # Sonnet (not Haiku): the AI tail handles exactly the questions the
-        # deterministic layer can't classify, where instruction-following and
-        # not-inventing-facts matter most. Haiku hallucinated a "Thursday 6:30pm
-        # Redfern" session in Nicholas's 2026-06-11 retest; Sonnet 4.6 is the
-        # floor for visitor-facing answers. Override via OUTDOOR_SQUAD_ANTHROPIC_MODEL.
-        "model": os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+    # Sonnet (not Haiku): the AI tail handles exactly the questions the
+    # deterministic layer can't classify, where instruction-following and
+    # not-inventing-facts matter most. Haiku hallucinated a "Thursday 6:30pm
+    # Redfern" session in Nicholas's 2026-06-11 retest; Sonnet is the floor for
+    # visitor-facing answers. Claude Sonnet 5 since 2026-09-10 (Jacobo's call).
+    # Override via OUTDOOR_SQUAD_ANTHROPIC_MODEL.
+    model = os.environ.get("OUTDOOR_SQUAD_ANTHROPIC_MODEL", ANTHROPIC_DEFAULT_MODEL)
+    request = {
+        "model": model,
         "max_tokens": 520,
-        "temperature": 0.82,
         "system": system_blocks,
         "messages": history,
     }
+    request.update(anthropic_sampling_params(model))
+    return request
+
+
+ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5"
+
+# Models up to the 4.6 generation accept sampling parameters and run without
+# thinking unless asked. Every model released after Opus 4.6 (the Claude 5
+# family, Opus 4.7/4.8) rejects a non-default `temperature` with a 400 and
+# runs adaptive thinking by default, whose tokens count against max_tokens
+# (520 here, so an unprompted think could truncate the visitor's reply).
+# Verified against the Messages API on 2026-09-10: Sonnet 5 + temperature 0.82
+# -> 400 "`temperature` is deprecated for this model".
+_ANTHROPIC_LEGACY_SAMPLING_PREFIXES = (
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+    "claude-3",
+)
+
+
+def anthropic_sampling_params(model: str) -> dict:
+    """Per-generation request extras. Legacy models keep the tuned 0.82
+    temperature Robo-Nick ran with since launch; Claude 5 models get thinking
+    disabled instead (the documented drop-in for a workload that never used
+    thinking) and no sampling parameters at all."""
+    if model.startswith(_ANTHROPIC_LEGACY_SAMPLING_PREFIXES):
+        return {"temperature": 0.82}
+    return {"thinking": {"type": "disabled"}}
 
 
 def generate_anthropic_reply(message: str, session_id: str) -> str:

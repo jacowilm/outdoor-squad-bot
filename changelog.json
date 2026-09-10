@@ -146,5 +146,9 @@
   {
     "date": "2026-09-10",
     "line": "Owner alerts for \"talk to a real person\" now carry the person's name when they gave one"
+  },
+  {
+    "date": "2026-09-10",
+    "line": "Robo-Nick's AI layer now runs on Claude Sonnet 5 (server-side model upgrade; nothing changes in the website widget)"
   }
 ]
