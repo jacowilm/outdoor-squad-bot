@@ -592,6 +592,23 @@ def supabase_headers(*, prefer: str | None = None) -> dict[str, str]:
 _supabase_http = httpx.Client(timeout=SUPABASE_TIMEOUT_SECONDS)
 
 
+class SupabaseRequestError(RuntimeError):
+    """A failed Supabase call with the PostgREST body attached.
+
+    httpx formats an HTTPStatusError as "Client error '400 Bad Request' for
+    url ..." and throws the body away, so the REASON PostgREST gave ("Could
+    not find the 'channel' column of 'outdoor_squad_leads'") never reached the
+    caller. save_lead's missing-column fail-soft reads that reason, so it could
+    never fire in production and every lead fell to the ephemeral disk while
+    the migration was outstanding (review of the 11 Sep 2026 diff work).
+    """
+
+    def __init__(self, message: str, original: Exception | None = None, body: str = ""):
+        super().__init__(message)
+        self.original = original
+        self.body = body
+
+
 def supabase_request(
     method: str,
     table: str,
@@ -611,6 +628,7 @@ def supabase_request(
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     attempts = 3 if method.upper() == "GET" else 1
     last_exc: Exception | None = None
+    last_body = ""
     for attempt in range(attempts):
         try:
             response = _supabase_http.request(
@@ -627,6 +645,9 @@ def supabase_request(
             return response.json()
         except Exception as exc:
             last_exc = exc
+            # Kept separately because raise_for_status() drops it: it is the
+            # only place PostgREST says WHICH column it does not know.
+            last_body = str(getattr(getattr(exc, "response", None), "text", "") or "")
             if attempt + 1 < attempts:
                 time.sleep(0.6 * (attempt + 1))
     # Every attempt failed — record it so /api/health surfaces that Supabase is
@@ -634,6 +655,10 @@ def supabase_request(
     # health still said "supabase" — Nicholas 2026-07-02).
     _supabase_last_ok = False
     _supabase_last_error = f"{type(last_exc).__name__}: {str(last_exc)[:160]}"
+    if last_body.strip():
+        raise SupabaseRequestError(
+            f"{last_exc} :: {last_body.strip()[:400]}", last_exc, last_body.strip()[:400]
+        ) from last_exc
     raise last_exc
 
 
@@ -1192,10 +1217,19 @@ def episode_history(session_id: str) -> list[dict]:
 def wa_episode_number(session_id: str) -> int:
     """Which episode this thread is on, 1 for a thread that never broke.
 
-    Reads the IN-MEMORY entry, never load_conversation: the nudge sweep, the
-    owner-alert thread and the Momence worker all key their markers on this,
-    and a cache miss there must cost a default of 1 rather than a Supabase
-    fetch plus an LRU prune of somebody else's live thread.
+    Reads the IN-MEMORY entry first, never load_conversation: the nudge sweep,
+    the owner-alert thread and the Momence worker all key their markers on
+    this, and a cache miss there must not cost a Supabase fetch of the whole
+    transcript plus an LRU prune of somebody else's live thread.
+
+    On a miss it reads the number the webhook stamped in the settings store
+    rather than defaulting to 1. The cache is COLD on every path that runs
+    long after the inbound: the sweep fires after 90 minutes of silence while
+    the cache TTL is an hour, and a deploy empties it outright. Defaulting to
+    1 there made those paths read episode 1's markers, so a thread Nick was
+    already phoning got the automated follow-up anyway and a returning
+    customer's follow-up was blocked by a marker spent months earlier
+    (review of the 11 Sep 2026 diff work).
     """
     if not is_whatsapp_session(session_id):
         return 1
@@ -1203,7 +1237,11 @@ def wa_episode_number(session_id: str) -> int:
         episode = _turn_episode(turn)
         if episode:
             return episode
-    return 1
+    try:
+        stored = int(_cached_wa_setting(f"episode:{session_id}", "") or 0)
+    except (TypeError, ValueError):
+        return 1
+    return stored if stored > 1 else 1
 
 
 def wa_episode_key(session_id: str) -> str:
@@ -1306,6 +1344,20 @@ _WA_ASK_NAME_COMMA_RE = re.compile(
 _WA_ASK_SHARE_MOBILE_RE = re.compile(r"(?i)\b(share|take|leave|send)\s+a\s+mobile\b")
 _WA_ASK_NUMBER_RE = re.compile(r"(?i)\b(?:mobile|phone) number\b")
 _WA_ASK_VERB_RE = re.compile(r"(?i)\b(?:drop|send|share|leave|flag|pop)\b")
+# The ask has to be AIMED at the reader: the verb governs the number, and it
+# is either the start of the sentence or introduced the way a request is. A
+# bare "one of these six verbs appears somewhere in the sentence" test also
+# fired on ordinary prose, so "Your mobile number is only used so Nick can
+# text you back, and we never send it anywhere else" was rewritten into a
+# false statement about the person's NAME, on the privacy answers this rule
+# exists to protect (review of the 11 Sep 2026 diff work).
+_WA_NUMBER_ASK_RE = re.compile(
+    r"(?i)(?:^\s*|[:;,]\s*|\b(?:please|just|then|and|or|can you|could you|you can|so)\s+)"
+    r"(?:drop|send|share|leave|flag|pop|give)\b[^.?!]{0,60}?\b(?:mobile|phone) number\b"
+)
+# Both spellings, so a "phone number" ask is not left alone just because the
+# word "mobile" happens to be missing from the rest of the reply.
+_WA_CONTACT_NUMBER_GUARD_RE = re.compile(r"(?i)\bmobile\b|\b(?:mobile|phone) number\b")
 
 
 def _wa_name_or_email(match: re.Match, text: str) -> str:
@@ -1317,7 +1369,7 @@ def _wa_name_or_email(match: re.Match, text: str) -> str:
 
 def wa_rewrite_contact_asks(text: str) -> str:
     """Turn "name + mobile" asks into first-name-only asks, in order."""
-    if not text or "mobile" not in text.lower():
+    if not text or not _WA_CONTACT_NUMBER_GUARD_RE.search(text):
         return text
     out = _WA_ASK_NAME_EMAIL_RE.sub("your first name, or email ", text)
     out = _WA_ASK_BARE_EMAIL_RE.sub("email ", out)
@@ -1325,12 +1377,12 @@ def wa_rewrite_contact_asks(text: str) -> str:
     out = _WA_ASK_NAME_MOBILE_RE.sub(lambda m: _wa_name_or_email(m, out), out)
     out = _WA_ASK_NAME_COMMA_RE.sub(lambda m: _wa_name_or_email(m, out), out)
     out = _WA_ASK_SHARE_MOBILE_RE.sub(lambda m: f"{m.group(1)} your first name", out)
-    # "mobile number" on its own is only an ask when the sentence asks: the
-    # same two words appear in the bot-identity and privacy answers, which
-    # must not be rewritten into nonsense.
+    # "mobile number" on its own is only an ask when the sentence asks the
+    # READER for it: the same two words appear in the bot-identity and privacy
+    # answers, which must not be rewritten into nonsense.
     sentences = re.split(r"(?<=[.!?])(\s+)", out)
     for index in range(0, len(sentences), 2):
-        if _WA_ASK_VERB_RE.search(sentences[index]):
+        if _WA_NUMBER_ASK_RE.search(sentences[index]):
             sentences[index] = _WA_ASK_NUMBER_RE.sub("first name", sentences[index])
     return "".join(sentences)
 
@@ -2149,9 +2201,15 @@ def remove_extra_questions(text: str, max_questions: int = 1) -> str:
     return "\n\n".join(kept_blocks).strip()
 
 
+# The mobile is the session id on WhatsApp, so asking for it is always wrong.
+# The EMAIL is not: it is the one contact detail WhatsApp does not give us and
+# the one Momence needs to create a member, so "email address" and the bare
+# "best contact" are deliberately absent. Deleting them made the bot answer a
+# booking request and then go silent on the only detail the booking needed
+# (review of the 11 Sep 2026 diff work).
 _WA_CONTACT_ASK_PHRASES = (
     "name and mobile", "mobile number", "phone number",
-    "email address", "best contact", "how can the team reach",
+    "best contact number", "best number", "how can the team reach",
 )
 _WA_NAME_ASK_PHRASES = ("first name", "your name", "me your name")
 # A sentence only counts as an ASK when it is shaped like one. "Your email
@@ -2170,6 +2228,9 @@ _WA_NAME_ASK_LEAD_RE = re.compile(
     r"(?i)^(?:drop|send|share|leave|pop|flag)\s+(?:your\s+|a\s+|me\s+your\s+)?first name,?\s*(?:or|and)\s+"
 )
 _WA_LINK_RE = re.compile(r"https?://")
+# What goes out when the draft was nothing BUT a contact ask.
+_WA_ALL_ASK_FALLBACK = "Happy to help. What's your first name?"
+_WA_ALL_ASK_FALLBACK_NAMED = "Happy to help. What else can I get sorted for you?"
 
 
 def wa_strip_contact_asks(reply: str, session_id: str) -> str:
@@ -2224,7 +2285,13 @@ def wa_strip_contact_asks(reply: str, session_id: str) -> str:
             kept_lines.append(text)
     stripped = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
     if not stripped:
-        return remove_extra_questions(reply)
+        # The WHOLE draft was the ask ("What's the best mobile number to reach
+        # you on?"), and handing the draft back unchanged sent that question to
+        # the number the person is messaging from, which is the defect this
+        # guard exists to stop (review of the 11 Sep 2026 diff work). Ask for
+        # the detail we actually lack instead, or say nothing more than that
+        # once the name is known.
+        return (_WA_ALL_ASK_FALLBACK_NAMED if drop_name_ask else _WA_ALL_ASK_FALLBACK)
     return remove_extra_questions(stripped)
 
 
@@ -6309,12 +6376,25 @@ def wa_status_callback_url() -> str:
     Derived from the inbound webhook URL rather than configured a second time,
     so the base Twilio signs the callback against is by construction the base
     twilio_signature_valid validates it with (11 Sep 2026 diff, finding #14).
-    Empty when OUTDOOR_SQUAD_TWILIO_WA_WEBHOOK_URL is unset: no StatusCallback
-    is sent, no receipt ever arrives, and every delivery badge stays blank.
+
+    With OUTDOOR_SQUAD_TWILIO_WA_WEBHOOK_URL unset it falls back to the first
+    of the hosts the signature validator already accepts in that case, exactly
+    as twilio_signature_valid does. Returning "" there silently switched the
+    WHOLE receipt feature off: no badge, no red "Not delivered", and a Monday
+    report reading "0 / 0" that looks like a clean week rather than a channel
+    nobody is measuring (review of the 11 Sep 2026 diff work). /api/health
+    carries wa_delivery_receipts_configured so the off state is visible.
     """
-    if not TWILIO_WA_WEBHOOK_URL:
+    base = (
+        TWILIO_WA_WEBHOOK_URL.rsplit("/twilio-wa-webhook", 1)[0]
+        if TWILIO_WA_WEBHOOK_URL
+        else (TWILIO_WA_FALLBACK_HOSTS[0] if TWILIO_WA_FALLBACK_HOSTS else "")
+    )
+    if not base.startswith("https://"):
+        # Never put a bare host or an http URL on the wire: Twilio would post
+        # the receipt somewhere the signature check cannot validate.
         return ""
-    return TWILIO_WA_WEBHOOK_URL.rsplit("/twilio-wa-webhook", 1)[0] + "/twilio-wa-status"
+    return base + "/twilio-wa-status"
 
 
 def _wa_capture_lead(message: str, session_id: str, human_request_handled: bool, reason: str) -> None:
@@ -6668,10 +6748,18 @@ def _wa_answer_one(message: str, session_id: str, sender_digits: str,
                       session_id=session_id, channel="whatsapp",
                       ai_provider=ai_provider, delivery="rest",
                       message_sid=str(detail), kind=kind)
-            if get_wa_setting(f"undelivered:{ekey}") == "1":
-                set_wa_setting(f"undelivered:{ekey}", "")
-            if is_intro and get_wa_setting(f"intro_failed:{ekey}") == "1":
-                set_wa_setting(f"intro_failed:{ekey}", "")
+            # Clear only a flag an EARLIER message left behind. Twilio's
+            # terminal receipt for the message we just sent can land while
+            # this worker is still writing the transcript, and clearing on
+            # "Twilio accepted it" wiped a failure the ledger had already
+            # recorded: the follow-up then fired into a thread whose answer
+            # never arrived, and a bounced introduction counted as delivered
+            # (review of the 11 Sep diff work).
+            if not _wa_send_group_failed(session_id, str(detail)):
+                if get_wa_setting(f"undelivered:{ekey}") == "1":
+                    set_wa_setting(f"undelivered:{ekey}", "")
+                if is_intro and get_wa_setting(f"intro_failed:{ekey}") == "1":
+                    set_wa_setting(f"intro_failed:{ekey}", "")
         # outcome "unknown" is deliberately quiet here: wa_send_unknown is
         # already logged, the turn is kept because the message may well have
         # gone out, and the delivery receipt is what settles it.
@@ -6775,6 +6863,10 @@ async def twilio_wa_webhook(request: Request):
     turn = {"role": "user", "content": message, "at": now_iso()}
     if episode:
         turn["episode"] = episode
+        # Durable copy of the number, because the in-memory turn marker is
+        # gone by the time the nudge sweep or a late delivery receipt needs
+        # it (review of the 11 Sep diff work).
+        set_wa_setting(f"episode:{session_id}", str(episode))
         _wa_prune_episode_keys(session_id, episode)
         log_event("conversation_started", session_id=session_id, channel="whatsapp",
                   episode=episode)
@@ -6812,6 +6904,20 @@ async def twilio_wa_webhook(request: Request):
         # Nick is driving this thread: capture and alert, never speak.
         log_event("wa_bot_muted_skip", session_id=session_id, channel="whatsapp")
         _wa_capture_lead(message, session_id, human_request_handled, "wa_muted_contact_capture")
+        return _twiml_message(None)
+
+    # The opt-out is checked HERE, not only in the worker, because the
+    # scripted branch below answers inside the request: "stop" followed by
+    # "how much is a membership?" got the whole price ladder back, which is
+    # the busiest question on the channel (review of the 11 Sep diff work).
+    # A fresh STOP is the one exception, so it still gets its single
+    # acknowledgement and the flag is still set.
+    if (get_wa_setting(f"opted_out:{session_id}") == "1"
+            and not is_opt_out_message(normalise_chat_text(message))):
+        log_event("wa_reply_suppressed", session_id=session_id, channel="whatsapp",
+                  reason="opted_out")
+        _wa_capture_lead(message, session_id, human_request_handled,
+                         "wa_opted_out_contact_capture")
         return _twiml_message(None)
 
     # Two messages fifteen seconds apart used to get two answers written in
@@ -6977,7 +7083,11 @@ async def wa_mute_endpoint(request: Request, _: str = Depends(require_admin)):
 # Small key/value state shared across deploys: Supabase settings table when
 # available, a local JSON file otherwise (dev/tests). Holds the kill switch,
 # the rotating Momence refresh token, and per-thread markers. Per-thread keys:
-#   opted_out:{sid}, mute:{sid}, nudge_count:{sid}  lifetime, never reset
+#   opted_out:{sid}, mute:{sid}, nudge_count:{sid}, episode:{sid}  lifetime
+#   episode:{sid}  the episode number this thread is on, stamped by the
+#     webhook at every boundary so the nudge sweep and the delivery receipts
+#     scope their markers to the SAME episode the webhook wrote them under
+#     even when the conversation cache is cold (review, 11 Sep 2026)
 #   handoff:{ekey}, nudged:{ekey}, lead_alerted:{ekey}, momence_pushed:{ekey},
 #   undelivered:{ekey}  per EPISODE, where ekey = wa_episode_key(sid): the bare
 #     session id for episode 1 and "{sid}#eN" after a gap of
@@ -7022,6 +7132,9 @@ def _parse_any_ts(value) -> "datetime | None":
         parsed = parsed.astimezone().replace(tzinfo=None)
     return parsed
 _WA_SETTING_PREFIX = "wa::"
+# Every wa:: key in the store, paged. Well above the real key count (a handful
+# per thread) and low enough that a runaway table cannot be pulled into memory.
+WA_SETTINGS_SNAPSHOT_CAP = int(os.environ.get("OUTDOOR_SQUAD_WA_SETTINGS_SNAPSHOT_CAP", "20000"))
 
 
 def _wa_state_file_load() -> dict:
@@ -7067,6 +7180,14 @@ def wa_settings_snapshot() -> dict:
     key, which the dashboard was paying once per flag per thread (11 Sep 2026
     diff, finding #19 follow-up). Same freshest-wins rule as get_wa_setting.
     Returns {} on any failure so callers simply fall back to per-key reads.
+
+    Filtered and PAGED, not a flat "limit 2000" over the whole table: the
+    settings table only grows (every thread adds lifetime keys plus markers
+    per episode, and the prune leaves the Supabase rows alone), it was read
+    with no ordering, and once it passed the cap the rows that fell off came
+    back as "unset" instead of missing. An opted-out thread rendered as
+    contactable and a thread whose last reply bounced lost its red badge, with
+    nothing logged (review of the 11 Sep 2026 diff work).
     """
     merged: dict[str, str] = {}
     stamps: dict[str, "datetime | None"] = {}
@@ -7079,11 +7200,19 @@ def wa_settings_snapshot() -> dict:
                 merged[key] = "" if entry is None else str(entry)
                 stamps[key] = None
         if supabase_enabled():
-            rows = supabase_request(
-                "GET",
+            rows = supabase_select_paged(
                 SUPABASE_TABLES["settings"],
-                params={"select": "key,value,updated_at", "limit": "2000"},
+                {"select": "key,value,updated_at",
+                 "key": f"like.{_WA_SETTING_PREFIX}*",
+                 "order": "key.asc"},
+                WA_SETTINGS_SNAPSHOT_CAP,
             ) or []
+            if len(rows) >= WA_SETTINGS_SNAPSHOT_CAP:
+                # Still bounded, so say so rather than quietly showing a
+                # thread's flags as unset (the silent truncation of
+                # 2026-07-27, in a new place).
+                log_event("wa_settings_snapshot_truncated", session_id="wa-system",
+                          rows=len(rows))
             for row in rows:
                 raw_key = str(row.get("key") or "")
                 if not raw_key.startswith(_WA_SETTING_PREFIX):
@@ -7304,11 +7433,38 @@ def wa_send_failure_class(detail: str) -> str:
     text = str(detail or "").strip()
     if text == "twilio sending not configured":
         return "config"
-    if text.startswith("HTTP 429") or re.match(r"^HTTP 5\d\d", text):
+    if text.startswith("HTTP 429") or text.startswith("HTTP 500"):
         return "retry"
+    if re.match(r"^HTTP 5\d\d", text):
+        # 502, 503 and 504 come from a proxy in FRONT of the API, so the
+        # message may already have been created before the gateway gave up and
+        # a resend is how the same customer gets the same answer twice. Same
+        # ambiguity as a dead socket, same treatment: hold the turn and let the
+        # receipt settle it (review of the 11 Sep 2026 diff work). A 500 is the
+        # API itself saying it did not process the request, so that stays
+        # retryable along with a 429.
+        return "unknown"
     if text.startswith(_WA_SEND_UNKNOWN_PREFIXES):
         return "unknown"
     return "permanent"
+
+
+_WA_TWILIO_CODE_RE = re.compile(r'"code"\s*:\s*"?(\d{4,6})')
+
+
+def wa_send_error_code(detail: str) -> str:
+    """The short code for a refused send, for the dashboard badge.
+
+    Twilio answers a refusal with a JSON body carrying its own code (63024,
+    63016), which is the thing Nick can look up; the raw "HTTP 400: {...}"
+    string is truncated mid-JSON in a badge and says nothing. Falls back to the
+    status line (review of the 11 Sep 2026 diff work).
+    """
+    text = str(detail or "").strip()
+    match = _WA_TWILIO_CODE_RE.search(text)
+    if match:
+        return match.group(1)
+    return text.split(":", 1)[0][:32]
 
 
 def wa_delivery_ledger(session_id: str) -> list:
@@ -7318,6 +7474,25 @@ def wa_delivery_ledger(session_id: str) -> list:
     except (TypeError, ValueError, json.JSONDecodeError):
         return []
     return [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []
+
+
+def _wa_send_group_failed(session_id: str, message_sid: str) -> bool:
+    """Whether the send this SID belongs to has already come back failed.
+
+    A split reply is several Twilio messages for one answer, so the whole
+    group is checked: part one bouncing is the answer bouncing (review of the
+    11 Sep 2026 diff work).
+    """
+    ledger = wa_delivery_ledger(session_id)
+    entry = next((e for e in ledger if e.get("sid") == str(message_sid)), None)
+    if entry is None:
+        return False
+    group = entry.get("group") or entry.get("sid")
+    return any(
+        (e.get("group") or e.get("sid")) == group
+        and e.get("status") in ("failed", "undelivered")
+        for e in ledger
+    )
 
 
 def _wa_delivery_upsert(session_id: str, message_sid: str, *, kind: str | None = None,
@@ -7410,6 +7585,23 @@ def _wa_send_and_register(session_id: str, to_digits: str, body: str, kind: str,
                 log_event("wa_send_unknown", session_id=session_id, channel="whatsapp",
                           kind=kind, error=str(detail)[:200])
                 return "unknown", str(detail), sent_parts, attempts
+            # Register the refusal as well. Only successful sends reached the
+            # ledger, so a reply Twilio rejected left the thread with no badge
+            # and no red header at all: Nick's dashboard showed the customer's
+            # message with nothing under it, exactly like a thread the bot has
+            # not answered yet (review of the 11 Sep 2026 diff work). The
+            # synthetic id cannot collide with a Twilio SID and no receipt ever
+            # arrives for it. The preview is deliberately EMPTY: a refused send
+            # is never persisted as a turn, so there is no transcript row to
+            # badge and a preview here would only steal the badge off the last
+            # message that did land. On a split reply it keeps the group, so
+            # the half-answer the customer did get is badged red through part
+            # one's own entry.
+            _wa_delivery_upsert(
+                session_id, f"failed:{int(time.time() * 1000)}",
+                kind=kind, group=group, status="failed",
+                error=wa_send_error_code(detail), preview="",
+            )
             return ("partial" if sent_parts else "failed"), str(detail), sent_parts, attempts
         last = str(detail)
         group = group or last
@@ -8841,6 +9033,10 @@ async def health():
         "lead_summary_email_to_configured": bool(LEAD_SUMMARY_EMAIL_TO),
         "lead_summary_phone_to_configured": bool(LEAD_SUMMARY_PHONE_TO),
         "lead_summary_webhook_configured": bool(LEAD_SUMMARY_WEBHOOK_URL),
+        # False means WhatsApp delivery receipts are OFF: every badge stays on
+        # "Sent" and the report's delivered/failed pair reads 0 / 0 because
+        # nothing is measuring it (review of the 11 Sep 2026 diff work).
+        "wa_delivery_receipts_configured": bool(wa_status_callback_url()),
         "smtp_configured": bool(SMTP_HOST and SMTP_FROM),
         "source_chunks": len(SOURCE_CHUNKS),
     })
@@ -10261,7 +10457,8 @@ def _supabase_missing_lead_column(error_text: str, body: dict) -> str:
     find the 'channel' column of 'outdoor_squad_leads'"). Before 11 Sep that
     sank the WHOLE row to Render's ephemeral disk, so every WhatsApp lead was
     quietly lost at the next deploy. A missing migration may cost one field,
-    never the lead.
+    never the lead. The reason travels on SupabaseRequestError: httpx's own
+    message carries the status line only (review of the 11 Sep diff work).
     """
     for name in _MISSING_COLUMN_RE.findall(str(error_text or "")):
         if name in body:
@@ -10275,7 +10472,12 @@ def save_lead(lead_info: dict):
     normalized.setdefault("concerns", [])
     if supabase_enabled():
         body = dict(normalized)
-        for attempt in (1, 2):
+        # One rejected column per pass, until the row is accepted or PostgREST
+        # names a column we are not sending. The old two-pass loop could strip
+        # exactly ONE, and the 11 Sep migration adds two (channel and
+        # phone_typed), so a table missing both still lost the lead (review of
+        # the 11 Sep diff work).
+        for _attempt in range(len(LEAD_ROW_FIELDS)):
             try:
                 existing = find_existing_supabase_lead(body)
                 if existing and existing.get("id") is not None:
@@ -10297,7 +10499,7 @@ def save_lead(lead_info: dict):
                     )
                 return
             except Exception as exc:
-                column = _supabase_missing_lead_column(exc, body) if attempt == 1 else ""
+                column = _supabase_missing_lead_column(exc, body)
                 if column:
                     log_event("lead_storage_degraded",
                               session_id=str(body.get("session_id") or "unknown"),
@@ -11705,7 +11907,6 @@ ADMIN_HTML = """
       // instant replies, history from before the ledger existed) get no badge
       // rather than a wrong one (11 Sep 2026 diff, finding #14).
       const ledger = thread.deliveries || [];
-      let ledgerAt = 0;
       function waWorse(a, b) {
         if (a === null) return b;
         if (a === 'failed' || a === 'undelivered') return a;
@@ -11713,31 +11914,51 @@ ADMIN_HTML = """
         const rank = { '': 0, accepted: 1, sent: 1, delivered: 2, read: 3 };
         return (rank[b] || 0) < (rank[a] || 0) ? b : a;
       }
-      function waDeliveryBadge(content) {
+      // One entry per SEND, oldest first, collapsing the several Twilio
+      // messages a split reply costs into the group's worst status.
+      const waSends = [];
+      for (let i = 0; i < ledger.length; ) {
+        const group = ledger[i].group || ledger[i].sid;
+        let worst = null, code = '', j = i;
+        while (j < ledger.length && (ledger[j].group || ledger[j].sid) === group) {
+          worst = waWorse(worst, ledger[j].status || '');
+          if (ledger[j].error) code = ledger[j].error;
+          j++;
+        }
         // Compared on a prefix: the stored preview is redacted, so an email or
         // a number further into the line would not match character for
         // character.
-        const head = String(content || '').slice(0, 24);
-        for (let i = ledgerAt; i < ledger.length; i++) {
-          if (String(ledger[i].preview || '').slice(0, 24) !== head) continue;
-          const group = ledger[i].group || ledger[i].sid;
-          let worst = null, code = '', j = i;
-          while (j < ledger.length && (ledger[j].group || ledger[j].sid) === group) {
-            worst = waWorse(worst, ledger[j].status || '');
-            if (ledger[j].error) code = ledger[j].error;
-            j++;
-          }
-          ledgerAt = j;
-          if (worst === 'failed' || worst === 'undelivered') {
-            return ' <span class="badge red">Not delivered' + (code ? ' \u00b7 ' + esc(code) : '') + '</span>';
-          }
-          if (worst === 'read') return ' <span class="badge green">Read</span>';
-          if (worst === 'delivered') return ' <span class="badge green">Delivered</span>';
-          return ' <span class="badge">Sent</span>';
-        }
-        return '';
+        waSends.push({ head: String(ledger[i].preview || '').slice(0, 24), worst: worst, code: code });
+        i = j;
       }
-      document.getElementById('waMessages').innerHTML = waThreadMessages(thread.session_id).map(function(m) {
+      function waBadgeHtml(send) {
+        if (send.worst === 'failed' || send.worst === 'undelivered') {
+          return ' <span class="badge red">Not delivered' + (send.code ? ' \u00b7 ' + esc(send.code) : '') + '</span>';
+        }
+        if (send.worst === 'read') return ' <span class="badge green">Read</span>';
+        if (send.worst === 'delivered') return ' <span class="badge green">Delivered</span>';
+        return ' <span class="badge">Sent</span>';
+      }
+      // Matched from the NEWEST end of both lists. The ledger keeps ten
+      // messages while the transcript is the whole thread, and Robo-Nick's
+      // replies repeat word for word (the price ladder, the follow-up), so a
+      // walk that started at ledger[0] painted the badge, red ones included,
+      // on a copy of the line from weeks earlier and left the message Nick
+      // actually has to chase bare (review of the 11 Sep diff work).
+      const waRows = waThreadMessages(thread.session_id);
+      const waBadges = {};
+      let sendAt = waSends.length - 1;
+      for (let i = waRows.length - 1; i >= 0 && sendAt >= 0; i--) {
+        if (waRows[i].role === 'user') continue;
+        const head = String(waRows[i].content || '').slice(0, 24);
+        for (let s = sendAt; s >= 0; s--) {
+          if (waSends[s].head !== head) continue;
+          waBadges[i] = waBadgeHtml(waSends[s]);
+          sendAt = s - 1;
+          break;
+        }
+      }
+      document.getElementById('waMessages').innerHTML = waRows.map(function(m, mIndex) {
         const role = esc(m.role || 'unknown');
         const who = m.role === 'user' ? 'Customer' : 'Robo-Nick';
         let divider = '';
@@ -11751,7 +11972,7 @@ ADMIN_HTML = """
           }
           if (at) prevUser = at;
         }
-        const badge = m.role === 'user' ? '' : waDeliveryBadge(m.content);
+        const badge = m.role === 'user' ? '' : (waBadges[mIndex] || '');
         return divider + '<article class="chat-message ' + role + '">'
           + '<div class="role">' + esc(who) + ' · ' + esc(fmtDate(m.timestamp)) + badge + '</div>'
           + esc(m.content || '')

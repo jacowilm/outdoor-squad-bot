@@ -193,7 +193,7 @@
   },
   {
     "date": "2026-09-11",
-    "line": "WhatsApp replies are now sent first and recorded only once Twilio accepted them, retried once when Twilio is briefly overloaded, and every outbound message carries a delivery receipt so the dashboard shows sent, delivered, read or not delivered."
+    "line": "WhatsApp replies are now sent first and recorded only once Twilio accepted them, retried once when Twilio is briefly overloaded, and the replies sent over the API (the AI answers, the follow-up and your own manual replies) carry a delivery receipt, so the dashboard shows sent, delivered, read or not delivered; the instant scripted answers go back in the reply to WhatsApp's own call and are not receipted."
   },
   {
     "date": "2026-09-11",
@@ -202,5 +202,9 @@
   {
     "date": "2026-09-11",
     "line": "The Monday report's WhatsApp block now shows returning customers, requests to speak with Nick or Lyn, owner alerts, trial-link offers, follow-up nudges, replies Twilio refused or never confirmed, delivery receipts and the times the bot stayed silent on purpose; the dashboard's WhatsApp tab shows the same seven-day numbers."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "WhatsApp review pass: someone who says stop is no longer answered by the instant scripted replies, a reply Twilio refused now shows as not delivered on the thread instead of showing nothing, the delivery badges land on the right message in a long thread, a returning customer's follow-up rules survive a restart, the bot can ask for an email again when a booking needs one, and a lead is never lost to a database column that is still being added."
   }
 ]

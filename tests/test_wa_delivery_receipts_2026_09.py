@@ -175,11 +175,26 @@ def test_status_callback_is_passed_to_twilio_when_configured(wa, monkeypatch):
     assert app.wa_status_callback_url() == "https://outdoorsquad.realtiq.ai/twilio-wa-status"
     assert posted[0]["StatusCallback"] == ["https://outdoorsquad.realtiq.ai/twilio-wa-status"]
 
+    # Unset webhook URL: the callback falls back to the SAME host the
+    # signature validator accepts in that case, instead of dropping the
+    # StatusCallback and switching every delivery badge off in silence
+    # (review of the 11 Sep diff work).
     posted.clear()
     monkeypatch.setattr(app, "TWILIO_WA_WEBHOOK_URL", "")
     REAL_SEND("61452006342", "hello")
-    assert app.wa_status_callback_url() == ""
-    assert "StatusCallback" not in posted[0]
+    fallback = app.TWILIO_WA_FALLBACK_HOSTS[0] + "/twilio-wa-status"
+    assert app.wa_status_callback_url() == fallback
+    assert posted[0]["StatusCallback"] == [fallback]
+    assert fallback.startswith("https://")
+
+
+def test_health_says_whether_delivery_receipts_are_configured(wa, monkeypatch):
+    monkeypatch.setattr(app, "TWILIO_WA_WEBHOOK_URL", "")
+    monkeypatch.setattr(app, "TWILIO_WA_FALLBACK_HOSTS", ())
+    assert wa.get("/api/health").json()["wa_delivery_receipts_configured"] is False
+    monkeypatch.setattr(app, "TWILIO_WA_WEBHOOK_URL",
+                        "https://outdoorsquad.realtiq.ai/twilio-wa-webhook")
+    assert wa.get("/api/health").json()["wa_delivery_receipts_configured"] is True
 
 
 # ---- send first, persist second ---------------------------------------------
@@ -202,7 +217,14 @@ def test_failed_send_leaves_no_answer_in_the_transcript(wa, monkeypatch):
 def test_failure_classification_decides_the_retry(wa, monkeypatch):
     assert app.wa_send_failure_class("HTTP 400: bad") == "permanent"
     assert app.wa_send_failure_class("HTTP 429: slow down") == "retry"
-    assert app.wa_send_failure_class("HTTP 503: unavailable") == "retry"
+    assert app.wa_send_failure_class("HTTP 500: twilio is sad") == "retry"
+    # A gateway code means a proxy gave up, so the message may already have
+    # been created: resending it is how the same customer gets the same answer
+    # twice, which is why a dead socket is not retried either (review of the
+    # 11 Sep diff work).
+    for gateway in ("HTTP 502: bad gateway", "HTTP 503: unavailable",
+                    "HTTP 504: gateway timeout"):
+        assert app.wa_send_failure_class(gateway) == "unknown", gateway
     assert app.wa_send_failure_class("TimeoutError: timed out") == "unknown"
     assert app.wa_send_failure_class("twilio sending not configured") == "config"
 
