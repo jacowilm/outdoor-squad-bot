@@ -190,5 +190,9 @@
   {
     "date": "2026-09-11",
     "line": "WhatsApp: a customer who comes back after a day and a half starts a fresh conversation, so Nick is alerted again if they ask for him, the follow-up can fire again (at most three over the life of a thread) and a returning hi is greeted properly; older messages stay on the dashboard as background."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "WhatsApp replies are now sent first and recorded only once Twilio accepted them, retried once when Twilio is briefly overloaded, and every outbound message carries a delivery receipt so the dashboard shows sent, delivered, read or not delivered."
   }
 ]

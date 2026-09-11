@@ -89,6 +89,11 @@ alter table public.outdoor_squad_leads enable row level security;
 -- EPISODE, so from the second conversation onwards the key reads
 -- "wa::nudged:wa-614...#e2"; "wa::nudge_count:{session_id}" counts the
 -- follow-ups ever sent to a thread and is never reset.
+-- Also since 11 Sep 2026 (finding #14): "wa::wa_delivery:{session_id}" holds a
+-- JSON list of the thread's newest outbound messages with their Twilio SID,
+-- kind and delivery status, and "wa::intro_failed:{ekey}" /
+-- "wa::introduced:{ekey}" record whether the introduction bounced or was
+-- confirmed delivered.
 -- The table already exists in the live project; recorded here so a fresh
 -- provision from this file matches production. "key" must be PRIMARY KEY or
 -- the on_conflict upserts in app.py degrade to blind inserts.

@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from starlette.concurrency import run_in_threadpool
 from openai import OpenAI
 
 app = FastAPI(title="Outdoor Squad AI Assistant")
@@ -1219,6 +1220,22 @@ def wa_episode_key(session_id: str) -> str:
     return str(session_id) if episode <= 1 else f"{session_id}#e{episode}"
 
 
+def wa_needs_intro(session_id: str) -> bool:
+    """Whether Robo-Nick still owes this person an introduction.
+
+    True on the first reply of an episode, and true again when the intro we
+    sent came back from Twilio as failed or undelivered: an introduction
+    nobody received is not an introduction (11 Sep 2026 diff, finding #14).
+    A receipt that has simply not arrived yet is NOT grounds to introduce
+    again, which is why only the explicit failure flag is read here.
+    """
+    if not is_whatsapp_session(session_id):
+        return False
+    if not any(m.get("role") == "assistant" for m in episode_history(session_id)):
+        return True
+    return get_wa_setting(f"intro_failed:{wa_episode_key(session_id)}") == "1"
+
+
 def whatsapp_channel_prompt(session_id: str) -> str:
     """The shared brain was written for the website widget and was never told
     when it is answering on WhatsApp (11 Sep 2026 diff, findings #6 and #7):
@@ -1231,7 +1248,9 @@ def whatsapp_channel_prompt(session_id: str) -> str:
     # Scoped to the current episode: someone coming back after a day and a
     # half is meeting Robo-Nick again, so the introduction is owed again
     # (11 Sep 2026 diff, finding #9).
-    first_reply = not any(m.get("role") == "assistant" for m in episode_history(session_id))
+    # Also true when the introduction we sent bounced, so the person meets
+    # Robo-Nick properly rather than mid-conversation (finding #14).
+    first_reply = wa_needs_intro(session_id)
     # Once the person has typed a first name (or answered a "first name?" ask
     # with a bare name), the model is told it and told to stop asking. Only a
     # name WE extracted is used here: the Twilio ProfileName is attacker-set
@@ -4886,9 +4905,18 @@ def _report_events_between(start: datetime, end: datetime) -> list[dict]:
     # baseline's earliest week silently loses events as the table grows (the
     # same failure mode as the 2026-07-27 truncation incident).
     excluded = report_excluded_session_ids()
+    raw = read_events(since=start.isoformat())
+    if len(raw) >= EVENTS_READ_LIMIT:
+        # The window filter stops table-wide truncation, but a busy window can
+        # now fill the cap on its own: every outbound message carries delivery
+        # receipts since 11 Sep 2026. The 2026-07-27 under-count was silent,
+        # this one says so in the event log.
+        log_event("report_events_truncated", session_id="report-system",
+                  window_days=max(1, int((end - start).total_seconds() // 86400)),
+                  rows=len(raw))
     return [
         event
-        for event in read_events(since=start.isoformat())
+        for event in raw
         if start.isoformat() <= _event_ts(event) < end.isoformat()
         and str(event.get("session_id") or "").startswith("widget-")
         and str(event.get("session_id") or "") not in excluded
@@ -5022,7 +5050,26 @@ def build_report_stats(days: int = 7) -> dict:
     }
     wa_messages = sum(1 for e in wa_events if e.get("event_type") == "message_received")
     wa_leads = {e.get("session_id") for e in wa_events if e.get("event_type") == "lead_captured"}
-    wa_manual_replies = sum(1 for e in wa_events if e.get("event_type") == "wa_manual_reply_sent")
+    # A reply WhatsApp reported as failed is not a reply Nick sent: matched by
+    # message_sid, never by session, so his second attempt in the same thread
+    # still counts (11 Sep 2026 diff, finding #14).
+    receipt_failed_sids = {
+        str(e.get("message_sid") or "")
+        for e in wa_events
+        if e.get("event_type") == "wa_reply_undelivered" and e.get("source") == "receipt"
+        and e.get("message_sid")
+    }
+    wa_manual_replies = sum(
+        1 for e in wa_events
+        if e.get("event_type") == "wa_manual_reply_sent"
+        and str(e.get("message_sid") or "") not in receipt_failed_sids
+    )
+    # Twilio REFUSING to send and WhatsApp never delivering are different
+    # facts for Nick, so the receipt-sourced ones are not counted here.
+    wa_undelivered = sum(
+        1 for e in wa_events
+        if e.get("event_type") == "wa_reply_undelivered" and e.get("source") != "receipt"
+    )
 
     # Greeting A/B running totals since the test started (6 Aug): the weekly
     # window alone made "running since 6 Aug" a mislabel — Nicholas asked for
@@ -5057,6 +5104,7 @@ def build_report_stats(days: int = 7) -> dict:
         "wa_messages": wa_messages,
         "wa_leads": len(wa_leads),
         "wa_manual_replies": wa_manual_replies,
+        "wa_undelivered": wa_undelivered,
         # A live channel with zero conversations and a switched-off channel must
         # never look the same in the report (Nicholas, 2026-09-10).
         "wa_channel_enabled": wa_channel_enabled(),
@@ -5175,6 +5223,7 @@ def format_report_text(stats: dict) -> str:
         f"- Messages received: {stats.get('wa_messages', 0)}",
         f"- Leads captured: {stats.get('wa_leads', 0)}",
         f"- Manual replies you sent: {stats.get('wa_manual_replies', 0)}",
+        f"- Bot replies Twilio refused to send: {stats.get('wa_undelivered', 0)}",
     ]
     shipped = stats.get("shipped_lines") or []
     lines += ["", "WENT LIVE THIS WEEK"]
@@ -5349,6 +5398,7 @@ def format_report_html(stats: dict) -> str:
     inner.append(_email_row("Messages received", str(stats.get("wa_messages", 0))))
     inner.append(_email_row("Leads captured", str(stats.get("wa_leads", 0))))
     inner.append(_email_row("Manual replies you sent", str(stats.get("wa_manual_replies", 0))))
+    inner.append(_email_row("Bot replies Twilio refused to send", str(stats.get("wa_undelivered", 0))))
 
     inner.append(_email_section("Human follow-up"))
     inner.append(_email_row("Bot-generated follow-up suggestions", str(stats.get("handoff_suggestions", 0))))
@@ -5624,6 +5674,24 @@ def _start_weekly_report_scheduler() -> None:
 @app.on_event("startup")
 def _start_wa_nudge() -> None:
     _start_wa_nudge_scheduler()
+
+
+@app.on_event("shutdown")
+def _wa_wait_for_inflight() -> None:
+    """Give an answer that is mid-generation up to ten seconds to land.
+
+    Render sends SIGTERM during a deploy and the inbound was acked ~18 seconds
+    earlier, so Twilio will never retry it: a worker killed here is an answer
+    the customer simply never gets, with nothing anywhere to say so (11 Sep
+    2026 diff, audit row #15). The in-flight map belongs to the message
+    coalescing work, so it is read defensively and this hook is correct with
+    or without it.
+    """
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if not globals().get("_wa_inflight"):
+            return
+        time.sleep(0.2)
 
 
 # ── WhatsApp Coexistence scaffolding (stage 1) ──────────────────────────────
@@ -6069,6 +6137,20 @@ def twilio_signature_valid(path_qs: str, params: dict, signature: str) -> bool:
     return False
 
 
+def wa_status_callback_url() -> str:
+    """Where Twilio posts the delivery receipt for a message we send.
+
+    Derived from the inbound webhook URL rather than configured a second time,
+    so the base Twilio signs the callback against is by construction the base
+    twilio_signature_valid validates it with (11 Sep 2026 diff, finding #14).
+    Empty when OUTDOOR_SQUAD_TWILIO_WA_WEBHOOK_URL is unset: no StatusCallback
+    is sent, no receipt ever arrives, and every delivery badge stays blank.
+    """
+    if not TWILIO_WA_WEBHOOK_URL:
+        return ""
+    return TWILIO_WA_WEBHOOK_URL.rsplit("/twilio-wa-webhook", 1)[0] + "/twilio-wa-status"
+
+
 def _wa_capture_lead(message: str, session_id: str, human_request_handled: bool, reason: str) -> None:
     """The ONE lead-capture path for every WhatsApp branch. Extracted after
     review found the copy-pasted block had drifted: the AI-outage branch had
@@ -6184,6 +6266,12 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
     so a failure in here costs the answer, never the enquiry.
     """
     ai_provider = None
+    # Whether this answer still owes the person an introduction, decided BEFORE
+    # the model runs so the flag matches the prompt the model was given, and
+    # so a bounced intro can be re-sent next time (11 Sep 2026 diff, #14).
+    is_intro = wa_needs_intro(session_id)
+    kind = "intro" if is_intro else "reply"
+    ekey = wa_episode_key(session_id)
     try:
         reply, ai_provider = generate_ai_reply(message, session_id)
         fallback = False
@@ -6210,39 +6298,77 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
 
     reply = render_for_whatsapp(reply)
     try:
-        reply = prevent_repetitive_reply(reply, message, session_id)
         # The guard can substitute a fresh non_repeating_followup, which has
         # never been through the render pass; render again so the sent body
         # and the stored turn agree (11 Sep 2026 diff, finding #3).
-        reply = render_for_whatsapp(reply)
+        reply = render_for_whatsapp(prevent_repetitive_reply(reply, message, session_id))
+    except Exception as exc:
+        # It used to sit inside the persist try/except, and the send happened
+        # anyway: a guard blowing up costs the polish, never the answer.
+        log_event("wa_async_persist_error", session_id=session_id, error=str(exc)[:200])
+
+    # SEND FIRST, persist afterwards. Persisting first meant a refused send
+    # left the transcript, the dashboard and the model all believing the
+    # customer had been answered, and ninety minutes later the follow-up asked
+    # whether they wanted the trial link (11 Sep 2026 diff, finding #5). The
+    # manual-reply endpoint has always worked this way; this mirrors it.
+    outcome, detail, sent_parts, attempts = _wa_send_and_register(
+        session_id, sender_digits, reply, kind)
+
+    if outcome == "failed":
+        log_event("wa_reply_undelivered", session_id=session_id, channel="whatsapp",
+                  kind=kind, attempts=attempts, error=str(detail)[:200], source="rest")
+        # The nudge must not follow a reply that never arrived (finding #13).
+        set_wa_setting(f"undelivered:{ekey}", "1")
+        if is_intro:
+            # Nobody read the introduction, so the next message from this
+            # person is still a first contact and is greeted as one.
+            set_wa_setting(f"intro_failed:{ekey}", "1")
+        # The enquiry itself is real even when our answer never landed.
+        _wa_capture_lead(message, session_id, human_request_handled,
+                         "wa_undelivered_contact_capture")
+        return
+
+    if outcome == "partial":
+        # Half an answer IS an answer: record the parts that landed so the
+        # transcript matches the person's phone, and flag the thread so the
+        # follow-up does not pile on. The intro itself did land, so it is not
+        # owed again.
+        parts = split_whatsapp_body(reply)
+        reply = "\n\n".join(parts[:sent_parts])
+        log_event("wa_reply_partial", session_id=session_id, channel="whatsapp",
+                  kind=kind, sent_parts=sent_parts, total_parts=len(parts),
+                  error=str(detail)[:200])
+        set_wa_setting(f"undelivered:{ekey}", "1")
+
+    try:
         history = load_conversation(session_id)
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)
-        _wa_capture_lead(
-            message, session_id, human_request_handled,
-            "wa_fallback_contact_capture" if fallback else "wa_ai_contact_capture",
-        )
         if message_sid:
             _twilio_wa_seen_sids[message_sid] = reply
         log_bot_reply(session_id, reply, fallback=fallback)
+        if outcome == "ok":
+            log_event("wa_reply_fallback" if fallback else "wa_reply_sent",
+                      session_id=session_id, channel="whatsapp",
+                      ai_provider=ai_provider, delivery="rest",
+                      message_sid=str(detail), kind=kind)
+            if get_wa_setting(f"undelivered:{ekey}") == "1":
+                set_wa_setting(f"undelivered:{ekey}", "")
+            if is_intro and get_wa_setting(f"intro_failed:{ekey}") == "1":
+                set_wa_setting(f"intro_failed:{ekey}", "")
+        # outcome "unknown" is deliberately quiet here: wa_send_unknown is
+        # already logged, the turn is kept because the message may well have
+        # gone out, and the delivery receipt is what settles it.
     except Exception as exc:
         log_event("wa_async_persist_error", session_id=session_id, error=str(exc)[:200])
 
-    ok, detail = send_whatsapp_via_twilio(sender_digits, reply)
-    if ok:
-        log_event("wa_reply_fallback" if fallback else "wa_reply_sent",
-                  session_id=session_id, channel="whatsapp",
-                  ai_provider=ai_provider, delivery="rest")
-        if get_wa_setting(f"undelivered:{wa_episode_key(session_id)}") == "1":
-            set_wa_setting(f"undelivered:{wa_episode_key(session_id)}", "")
-    else:
-        # An answer that was generated but never reached the person is a LOST
-        # reply, not a delivered one, and must not look the same in the log.
-        log_event("wa_reply_undelivered", session_id=session_id, channel="whatsapp",
-                  error=str(detail)[:200])
-        # The nudge must not follow a reply that never arrived (finding #13).
-        set_wa_setting(f"undelivered:{wa_episode_key(session_id)}", "1")
+    # Outside the try so a persistence blip never costs Nick the lead.
+    _wa_capture_lead(
+        message, session_id, human_request_handled,
+        "wa_fallback_contact_capture" if fallback else "wa_ai_contact_capture",
+    )
 
 
 def _wa_remember_profile_name(session_id: str, raw: str, wa_id: str = "") -> None:
@@ -6400,9 +6526,94 @@ async def twilio_wa_webhook(request: Request):
         target=_wa_generate_and_send,
         args=(message, session_id, re.sub(r"\D", "", sender), human_request_handled, message_sid),
     )
-    log_event("wa_reply_deferred", session_id=session_id, channel="whatsapp")
+    # The SID and the sender are what let a post-deploy sweep pair a deferred
+    # inbound with the absence of any outcome event, which is the only trace a
+    # SIGTERM mid-generation leaves (11 Sep 2026 diff, audit row #15).
+    log_event("wa_reply_deferred", session_id=session_id, channel="whatsapp",
+              message_sid=message_sid, sender=sender_digits[-6:])
     return _twiml_message(None)
 
+
+
+def _wa_apply_delivery_receipt(session_id: str, message_sid: str, status: str,
+                               error_code: str) -> dict:
+    """Ledger plus flags for one terminal delivery receipt.
+
+    Runs off the event loop (the route hands it to the threadpool): it takes a
+    lock and writes settings, and Twilio sends one of these per outbound
+    message per transition.
+    """
+    entry, is_newest, _kind_race = _wa_delivery_upsert(
+        session_id, message_sid, status=status, error=error_code or None)
+    log_event("wa_delivery_status", session_id=session_id, channel="whatsapp",
+              message_sid=message_sid, status=status, error_code=error_code,
+              kind=entry.get("kind"))
+    ekey = wa_episode_key(session_id)
+    if status in ("failed", "undelivered"):
+        # 63016 (outside the 24h window), 63024 and 63032 are the common ones.
+        log_event("wa_reply_undelivered", session_id=session_id, channel="whatsapp",
+                  kind=entry.get("kind"), message_sid=message_sid, status=status,
+                  error_code=error_code, source="receipt")
+        if is_newest:
+            # Only the LATEST outbound decides the follow-up: a late receipt
+            # for an older message must not silence a thread that has since
+            # been answered (11 Sep 2026 diff, finding #13).
+            set_wa_setting(f"undelivered:{ekey}", "1")
+        if entry.get("kind") == "intro" and get_wa_setting(f"introduced:{ekey}") != "1":
+            set_wa_setting(f"intro_failed:{ekey}", "1")
+    else:
+        if is_newest and get_wa_setting(f"undelivered:{ekey}") == "1":
+            set_wa_setting(f"undelivered:{ekey}", "")
+        if entry.get("kind") == "intro":
+            # Introduced means DELIVERED, not sent: this is the flag that stops
+            # a re-introduction once the person has really seen it.
+            set_wa_setting(f"introduced:{ekey}", "1")
+            if get_wa_setting(f"intro_failed:{ekey}") == "1":
+                set_wa_setting(f"intro_failed:{ekey}", "")
+    return entry
+
+
+@app.post("/twilio-wa-status")
+async def twilio_wa_status(request: Request):
+    """Twilio's delivery receipt for a message Robo-Nick sent.
+
+    Until this existed, "sent" only meant Twilio accepted the message: a
+    blocked number, a handset that never came back online or a Meta-side
+    failure showed on Nick's dashboard as an answered customer (11 Sep 2026
+    diff, finding #14). Fail-closed and signature-checked exactly like the
+    inbound webhook, since it is the same public surface.
+    """
+    if not TWILIO_AUTH_TOKEN:
+        log_event("wa_twilio_unconfigured", session_id="wa-system")
+        return Response(status_code=503)
+    form = dict(await request.form())
+    path_qs = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    if not twilio_signature_valid(path_qs, form, request.headers.get("x-twilio-signature", "")):
+        log_event("wa_twilio_bad_signature", session_id="wa-system")
+        return Response(status_code=403)
+    message_sid = str(form.get("MessageSid", ""))[:64]
+    status = str(form.get("MessageStatus", "")).strip().lower()
+    if str(form.get("EventType", "")).strip().upper() == "READ":
+        status = "read"
+    # Twilio calls back on every transition (queued, sending, sent, delivered,
+    # read). Persisting the lot would multiply the events table by five, for no
+    # fact the terminal statuses do not already carry, and would re-trip the
+    # silent truncation of 2026-07-27.
+    if not message_sid or status not in WA_TERMINAL_STATUSES:
+        return _twiml_message(None)
+    recipient = str(form.get("To", ""))
+    if not recipient.startswith("whatsapp:"):
+        # A receipt we cannot attribute to a thread: log it, change nothing.
+        log_event("wa_delivery_status", session_id="wa-system", channel="whatsapp",
+                  message_sid=message_sid, status=status,
+                  error_code=str(form.get("ErrorCode", ""))[:16])
+        return _twiml_message(None)
+    session_id = sanitize_session_id("wa-" + re.sub(r"\D", "", recipient))
+    await run_in_threadpool(
+        _wa_apply_delivery_receipt, session_id, message_sid, status,
+        str(form.get("ErrorCode", ""))[:16],
+    )
+    return _twiml_message(None)
 
 
 @app.post("/api/wa/mute")
@@ -6439,6 +6650,13 @@ async def wa_mute_endpoint(request: Request, _: str = Depends(require_admin)):
 #     conversation (11 Sep 2026 diff, findings #2 and #9)
 #   nudge_count:{sid}  follow-ups ever sent to this thread, capped at
 #     WA_NUDGE_MAX_PER_THREAD for its whole life
+#   intro_failed:{ekey}, introduced:{ekey}  per EPISODE: whether the
+#     introduction bounced and whether a receipt confirmed it was DELIVERED,
+#     so a customer whose intro never arrived is greeted properly next time
+#     (11 Sep 2026 diff, finding #14)
+#   wa_delivery:{sid}  lifetime JSON list, newest WA_DELIVERY_KEEP outbound
+#     messages as {sid, group, kind, status, error, ts, preview}: what maps a
+#     Twilio delivery receipt back to a message in the thread
 #   wa_profile_name:{sid}  the sender's own WhatsApp display name, UNVERIFIED
 #     (they choose it), added 11 Sep 2026 for finding #3. Shown to Nick
 #     labelled as such; never the lead's name, never in the AI prompt, never
@@ -6677,11 +6895,18 @@ def send_whatsapp_via_twilio(to_digits: str, body: str) -> tuple[bool, str]:
             if not last[0]:
                 return last
         return last
-    payload = urllib.parse.urlencode({
+    fields = {
         "From": f"whatsapp:{TWILIO_WA_FROM}",
         "To": f"whatsapp:+{re.sub(r'[^0-9]', '', to_digits)}",
         "Body": parts[0] if parts else "",
-    }).encode()
+    }
+    # Without this, a 2xx from Twilio only ever meant "accepted", never
+    # "delivered": a blocked number or a Meta-side failure looked exactly like
+    # an answered customer on Nick's dashboard (11 Sep 2026 diff, finding #14).
+    status_callback = wa_status_callback_url()
+    if status_callback:
+        fields["StatusCallback"] = status_callback
+    payload = urllib.parse.urlencode(fields).encode()
     request = urllib.request.Request(
         f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
         data=payload,
@@ -6701,6 +6926,172 @@ def send_whatsapp_via_twilio(to_digits: str, body: str) -> tuple[bool, str]:
         return False, f"HTTP {exc.code}: {detail}"
     except Exception as exc:
         return False, f"{type(exc).__name__}: {str(exc)[:200]}"
+
+
+# ── Outbound delivery: one classified retry, then the receipt ───────────────
+# A send used to be fire and forget: the reply was persisted BEFORE the send,
+# any failure was one event nobody read, and "sent" meant Twilio accepted the
+# message rather than WhatsApp delivering it (11 Sep 2026 diff, findings #5
+# and #14). Every outbound now goes through _wa_send_and_register, which sends
+# first, retries once when Twilio is briefly overloaded, and records the SID
+# against the thread so the status callback can be mapped back to a message.
+WA_SEND_RETRY_SECONDS = float(os.environ.get("OUTDOOR_SQUAD_WA_SEND_RETRY_SECONDS", "2"))
+# Ten outbound messages per thread is several screens of transcript, which is
+# all the dashboard badge walk ever looks at, and the ledger is one settings
+# value that is read whole on every dashboard load.
+WA_DELIVERY_KEEP = 10
+WA_DELIVERY_PREVIEW = 40
+# The only statuses worth persisting. Twilio fires a callback per transition
+# (queued, sending, sent, delivered, read), so recording them all would
+# multiply the events table by five for no new fact.
+WA_TERMINAL_STATUSES = ("delivered", "read", "failed", "undelivered")
+_wa_delivery_lock = threading.Lock()
+_WA_DELIVERY_RANK = {"accepted": 1, "queued": 1, "sending": 1, "sent": 2, "delivered": 4, "read": 5}
+# Failures whose detail says the request never got an answer. The message may
+# well have been ACCEPTED before the socket died, so resending is how the same
+# customer gets the same answer twice.
+_WA_SEND_UNKNOWN_PREFIXES = (
+    "TimeoutError", "timeout", "URLError", "RemoteDisconnected", "IncompleteRead",
+    "ConnectionResetError", "ConnectionAbortedError", "BadStatusLine", "ProtocolError",
+)
+
+
+def wa_send_failure_class(detail: str) -> str:
+    """Which of four things a failed send was: config, retry, unknown, permanent.
+
+    send_whatsapp_via_twilio formats an HTTPError as "HTTP {code}: ..." and
+    everything else as "{TypeName}: ...", which is enough to classify without
+    touching its frozen signature. Only an overloaded Twilio (429 or 5xx) is
+    retried: a 400 is permanent and retrying it only makes the customer wait
+    twice as long, while a timeout can hide a message Twilio already accepted
+    (11 Sep 2026 diff, finding #5).
+    """
+    text = str(detail or "").strip()
+    if text == "twilio sending not configured":
+        return "config"
+    if text.startswith("HTTP 429") or re.match(r"^HTTP 5\d\d", text):
+        return "retry"
+    if text.startswith(_WA_SEND_UNKNOWN_PREFIXES):
+        return "unknown"
+    return "permanent"
+
+
+def wa_delivery_ledger(session_id: str) -> list:
+    """The newest outbound messages for a thread with their delivery state."""
+    try:
+        data = json.loads(get_wa_setting(f"wa_delivery:{session_id}") or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []
+
+
+def _wa_delivery_upsert(session_id: str, message_sid: str, *, kind: str | None = None,
+                        group: str | None = None, status: str | None = None,
+                        error: str | None = None,
+                        preview: str | None = None) -> tuple[dict, bool, bool]:
+    """Record or update one outbound message. Returns (entry, is_newest,
+    kind_attached_to_failed), all computed under the lock from the list this
+    call already holds so no caller has to read the ledger back.
+
+    is_newest says whether this is the thread's latest outbound, because only
+    the latest one decides whether the follow-up nudge is allowed to fire.
+    kind_attached_to_failed says a receipt beat its own registration: the
+    receipt arrived with no kind, so it could not tell the intro from any
+    other reply, and the caller has to apply that side effect now instead
+    (11 Sep 2026 diff, finding #14).
+    """
+    with _wa_delivery_lock:
+        ledger = wa_delivery_ledger(session_id)
+        entry = next((e for e in ledger if e.get("sid") == message_sid), None)
+        if entry is None:
+            entry = {"sid": message_sid, "group": message_sid, "kind": "unknown",
+                     "status": "", "error": "", "ts": now_iso(), "preview": ""}
+            ledger.append(entry)
+        current = str(entry.get("status") or "")
+        kind_attached_to_failed = bool(
+            kind and str(entry.get("kind") or "unknown") == "unknown"
+            and current in ("failed", "undelivered")
+        )
+        if kind:
+            entry["kind"] = kind
+        if group:
+            entry["group"] = group
+        if preview is not None:
+            entry["preview"] = preview
+        if error:
+            entry["error"] = str(error)[:32]
+        if status:
+            if status in ("failed", "undelivered"):
+                entry["status"] = status
+            elif current in ("failed", "undelivered"):
+                pass  # a terminal failure is never talked out of by a later ack
+            elif _WA_DELIVERY_RANK.get(status, 0) >= _WA_DELIVERY_RANK.get(current, 0) or not current:
+                entry["status"] = status
+            entry["ts"] = now_iso()
+        if len(ledger) > WA_DELIVERY_KEEP:
+            ledger = ledger[-WA_DELIVERY_KEEP:]
+        is_newest = bool(ledger) and ledger[-1].get("sid") == message_sid
+        set_wa_setting(f"wa_delivery:{session_id}", json.dumps(ledger))
+    return entry, is_newest, kind_attached_to_failed
+
+
+def _wa_send_and_register(session_id: str, to_digits: str, body: str, kind: str,
+                          *, retry: bool = True) -> tuple[str, str, int, int]:
+    """Send one outbound WhatsApp message and register its Twilio SID.
+
+    Returns (outcome, last_sid_or_error, sent_parts, attempts). Outcome is one
+    of: "ok" (every part accepted), "partial" (some parts landed and a later
+    one did not, so the customer has half an answer and must not be told
+    nothing arrived), "unknown" (Twilio never answered, so the message may or
+    may not have gone out and only the receipt can say) and "failed" (nothing
+    landed). kind is intro, reply, nudge or manual, and it is what lets a
+    delivery receipt weeks later be read as "the introduction bounced".
+    """
+    parts = split_whatsapp_body(body)
+    if len(parts) > 1:
+        log_event("wa_reply_split", session_id=session_id, channel="whatsapp", parts=len(parts))
+    group = None
+    last = ""
+    sent_parts = 0
+    attempts = 0
+    for part in parts:
+        retry_left = retry
+        while True:
+            attempts += 1
+            ok, detail = send_whatsapp_via_twilio(to_digits, part)
+            if ok:
+                break
+            failure = wa_send_failure_class(detail)
+            if failure == "retry" and retry_left:
+                # Twilio is overloaded, not refusing: one more go after a
+                # breath is the difference between an answer and silence.
+                retry_left = False
+                log_event("wa_send_retry", session_id=session_id, channel="whatsapp",
+                          kind=kind, error=str(detail)[:200], attempt=attempts)
+                if WA_SEND_RETRY_SECONDS > 0:
+                    time.sleep(WA_SEND_RETRY_SECONDS)
+                continue
+            if failure == "unknown":
+                log_event("wa_send_unknown", session_id=session_id, channel="whatsapp",
+                          kind=kind, error=str(detail)[:200])
+                return "unknown", str(detail), sent_parts, attempts
+            return ("partial" if sent_parts else "failed"), str(detail), sent_parts, attempts
+        last = str(detail)
+        group = group or last
+        _entry, is_newest, kind_on_failed = _wa_delivery_upsert(
+            session_id, last, kind=kind, group=group, status="accepted",
+            preview=redact_contact(part)[:WA_DELIVERY_PREVIEW],
+        )
+        sent_parts += 1
+        if kind_on_failed and is_whatsapp_session(session_id):
+            # The receipt for this SID arrived before this call returned, so it
+            # could not know what kind of message it was failing.
+            ekey = wa_episode_key(session_id)
+            if is_newest:
+                set_wa_setting(f"undelivered:{ekey}", "1")
+            if kind == "intro" and get_wa_setting(f"introduced:{ekey}") != "1":
+                set_wa_setting(f"intro_failed:{ekey}", "1")
+    return "ok", last, sent_parts, attempts
 
 
 def wa_last_inbound_at(session_id: str) -> datetime | None:
@@ -6877,9 +7268,14 @@ async def wa_manual_reply(request: Request, _: str = Depends(require_admin)):
             status_code=422,
         )
 
-    ok, detail = send_whatsapp_via_twilio(session_id.removeprefix("wa-"), message)
-    if not ok:
-        log_event("wa_manual_reply_error", session_id=session_id, channel="whatsapp", error=detail[:200])
+    # Registered like every other outbound so Nick's own replies carry a
+    # delivery receipt too, and NOT retried: he is watching the screen, so a
+    # failure belongs in front of him immediately (11 Sep 2026 diff, #14).
+    outcome, detail, sent_parts, _attempts = _wa_send_and_register(
+        session_id, session_id.removeprefix("wa-"), message, "manual", retry=False)
+    if not sent_parts:
+        log_event("wa_manual_reply_error", session_id=session_id, channel="whatsapp",
+                  error=str(detail)[:200], outcome=outcome)
         return JSONResponse({"ok": False, "error": detail}, status_code=502)
 
     history = load_conversation(session_id)
@@ -6888,7 +7284,10 @@ async def wa_manual_reply(request: Request, _: str = Depends(require_admin)):
     log_chat_message(session_id, "assistant", message)
     set_wa_mute(session_id, 24 * 60)  # quiet until handed back (or 24h cap)
     log_event("wa_manual_reply_sent", session_id=session_id, channel="whatsapp", message_sid=detail)
-    return JSONResponse({"ok": True, "message_sid": detail, "muted": True})
+    # "accepted", not "sent": Twilio has taken the message, WhatsApp has not
+    # yet said it arrived. The receipt updates the badge in the thread.
+    return JSONResponse({"ok": True, "message_sid": detail, "muted": True,
+                         "delivery": "accepted"})
 
 
 def _wa_episode_from_timestamps(stamps: list) -> int:
@@ -6963,6 +7362,17 @@ def wa_dashboard_payload() -> dict:
         # inbounds in the sweep above rather than one load_conversation per
         # thread (11 Sep 2026 diff, finding #9).
         entry["episode"] = _wa_episode_from_timestamps(user_ts.get(sid, []))
+        # Per-message delivery state, so the thread can say delivered, read or
+        # not delivered instead of implying every outbound landed (11 Sep 2026
+        # diff, finding #14). Read from the same snapshot, never a per-thread
+        # settings call.
+        try:
+            deliveries = json.loads(flag(f"wa_delivery:{sid}") or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            deliveries = []
+        entry["deliveries"] = [d for d in deliveries if isinstance(d, dict)] if isinstance(deliveries, list) else []
+        newest = entry["deliveries"][-1] if entry["deliveries"] else {}
+        entry["last_outbound_failed"] = newest.get("status") in ("failed", "undelivered")
     return {
         "channel_enabled": wa_channel_enabled(),
         "episode_gap_hours": WA_EPISODE_GAP_HOURS,
@@ -7093,7 +7503,9 @@ def _wa_nudge_loop() -> None:
                 nudge_count = _wa_nudge_count(sid)
                 set_wa_setting(f"nudged:{ekey}", "1")
                 set_wa_setting(f"nudge_count:{sid}", str(nudge_count + 1))
-                ok, detail = send_whatsapp_via_twilio(sid.removeprefix("wa-"), WA_NUDGE_TEXT)
+                outcome, detail, _parts, _attempts = _wa_send_and_register(
+                    sid, sid.removeprefix("wa-"), WA_NUDGE_TEXT, "nudge")
+                ok = outcome in ("ok", "partial")
                 if not ok and str(detail) == "twilio sending not configured":
                     # Nothing was attempted, so nothing was spent: hand the
                     # claim back rather than burning this thread's follow-up on
@@ -8204,7 +8616,11 @@ def wa_first_contact_greeting(message: str, session_id: str) -> bool:
         if m.get("role") == "user" and is_vague_message(normalise_chat_text(m.get("content", "")))
     )
     # The inbound message is already appended to history by this point.
-    return prior_vague <= 1
+    # An intro that Twilio reported as failed or undelivered means this person
+    # has never actually heard from Robo-Nick, so their next message is still
+    # a first contact (11 Sep 2026 diff, finding #14).
+    return (prior_vague <= 1
+            or get_wa_setting(f"intro_failed:{wa_episode_key(session_id)}") == "1")
 
 
 def has_contact_details(message: str) -> bool:
@@ -10838,7 +11254,8 @@ ADMIN_HTML = """
           +   '<span class="session-id">' + esc(t.phone || waPhone(t.session_id))
           +     (t.profile_name ? ' \u00b7 ' + esc(t.profile_name) : '') + '</span>'
           +   '<div class="session-time">' + esc(fmtRelative(last.timestamp)) + ' · ' + esc(t.message_count || 0) + ' msgs'
-          +     (t.muted ? ' <span class="badge amber">Bot muted</span>' : '') + '</div>'
+          +     (t.muted ? ' <span class="badge amber">Bot muted</span>' : '')
+          +     (t.last_outbound_failed ? ' <span class="badge red">Last reply not delivered</span>' : '') + '</div>'
           +   '<div class="session-preview">' + esc(last.content || '') + '</div>'
           + '</div>'
           + '</button>';
@@ -10867,6 +11284,7 @@ ADMIN_HTML = """
       }
       meta.innerHTML = '<strong>' + esc(thread.phone || waPhone(thread.session_id)) + '</strong> ' + waWindowBadge(thread)
         + (thread.muted ? ' <span class="badge amber">Bot muted, you are driving</span>' : '')
+        + (thread.last_outbound_failed ? ' <span class="badge red">Last reply not delivered</span>' : '')
         // Episode = how many separate conversations this number has had. The
         // bot treats each one as a fresh start, so it matters that Nick can
         // see which one he is reading (11 Sep 2026 diff, finding #9).
@@ -10884,6 +11302,45 @@ ADMIN_HTML = """
       // six-week silence does not read as one continuous chat.
       const gapMs = (waData().episode_gap_hours || 0) * 3600 * 1000;
       let prevUser = null, episodeNo = 1;
+      // Delivery receipts, matched to transcript rows by the preview the
+      // ledger stores. A split reply is SEVERAL Twilio messages for ONE
+      // transcript row, so a match consumes the whole group and the row is
+      // badged by the group's worst status. Rows with no match (scripted
+      // instant replies, history from before the ledger existed) get no badge
+      // rather than a wrong one (11 Sep 2026 diff, finding #14).
+      const ledger = thread.deliveries || [];
+      let ledgerAt = 0;
+      function waWorse(a, b) {
+        if (a === null) return b;
+        if (a === 'failed' || a === 'undelivered') return a;
+        if (b === 'failed' || b === 'undelivered') return b;
+        const rank = { '': 0, accepted: 1, sent: 1, delivered: 2, read: 3 };
+        return (rank[b] || 0) < (rank[a] || 0) ? b : a;
+      }
+      function waDeliveryBadge(content) {
+        // Compared on a prefix: the stored preview is redacted, so an email or
+        // a number further into the line would not match character for
+        // character.
+        const head = String(content || '').slice(0, 24);
+        for (let i = ledgerAt; i < ledger.length; i++) {
+          if (String(ledger[i].preview || '').slice(0, 24) !== head) continue;
+          const group = ledger[i].group || ledger[i].sid;
+          let worst = null, code = '', j = i;
+          while (j < ledger.length && (ledger[j].group || ledger[j].sid) === group) {
+            worst = waWorse(worst, ledger[j].status || '');
+            if (ledger[j].error) code = ledger[j].error;
+            j++;
+          }
+          ledgerAt = j;
+          if (worst === 'failed' || worst === 'undelivered') {
+            return ' <span class="badge red">Not delivered' + (code ? ' \u00b7 ' + esc(code) : '') + '</span>';
+          }
+          if (worst === 'read') return ' <span class="badge green">Read</span>';
+          if (worst === 'delivered') return ' <span class="badge green">Delivered</span>';
+          return ' <span class="badge">Sent</span>';
+        }
+        return '';
+      }
       document.getElementById('waMessages').innerHTML = waThreadMessages(thread.session_id).map(function(m) {
         const role = esc(m.role || 'unknown');
         const who = m.role === 'user' ? 'Customer' : 'Robo-Nick';
@@ -10898,8 +11355,9 @@ ADMIN_HTML = """
           }
           if (at) prevUser = at;
         }
+        const badge = m.role === 'user' ? '' : waDeliveryBadge(m.content);
         return divider + '<article class="chat-message ' + role + '">'
-          + '<div class="role">' + esc(who) + ' · ' + esc(fmtDate(m.timestamp)) + '</div>'
+          + '<div class="role">' + esc(who) + ' · ' + esc(fmtDate(m.timestamp)) + badge + '</div>'
           + esc(m.content || '')
         + '</article>';
       }).join('') || '<div class="empty">No messages recorded for this thread.</div>';
@@ -10995,7 +11453,9 @@ ADMIN_HTML = """
         // copy comes back on the next refresh.
         const t = (window.__OS_ADMIN_DATA__.transcripts || []).find(function(x) { return x.session_id === waSelectedId; });
         if (t) t.messages.push({ role: 'assistant', content: message, timestamp: new Date().toISOString() });
-        waNoteMsg('Sent. Robo-Nick is muted in this thread until you hand it back.', false);
+        // "Sent" used to mean Twilio accepted it; the receipt is what says it
+        // arrived, and it shows as a badge on the message itself.
+        waNoteMsg('Sent, awaiting delivery. Robo-Nick is muted in this thread until you hand it back.', false);
         renderWaDetail();
         waRefresh();
       });

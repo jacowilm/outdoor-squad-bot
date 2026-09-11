@@ -47,6 +47,9 @@ def events(monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "WA_STATE_FILE", tmp_path / "wa_state.json")
+    # A retryable failure now waits before the second attempt; no test should
+    # pay for that (11 Sep 2026 diff, finding #5).
+    monkeypatch.setattr(app, "WA_SEND_RETRY_SECONDS", 0.0)
     monkeypatch.setattr(app, "_wa_capture_lead", lambda *a, **k: None)
     monkeypatch.setattr(app, "prevent_repetitive_reply", lambda r, m, s: r)
     monkeypatch.setattr(app, "log_chat_message", lambda *a, **k: None)
@@ -72,12 +75,15 @@ def test_undelivered_answer_is_not_logged_as_sent(monkeypatch, events):
     """A generated reply that Twilio refused is a LOST reply, and the event log
     must say so: this whole incident was hidden by success-shaped logging."""
     monkeypatch.setattr(app, "generate_ai_reply", lambda m, s: ("Here are the times.", "claude"))
+    attempts = []
     monkeypatch.setattr(app, "send_whatsapp_via_twilio",
-                        lambda to, body: (False, "HTTP 400: boom"))
+                        lambda to, body: (attempts.append(body), (False, "HTTP 500: boom"))[1])
     app._wa_generate_and_send("when are classes", "wa-61400111222", "61400111222", False, "SM2")
     assert not [e for e in events if e["event"] == "wa_reply_sent"]
     lost = [e for e in events if e["event"] == "wa_reply_undelivered"]
-    assert lost and "HTTP 400" in lost[0]["error"]
+    assert lost and "HTTP 500" in lost[0]["error"]
+    # An overloaded Twilio is worth exactly one more go, and no more.
+    assert len(attempts) == 2 and lost[0]["attempts"] == 2
 
 
 def test_brain_failure_still_delivers_a_human_answer(monkeypatch):
