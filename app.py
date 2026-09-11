@@ -5247,7 +5247,7 @@ def build_report_stats(days: int = 7) -> dict:
         ):
             label = lead.get("name") or "unknown name"
             detail = lead.get("route") or "enquiry"
-            lead_lines.append(f"{label} — {detail}")
+            lead_lines.append(f"{label}: {detail}")
 
     # WhatsApp channel: wa-* sessions live outside the widget-* filter above on
     # purpose, separate channel and separate honest numbers. Every counter comes
@@ -5326,7 +5326,7 @@ def report_subject() -> str:
         today = datetime.now(ZoneInfo(REPORT_TIMEZONE)).strftime("%d %b %Y")
     except Exception:
         today = datetime.now().strftime("%d %b %Y")
-    return f"Robo-Nick weekly report — {today}"
+    return f"Robo-Nick weekly report, {today}"
 
 
 def wa_channel_status_line(stats: dict) -> str:
@@ -5345,7 +5345,7 @@ def wa_channel_status_line(stats: dict) -> str:
 def format_report_text(stats: dict) -> str:
     days = stats["window_days"]
     lines = [
-        f"Robo-Nick stats — last {days} days",
+        f"Robo-Nick stats, last {days} days",
         "",
         "THE FUNNEL",
         f"- Greeting impressions (chat bubble shown to a person): {stats['widget_impressions']}",
@@ -5368,7 +5368,7 @@ def format_report_text(stats: dict) -> str:
         "TRIAL ACTIONS",
         f"- Trial link offered in chat: {stats['booking_link_shown_sessions']} conversation(s)",
         f"- Trial link actually clicked: {stats['trial_link_clicks']}",
-        "  (Clicks are the strongest booking signal we can see from the chat side —",
+        "  (Clicks are the strongest booking signal we can see from the chat side;",
         "   cross-check names against Momence for confirmed trials.)",
         "",
         "HUMAN FOLLOW-UP",
@@ -5448,7 +5448,7 @@ def format_report_text(stats: dict) -> str:
                     f"{variant_labels.get(key, key)} {bucket['opened']}/{bucket['visitors']}"
                 )
             lines.append("  This week: " + ", ".join(week_bits) + " (chats opened / visitors).")
-        lines.append("  (Long game: at current traffic this needs months, not weeks —")
+        lines.append("  (Long game: at current traffic this needs months, not weeks;")
         lines.append("   it runs in the background; nobody decides off early numbers.)")
     if stats["lead_lines"]:
         lines += ["", "LEADS THIS PERIOD"] + [f"- {line}" for line in stats["lead_lines"]]
@@ -5462,7 +5462,7 @@ def format_report_text(stats: dict) -> str:
         lines += [
             "",
             "NOTE: since 24 July anyone who stays on a page 10+ seconds is",
-            "counted, even if they never touch the chat — earlier reports could",
+            "counted, even if they never touch the chat. Earlier reports could",
             "only see visitors who browsed several pages or interacted. A",
             "week-over-week rise around that date reflects better counting, not",
             "more traffic.",
@@ -5470,7 +5470,7 @@ def format_report_text(stats: dict) -> str:
     lines += [
         "",
         f"Full transcripts and live numbers: {PUBLIC_BASE_URL}/admin",
-        "— Robo-Nick",
+        "Robo-Nick",
     ]
     return "\n".join(lines)
 
@@ -5584,7 +5584,7 @@ def format_report_html(stats: dict) -> str:
     inner.append(_email_row(
         "Trial link actually clicked",
         str(stats["trial_link_clicks"]),
-        "The strongest booking signal visible from the chat side — cross-check names against Momence.",
+        "The strongest booking signal visible from the chat side; cross-check names against Momence.",
     ))
 
     # Permanent fixture, zeros included: a missing section and a zero week are
@@ -10796,7 +10796,7 @@ _LOGIN_CARD = """
   </form>
 """
 
-LOGIN_HTML = _auth_page("Sign in — Robo-Nick Console", _LOGIN_CARD)
+LOGIN_HTML = _auth_page("Sign in, Robo-Nick Console", _LOGIN_CARD)
 
 _FORGOT_CARD = """
   <form class="card" method="post" action="/forgot-password">
@@ -10811,7 +10811,7 @@ _FORGOT_CARD = """
   </form>
 """
 
-FORGOT_HTML = _auth_page("Reset password — Robo-Nick Console", _FORGOT_CARD)
+FORGOT_HTML = _auth_page("Reset password, Robo-Nick Console", _FORGOT_CARD)
 
 _RESET_CARD = """
   <form class="card" method="post" action="/reset-password" autocomplete="on">
@@ -10830,7 +10830,7 @@ _RESET_CARD = """
   </form>
 """
 
-RESET_HTML = _auth_page("Choose a new password — Robo-Nick Console", _RESET_CARD)
+RESET_HTML = _auth_page("Choose a new password, Robo-Nick Console", _RESET_CARD)
 
 _RESET_DEAD_CARD = """
   <div class="card">
