@@ -198,5 +198,9 @@
   {
     "date": "2026-09-11",
     "line": "WhatsApp: two quick messages in a row now get one answer, in order, instead of two overlapping replies."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "The Monday report's WhatsApp block now shows returning customers, requests to speak with Nick or Lyn, owner alerts, trial-link offers, follow-up nudges, replies Twilio refused or never confirmed, delivery receipts and the times the bot stayed silent on purpose; the dashboard's WhatsApp tab shows the same seven-day numbers."
   }
 ]

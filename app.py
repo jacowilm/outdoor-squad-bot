@@ -4923,6 +4923,155 @@ def _report_events_between(start: datetime, end: datetime) -> list[dict]:
     ]
 
 
+def _wa_report_events_between(start: datetime, end: datetime) -> list[dict]:
+    """The WhatsApp half of the same window, same exclusion list.
+
+    The old inline version called read_events() with no `since=`, so it read
+    the newest rows table-wide and quietly lost the older end of the window as
+    the table grew (11 Sep 2026 diff, finding #20). wa-system rows are
+    delivery receipts nobody could attribute to a thread, so they are noise in
+    every counter below.
+    """
+    excluded = report_excluded_session_ids()
+    raw = read_events(since=start.isoformat())
+    if len(raw) >= EVENTS_READ_LIMIT:
+        log_event("report_events_truncated", session_id="report-system",
+                  window_days=max(1, int((end - start).total_seconds() // 86400)),
+                  rows=len(raw))
+    return [
+        event
+        for event in raw
+        if start.isoformat() <= _event_ts(event) < end.isoformat()
+        and str(event.get("session_id") or "").startswith("wa-")
+        and str(event.get("session_id") or "") != "wa-system"
+        and str(event.get("session_id") or "") not in excluded
+    ]
+
+
+def wa_channel_counters(wa_events: list[dict]) -> dict:
+    """Every WhatsApp number in the Monday report, from one list of events.
+
+    The report and the dashboard used to count WhatsApp outcomes separately
+    and disagreed (11 Sep 2026 diff, finding #20), so both now call this.
+    Pure: it reads the list it is handed and nothing else, which is what lets
+    the dashboard cache it and the tests seed it.
+    """
+    def count(event_type: str) -> int:
+        return sum(1 for e in wa_events if e.get("event_type") == event_type)
+
+    def sessions(event_type: str) -> set:
+        return {e.get("session_id") for e in wa_events if e.get("event_type") == event_type}
+
+    # One thread, several conversations: a customer who comes back after a day
+    # and a half counts again, which is what Nick means by "conversations"
+    # (finding #9). Distinct (thread, episode) pairs, and conversation_started
+    # only, so a thread that merely received a message mid-episode is not a
+    # second conversation.
+    started = [e for e in wa_events if e.get("event_type") == "conversation_started"]
+    wa_conversations = {(e.get("session_id"), _event_episode(e)) for e in started}
+    wa_returning_episodes = sum(1 for e in started if _event_episode(e) > 1)
+
+    # A reply WhatsApp reported as failed is not a reply Nick sent: matched by
+    # message_sid, never by session, so his second attempt in the same thread
+    # still counts (finding #14).
+    receipt_failed_sids = {
+        str(e.get("message_sid") or "")
+        for e in wa_events
+        if e.get("event_type") == "wa_reply_undelivered" and e.get("source") == "receipt"
+        and e.get("message_sid")
+    }
+
+    # Twilio REFUSING to send and WhatsApp never delivering are different facts
+    # for Nick, so the receipt-sourced ones are counted on their own line.
+    wa_undelivered = sum(
+        1 for e in wa_events
+        if e.get("event_type") == "wa_reply_undelivered" and e.get("source") != "receipt"
+    )
+
+    # Twilio calls back once per transition, so delivered plus read is ONE
+    # message delivered, not two, and a message that later failed is not one
+    # of them (finding #14). Distinct message_sid, never raw events.
+    def receipt_sids(statuses: tuple) -> set:
+        return {
+            str(e.get("message_sid") or "")
+            for e in wa_events
+            if e.get("event_type") == "wa_delivery_status"
+            and str(e.get("status") or "") in statuses
+            and e.get("message_sid")
+        }
+
+    delivered_sids = receipt_sids(("delivered", "read"))
+    failed_sids = receipt_sids(("failed", "undelivered"))
+
+    # An answer the worker started and never finished: a SIGTERM mid-generation
+    # leaves the deferral event and no outcome at all (audit row #15). Paired
+    # per thread by COUNT, not by message_sid: wa_reply_deferred carries the
+    # INBOUND Twilio sid and every outcome event carries the OUTBOUND one, so
+    # the two can never match. A drained queue still produces one outcome per
+    # deferral, because a queued message logs wa_reply_queued instead.
+    _OUTCOMES = ("wa_reply_sent", "wa_reply_fallback", "wa_reply_partial",
+                 "wa_send_unknown", "wa_reply_suppressed", "wa_reply_superseded")
+    deferred_by_session: dict = {}
+    outcomes_by_session: dict = {}
+    for e in wa_events:
+        kind = e.get("event_type")
+        sid = e.get("session_id")
+        if kind == "wa_reply_deferred":
+            deferred_by_session[sid] = deferred_by_session.get(sid, 0) + 1
+        elif kind in _OUTCOMES or (kind == "wa_reply_undelivered" and e.get("source") != "receipt"):
+            outcomes_by_session[sid] = outcomes_by_session.get(sid, 0) + 1
+    wa_answers_lost = sum(
+        max(0, started - outcomes_by_session.get(sid, 0))
+        for sid, started in deferred_by_session.items()
+    )
+
+    def suppressed(reason: str) -> int:
+        return sum(
+            1 for e in wa_events
+            if e.get("event_type") == "wa_reply_suppressed" and e.get("reason") == reason
+        )
+
+    silent_kill_switch = count("wa_channel_off_skip") + suppressed("channel_off")
+    silent_muted = count("wa_bot_muted_skip") + suppressed("muted")
+    # One STOP logs wa_opted_out TWICE: should_use_local_tone_handler and
+    # demo_fallback_reply both call contextual_short_reply. Distinct sessions,
+    # so nobody "fixes" the double log into a doubled number for Nick.
+    silent_opt_outs = len(sessions("wa_opted_out"))
+    silent_rate_limited = count("wa_rate_limited")
+
+    return {
+        "wa_conversations": len(wa_conversations),
+        "wa_returning_episodes": wa_returning_episodes,
+        "wa_messages": count("message_received"),
+        "wa_leads": len(sessions("lead_captured")),
+        "wa_human_requests": len({
+            e.get("session_id")
+            for e in wa_events
+            if e.get("event_type") == "human_handoff_requested"
+            and e.get("alert_eligible") is True
+        }),
+        "wa_alerts_sent": count("lead_summary_notification_sent"),
+        "wa_link_offered": len(sessions("booking_link_shown")),
+        "wa_nudges_sent": count("wa_nudge_sent"),
+        "wa_manual_replies": sum(
+            1 for e in wa_events
+            if e.get("event_type") == "wa_manual_reply_sent"
+            and str(e.get("message_sid") or "") not in receipt_failed_sids
+        ),
+        "wa_undelivered": wa_undelivered,
+        "wa_send_unknown": count("wa_send_unknown"),
+        "wa_answers_lost": wa_answers_lost,
+        "wa_delivered": len(delivered_sids - failed_sids),
+        "wa_delivery_failed": len(failed_sids),
+        "wa_silent_kill_switch": silent_kill_switch,
+        "wa_silent_muted": silent_muted,
+        "wa_silent_opt_outs": silent_opt_outs,
+        "wa_silent_rate_limited": silent_rate_limited,
+        "wa_silent_total": (silent_kill_switch + silent_muted
+                            + silent_opt_outs + silent_rate_limited),
+    }
+
+
 def _human_session_ids(events: list[dict]) -> set:
     by_session: dict = {}
     for event in events:
@@ -5033,43 +5182,11 @@ def build_report_stats(days: int = 7) -> dict:
             detail = lead.get("route") or "enquiry"
             lead_lines.append(f"{label} — {detail}")
 
-    # WhatsApp channel (stage 1): wa-* sessions live outside the widget-*
-    # filter above on purpose — separate channel, separate honest numbers.
-    wa_events = [
-        e for e in read_events()
-        if _event_ts(e) >= cutoff and str(e.get("session_id") or "").startswith("wa-")
-        and e.get("session_id") != "wa-system"
-        and str(e.get("session_id") or "") not in excluded_sessions
-    ]
-    # One thread, several conversations: a customer who comes back after a day
-    # and a half counts again, which is what Nick means by "conversations"
-    # (11 Sep 2026 diff, finding #9). Distinct (thread, episode) pairs.
-    wa_conversations = {
-        (e.get("session_id"), _event_episode(e))
-        for e in wa_events if e.get("event_type") == "conversation_started"
-    }
-    wa_messages = sum(1 for e in wa_events if e.get("event_type") == "message_received")
-    wa_leads = {e.get("session_id") for e in wa_events if e.get("event_type") == "lead_captured"}
-    # A reply WhatsApp reported as failed is not a reply Nick sent: matched by
-    # message_sid, never by session, so his second attempt in the same thread
-    # still counts (11 Sep 2026 diff, finding #14).
-    receipt_failed_sids = {
-        str(e.get("message_sid") or "")
-        for e in wa_events
-        if e.get("event_type") == "wa_reply_undelivered" and e.get("source") == "receipt"
-        and e.get("message_sid")
-    }
-    wa_manual_replies = sum(
-        1 for e in wa_events
-        if e.get("event_type") == "wa_manual_reply_sent"
-        and str(e.get("message_sid") or "") not in receipt_failed_sids
-    )
-    # Twilio REFUSING to send and WhatsApp never delivering are different
-    # facts for Nick, so the receipt-sourced ones are not counted here.
-    wa_undelivered = sum(
-        1 for e in wa_events
-        if e.get("event_type") == "wa_reply_undelivered" and e.get("source") != "receipt"
-    )
+    # WhatsApp channel: wa-* sessions live outside the widget-* filter above on
+    # purpose, separate channel and separate honest numbers. Every counter comes
+    # from the same helper the dashboard uses, because the two used to
+    # disagree (11 Sep 2026 diff, finding #20).
+    wa_counters = wa_channel_counters(_wa_report_events_between(cutoff_dt, now))
 
     # Greeting A/B running totals since the test started (6 Aug): the weekly
     # window alone made "running since 6 Aug" a mislabel — Nicholas asked for
@@ -5100,11 +5217,7 @@ def build_report_stats(days: int = 7) -> dict:
     return {
         "window_days": days,
         "since": cutoff,
-        "wa_conversations": len(wa_conversations),
-        "wa_messages": wa_messages,
-        "wa_leads": len(wa_leads),
-        "wa_manual_replies": wa_manual_replies,
-        "wa_undelivered": wa_undelivered,
+        **wa_counters,
         # A live channel with zero conversations and a switched-off channel must
         # never look the same in the report (Nicholas, 2026-09-10).
         "wa_channel_enabled": wa_channel_enabled(),
@@ -5222,8 +5335,25 @@ def format_report_text(stats: dict) -> str:
         f"- Conversations: {stats.get('wa_conversations', 0)}",
         f"- Messages received: {stats.get('wa_messages', 0)}",
         f"- Leads captured: {stats.get('wa_leads', 0)}",
+        # Labels here deliberately differ from the website ones above: the two
+        # blocks are different channels and Nick reads them side by side
+        # (11 Sep 2026 diff, finding #20).
+        f"- Returning customers who started a fresh conversation: {stats.get('wa_returning_episodes', 0)}",
+        f"- Asked to speak with Nick/Lyn: {stats.get('wa_human_requests', 0)}",
+        f"- Owner alerts sent to you: {stats.get('wa_alerts_sent', 0)}",
+        f"- Trial link offered: {stats.get('wa_link_offered', 0)} conversation(s)",
+        f"- Follow-up nudges sent: {stats.get('wa_nudges_sent', 0)}",
         f"- Manual replies you sent: {stats.get('wa_manual_replies', 0)}",
         f"- Bot replies Twilio refused to send: {stats.get('wa_undelivered', 0)}",
+        f"- Replies Twilio never confirmed: {stats.get('wa_send_unknown', 0)}",
+        f"- Answers started but never sent: {stats.get('wa_answers_lost', 0)}",
+        f"- Replies WhatsApp confirmed delivered / reported failed: "
+        f"{stats.get('wa_delivered', 0)} / {stats.get('wa_delivery_failed', 0)}",
+        f"- Times the bot stayed silent by design: {stats.get('wa_silent_total', 0)} "
+        f"(kill switch {stats.get('wa_silent_kill_switch', 0)}, "
+        f"bot muted {stats.get('wa_silent_muted', 0)}, "
+        f"opt-outs {stats.get('wa_silent_opt_outs', 0)}, "
+        f"flood limit {stats.get('wa_silent_rate_limited', 0)})",
     ]
     shipped = stats.get("shipped_lines") or []
     lines += ["", "WENT LIVE THIS WEEK"]
@@ -5397,8 +5527,28 @@ def format_report_html(stats: dict) -> str:
     inner.append(_email_row("Conversations", str(stats.get("wa_conversations", 0))))
     inner.append(_email_row("Messages received", str(stats.get("wa_messages", 0))))
     inner.append(_email_row("Leads captured", str(stats.get("wa_leads", 0))))
+    inner.append(_email_row("Returning customers who started a fresh conversation",
+                            str(stats.get("wa_returning_episodes", 0))))
+    inner.append(_email_row("Asked to speak with Nick/Lyn", str(stats.get("wa_human_requests", 0))))
+    inner.append(_email_row("Owner alerts sent to you", str(stats.get("wa_alerts_sent", 0))))
+    inner.append(_email_row("Trial link offered", f"{stats.get('wa_link_offered', 0)} conversation(s)"))
+    inner.append(_email_row("Follow-up nudges sent", str(stats.get("wa_nudges_sent", 0))))
     inner.append(_email_row("Manual replies you sent", str(stats.get("wa_manual_replies", 0))))
     inner.append(_email_row("Bot replies Twilio refused to send", str(stats.get("wa_undelivered", 0))))
+    inner.append(_email_row("Replies Twilio never confirmed", str(stats.get("wa_send_unknown", 0))))
+    inner.append(_email_row("Answers started but never sent", str(stats.get("wa_answers_lost", 0))))
+    inner.append(_email_row(
+        "Replies WhatsApp confirmed delivered / reported failed",
+        f"{stats.get('wa_delivered', 0)} / {stats.get('wa_delivery_failed', 0)}",
+    ))
+    inner.append(_email_row(
+        "Times the bot stayed silent by design",
+        str(stats.get("wa_silent_total", 0)),
+        f"kill switch {stats.get('wa_silent_kill_switch', 0)}, "
+        f"bot muted {stats.get('wa_silent_muted', 0)}, "
+        f"opt-outs {stats.get('wa_silent_opt_outs', 0)}, "
+        f"flood limit {stats.get('wa_silent_rate_limited', 0)}",
+    ))
 
     inner.append(_email_section("Human follow-up"))
     inner.append(_email_row("Bot-generated follow-up suggestions", str(stats.get("handoff_suggestions", 0))))
@@ -7493,6 +7643,30 @@ def _wa_episode_from_timestamps(stamps: list) -> int:
     )
 
 
+# The dashboard's WhatsApp tiles and the Monday report must agree, so both
+# read wa_channel_counters (11 Sep 2026 diff, finding #20). Reading a week of
+# events on every dashboard poll is the expensive half, so it is cached the
+# same way the excluded-session list is.
+WA_COUNTERS_WINDOW_DAYS = 7
+_wa_counters_cache: dict[str, tuple] = {}
+_WA_COUNTERS_CACHE_TTL = 60.0
+
+
+def wa_dashboard_counters() -> tuple[dict, int]:
+    """(counters, excluded_session_count) for the last WA_COUNTERS_WINDOW_DAYS."""
+    hit = _wa_counters_cache.get("counters")
+    if hit and time.time() - hit[0] < _WA_COUNTERS_CACHE_TTL:
+        return hit[1], hit[2]
+    now = datetime.now()
+    counters = wa_channel_counters(
+        _wa_report_events_between(now - timedelta(days=WA_COUNTERS_WINDOW_DAYS), now))
+    # Nick's sign-off thread is on the exclusion list, so a tile reading 0 has
+    # to say why rather than look like a dead channel (finding #20 review).
+    excluded = len(report_excluded_session_ids())
+    _wa_counters_cache["counters"] = (time.time(), counters, excluded)
+    return counters, excluded
+
+
 def wa_dashboard_payload() -> dict:
     """Every WhatsApp thread with its 24h-window state and mute flag — the
     per-conversation indicator promised in stage 1. Single pass over the logs:
@@ -7558,9 +7732,17 @@ def wa_dashboard_payload() -> dict:
         entry["deliveries"] = [d for d in deliveries if isinstance(d, dict)] if isinstance(deliveries, list) else []
         newest = entry["deliveries"][-1] if entry["deliveries"] else {}
         entry["last_outbound_failed"] = newest.get("status") in ("failed", "undelivered")
+    try:
+        counters, counters_excluded = wa_dashboard_counters()
+    except Exception:
+        # The thread list is the screen's job; the tiles are a bonus.
+        counters, counters_excluded = {}, 0
     return {
         "channel_enabled": wa_channel_enabled(),
         "episode_gap_hours": WA_EPISODE_GAP_HOURS,
+        "counters": counters,
+        "counters_window_days": WA_COUNTERS_WINDOW_DAYS,
+        "counters_excluded_sessions": counters_excluded,
         "conversations": sorted(
             threads.values(),
             key=lambda t: (t["last_message"] or {}).get("timestamp", ""),
@@ -7570,7 +7752,11 @@ def wa_dashboard_payload() -> dict:
 
 
 @app.get("/api/wa/conversations")
-async def wa_conversations(_: str = Depends(require_admin)):
+def wa_conversations(_: str = Depends(require_admin)):
+    # Sync on purpose, so FastAPI runs it in the threadpool: the payload reads
+    # the whole conversation log plus a week of events, and on a single uvicorn
+    # worker that blocked inbound Twilio webhooks for as long as Nick's phone
+    # took to load the dashboard (11 Sep 2026 diff, finding #20 review).
     return JSONResponse(wa_dashboard_payload())
 
 
@@ -10598,6 +10784,12 @@ ADMIN_HTML = """
       display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
       gap: 10px; margin-bottom: 12px;
     }
+    /* The WhatsApp tiles sit ABOVE the thread list, which is what Nick opens
+       this tab for. At the shared 165px minimum they stacked one per row on a
+       phone and pushed every conversation below the fold, so this row packs
+       tighter (11 Sep 2026 diff, finding #20). */
+    #waCounters { grid-template-columns: repeat(auto-fit, minmax(138px, 1fr)); }
+    #waCounters .kpi-value { font-size: 1.35rem; }
     .kpi {
       background: var(--paper); border: 1px solid var(--line); border-radius: 10px;
       padding: 13px 15px 12px; box-shadow: var(--shadow-1);
@@ -11063,6 +11255,8 @@ ADMIN_HTML = """
           </label>
         </div>
       </div>
+      <div class="kpis" id="waCounters"></div>
+      <p class="page-sub" id="waCountersNote" style="margin:-4px 0 14px;"></p>
       <div class="split">
         <div class="list-pane" id="waThreads"></div>
         <div class="detail-pane">
@@ -11429,6 +11623,23 @@ ADMIN_HTML = """
       toggle.checked = !!wa.channel_enabled;
       document.getElementById('waChannelLabel').textContent = wa.channel_enabled ? 'Channel on' : 'Channel off, bot silent';
       if (!waSelectedId && threads.length) waSelectedId = threads[0].session_id;
+      // Same seven-day numbers as the Monday report, from the same helper, so
+      // the two can never disagree again (11 Sep 2026 diff, finding #20). The
+      // window and the QA exclusion are said ONCE under the row: on a phone
+      // these tiles stack, and the same sentence six times buried the threads.
+      const counters = wa.counters || {};
+      const days = wa.counters_window_days || 7;
+      const excluded = wa.counters_excluded_sessions || 0;
+      document.getElementById('waCounters').innerHTML = ''
+        + kpi('Conversations', num(counters.wa_conversations || 0), 'threads, counted again after a break')
+        + kpi('Asked for Nick/Lyn', num(counters.wa_human_requests || 0), 'you were alerted ' + num(counters.wa_alerts_sent || 0) + ' time(s)')
+        + kpi('Trial link offered', num(counters.wa_link_offered || 0), 'conversations shown the link')
+        + kpi('Follow-ups sent', num(counters.wa_nudges_sent || 0), 'the 90-minute nudge')
+        + kpi('Refused by Twilio', num(counters.wa_undelivered || 0), num(counters.wa_delivery_failed || 0) + ' more failed on WhatsApp')
+        + kpi('Silent by design', num(counters.wa_silent_total || 0), 'kill switch, mute, opt-out, flood limit');
+      let note = 'Last ' + days + ' days, as in the Monday report.';
+      if (excluded) note += ' ' + excluded + ' test session(s) excluded.';
+      document.getElementById('waCountersNote').textContent = note;
       const wrap = document.getElementById('waThreads');
       wrap.innerHTML = threads.length ? threads.map(function(t) {
         const active = t.session_id === waSelectedId ? ' active' : '';
