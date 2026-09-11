@@ -182,5 +182,9 @@
   {
     "date": "2026-09-11",
     "line": "Long WhatsApp answers are split into consecutive messages instead of being cut at 1600 characters; one number cannot flood the bot with unlimited messages."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "WhatsApp leads now carry the number the person is writing from and the channel; on WhatsApp the bot asks for a first name only, never the mobile; alerts show the customer's WhatsApp display name marked as unverified."
   }
 ]

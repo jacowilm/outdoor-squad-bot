@@ -49,8 +49,18 @@ create table if not exists public.outdoor_squad_leads (
   concerns jsonb not null default '[]'::jsonb,
   handoff_summary text,
   raw_message text,
-  session_id text
+  session_id text,
+  channel text,
+  phone_typed text
 );
+
+-- Added 11 Sep 2026 with the website-vs-WhatsApp diff work. Run these against
+-- the live project BEFORE deploying: a WhatsApp lead carries the channel it
+-- came from and, when the person types a second number, the one they typed.
+-- app.py degrades one field rather than the whole row if they are missing,
+-- but a missing column still costs Nick that field on every alert.
+alter table public.outdoor_squad_leads add column if not exists channel text;
+alter table public.outdoor_squad_leads add column if not exists phone_typed text;
 
 create index if not exists outdoor_squad_leads_timestamp_idx
   on public.outdoor_squad_leads (timestamp desc);
@@ -70,7 +80,10 @@ alter table public.outdoor_squad_conversation_logs enable row level security;
 alter table public.outdoor_squad_leads enable row level security;
 
 -- Key/value settings (owner-changeable password hash, WhatsApp channel state:
--- kill switch, per-thread mute + nudge markers, rotating Momence refresh token).
+-- kill switch, per-thread mute + nudge markers, rotating Momence refresh token,
+-- and since 11 Sep 2026 "wa::wa_profile_name:{session_id}", the sender's own
+-- WhatsApp display name, stored unverified for the owner's alerts and thread
+-- list only).
 -- The table already exists in the live project; recorded here so a fresh
 -- provision from this file matches production. "key" must be PRIMARY KEY or
 -- the on_conflict upserts in app.py degrade to blind inserts.

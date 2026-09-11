@@ -659,6 +659,15 @@ def sort_rows_by_timestamp(rows: list[dict], key: str = "timestamp") -> list[dic
     return sorted(rows, key=lambda row: row.get(key) or "")
 
 
+def _lead_channel(row: dict) -> str:
+    """Rows written before 11 Sep 2026 have no channel column; the session id
+    still says which channel they came from, so the leads tab and the CSV are
+    never blank for historical rows (diff finding #19)."""
+    return str(row.get("channel") or "") or (
+        "whatsapp" if str(row.get("session_id") or "").startswith("wa-") else "website"
+    )
+
+
 def read_leads() -> list[dict]:
     if supabase_enabled():
         try:
@@ -670,10 +679,15 @@ def read_leads() -> list[dict]:
             for row in rows:
                 if not isinstance(row.get("concerns"), list):
                     row["concerns"] = row.get("concerns") or []
+                row["channel"] = _lead_channel(row)
             return rows
         except Exception:
             pass
-    return read_json_array_file(LEADS_FILE)
+    rows = read_json_array_file(LEADS_FILE)
+    for row in rows:
+        if isinstance(row, dict):
+            row["channel"] = _lead_channel(row)
+    return rows
 
 
 def supabase_select_paged(table: str, params: dict, cap: int) -> list[dict]:
@@ -1102,6 +1116,19 @@ def is_whatsapp_session(session_id: str) -> bool:
     return str(session_id or "").startswith("wa-")
 
 
+def wa_sender_e164(session_id: str) -> str:
+    """The number the WhatsApp customer is writing from, in dialable E.164.
+
+    The session id IS the sender ("wa-" + digits), so on WhatsApp the mobile
+    is known from the very first message and never has to be asked for
+    (11 Sep 2026 diff, finding #3). Returns "" for a website session.
+    """
+    if not is_whatsapp_session(session_id):
+        return ""
+    digits = re.sub(r"\D", "", str(session_id).removeprefix("wa-"))
+    return f"+{digits}" if digits else ""
+
+
 def whatsapp_channel_prompt(session_id: str) -> str:
     """The shared brain was written for the website widget and was never told
     when it is answering on WhatsApp (11 Sep 2026 diff, findings #6 and #7):
@@ -1112,6 +1139,16 @@ def whatsapp_channel_prompt(session_id: str) -> str:
     wa- session; the deterministic render pass in render_for_whatsapp() is
     the backstop when the model ignores it."""
     first_reply = not any(m.get("role") == "assistant" for m in load_conversation(session_id))
+    # Once the person has typed a first name (or answered a "first name?" ask
+    # with a bare name), the model is told it and told to stop asking. Only a
+    # name WE extracted is used here: the Twilio ProfileName is attacker-set
+    # text and never reaches the prompt (11 Sep 2026 diff, finding #3).
+    known_name = extract_contact_name("", session_id=session_id)
+    name_clause = (
+        f"The person's first name is {known_name.split()[0]}; do not ask for it again. "
+        if known_name else
+        "If a name would help, ask for a first name only. "
+    )
     intro = (
         "This is your FIRST reply in this WhatsApp conversation: open by saying you are Robo-Nick, "
         "the automated helper, in one light line (Humanoid-Nick is coaching, asleep or near coffee), then answer. "
@@ -1124,11 +1161,61 @@ def whatsapp_channel_prompt(session_id: str) -> str:
         + "Plain text only: no markdown, no **bold**, no headings, no [label](url) links; paste any link bare on its own line. "
         "Short paragraphs, one blank line between them; a list is one item per line starting with '- '. "
         "The person is messaging from their own mobile, so NEVER ask for their mobile or phone number; "
-        "if a name would help, ask for a first name only. "
-        "Do not offer 'SMS or a call'; if you need a preference, offer 'reply here or a quick call'. "
+        + name_clause
+        + "Do not offer 'SMS or a call'; if you need a preference, offer 'reply here or a quick call'. "
         "Do not quote a phone number as the way to reach the team: Humanoid-Nick or Lyn reply in this same chat. "
         "The app may send ONE short follow-up message later if the person goes quiet; never promise reminders beyond that."
     )
+
+
+# ── WhatsApp contact-ask rewrites (11 Sep 2026 diff, finding #3) ─────────────
+# On WhatsApp the customer's mobile IS the session id, so every scripted line
+# that ends "drop your first name + mobile" asks for something we already have.
+# These rules rewrite the ASK, never the answer: the email fallback address and
+# any link must survive untouched, which is why the email-protecting rule runs
+# FIRST and the name/mobile rules only fire when no address is being consumed.
+_WA_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_WA_ASK_NAME_EMAIL_RE = re.compile(
+    r"(?i)\b(?:your |a |the )?(?:first )?name\s*(?:\+|,|and|or)\s*mobile or email\s+(?=[A-Za-z0-9._%+-]+@)"
+)
+_WA_ASK_BARE_EMAIL_RE = re.compile(r"(?i)\bmobile or email\s+(?=[A-Za-z0-9._%+-]+@)")
+_WA_ASK_MEMBERSHIP_RE = re.compile(r"(?i)\bname plus the email or mobile\b")
+_WA_ASK_NAME_MOBILE_RE = re.compile(
+    r"(?i)\b(?:first )?name(?:\s*\+\s*|\s+and\s+|\s+or\s+)mobile(?P<suffix>/email| or email)?\b"
+)
+_WA_ASK_NAME_COMMA_RE = re.compile(
+    r"(?i)\b(?:first )?name,\s*mobile(?P<suffix>/email| or email)?\b"
+)
+_WA_ASK_SHARE_MOBILE_RE = re.compile(r"(?i)\b(share|take|leave|send)\s+a\s+mobile\b")
+_WA_ASK_NUMBER_RE = re.compile(r"(?i)\b(?:mobile|phone) number\b")
+_WA_ASK_VERB_RE = re.compile(r"(?i)\b(?:drop|send|share|leave|flag|pop)\b")
+
+
+def _wa_name_or_email(match: re.Match, text: str) -> str:
+    """"first name" unless the ask also offered email, which must survive."""
+    if match.groupdict().get("suffix") or _WA_EMAIL_RE.search(text[match.end():match.end() + 20]):
+        return "first name or email"
+    return "first name"
+
+
+def wa_rewrite_contact_asks(text: str) -> str:
+    """Turn "name + mobile" asks into first-name-only asks, in order."""
+    if not text or "mobile" not in text.lower():
+        return text
+    out = _WA_ASK_NAME_EMAIL_RE.sub("your first name, or email ", text)
+    out = _WA_ASK_BARE_EMAIL_RE.sub("email ", out)
+    out = _WA_ASK_MEMBERSHIP_RE.sub("first name plus the email", out)
+    out = _WA_ASK_NAME_MOBILE_RE.sub(lambda m: _wa_name_or_email(m, out), out)
+    out = _WA_ASK_NAME_COMMA_RE.sub(lambda m: _wa_name_or_email(m, out), out)
+    out = _WA_ASK_SHARE_MOBILE_RE.sub(lambda m: f"{m.group(1)} your first name", out)
+    # "mobile number" on its own is only an ask when the sentence asks: the
+    # same two words appear in the bot-identity and privacy answers, which
+    # must not be rewritten into nonsense.
+    sentences = re.split(r"(?<=[.!?])(\s+)", out)
+    for index in range(0, len(sentences), 2):
+        if _WA_ASK_VERB_RE.search(sentences[index]):
+            sentences[index] = _WA_ASK_NUMBER_RE.sub("first name", sentences[index])
+    return "".join(sentences)
 
 
 _WA_BOLD_RE = re.compile(r"\*\*([^*\n]+?)\*\*")
@@ -1144,7 +1231,8 @@ def render_for_whatsapp(text: str) -> str:
     as-is. Convert, never strip: the emphasis and the link both survive."""
     if not text:
         return text
-    out = _WA_HEADING_RE.sub("", text)
+    out = wa_rewrite_contact_asks(text)
+    out = _WA_HEADING_RE.sub("", out)
     out = _WA_MD_LINK_RE.sub(lambda m: f"{m.group(1).strip()}: {m.group(2)}", out)
     out = _WA_BOLD_RE.sub(lambda m: f"*{m.group(1).strip()}*", out)
     out = out.replace("**", "")
@@ -1941,8 +2029,92 @@ def remove_extra_questions(text: str, max_questions: int = 1) -> str:
     return "\n\n".join(kept_blocks).strip()
 
 
+_WA_CONTACT_ASK_PHRASES = (
+    "name and mobile", "mobile number", "phone number",
+    "email address", "best contact", "how can the team reach",
+)
+_WA_NAME_ASK_PHRASES = ("first name", "your name", "me your name")
+# A sentence only counts as an ASK when it is shaped like one. "Your email
+# address is never shared" mentions the same words as "what's your email
+# address?" and must survive: stripping on the phrase alone is how the old
+# wholesale guard clobbered real answers (Nicholas, 2026-06-03).
+_WA_ASK_SHAPE_RE = re.compile(
+    r"(?i)\?|\b(?:drop|send|share|leave|flag|pop|give|grab|tell me|let me know"
+    r"|what'?s|whats|can you|could you|need your|want to|would you)\b"
+)
+# "Drop your first name, or email innerwest@..." is an ask AND the only place
+# that sentence gives the email fallback, so when the name is already known the
+# ask clause is removed and the fallback is kept rather than the whole line
+# going in the bin with it.
+_WA_NAME_ASK_LEAD_RE = re.compile(
+    r"(?i)^(?:drop|send|share|leave|pop|flag)\s+(?:your\s+|a\s+|me\s+your\s+)?first name,?\s*(?:or|and)\s+"
+)
+_WA_LINK_RE = re.compile(r"https?://")
+
+
+def wa_strip_contact_asks(reply: str, session_id: str) -> str:
+    """Delete the sentence that asks, keep the answer around it.
+
+    On WhatsApp the mobile is the session id, so a reply asking for it is
+    always wrong, and once a first name is known the name ask is wrong too
+    (11 Sep 2026 diff, finding #3). The wholesale "I've got your contact
+    details" replacement below is NOT the right tool here: it throws the real
+    answer away, which is exactly the clobbering Nicholas reported on
+    2026-06-03. So this removes the asking sentence only, and if that would
+    leave nothing at all the draft is returned untouched.
+    """
+    if not reply:
+        return reply
+    # Turn "name + mobile" into "first name" FIRST, so a line that only asked
+    # for the mobile becomes a legitimate first-name ask and survives, instead
+    # of the whole sentence being deleted while we still have no name.
+    reply = wa_rewrite_contact_asks(reply)
+    drop_name_ask = bool(extract_contact_name("", session_id=session_id))
+
+    def _keep(sentence: str) -> str:
+        """The sentence to keep, "" to drop it."""
+        lower = sentence.lower()
+        if not _WA_ASK_SHAPE_RE.search(sentence):
+            return sentence
+        asks_contact = any(phrase in lower for phrase in _WA_CONTACT_ASK_PHRASES)
+        asks_name = drop_name_ask and any(phrase in lower for phrase in _WA_NAME_ASK_PHRASES)
+        if not (asks_contact or asks_name):
+            return sentence
+        if _WA_EMAIL_RE.search(sentence) or _WA_LINK_RE.search(sentence):
+            trimmed = _WA_NAME_ASK_LEAD_RE.sub("", sentence).strip()
+            if trimmed and trimmed != sentence:
+                return trimmed[0].upper() + trimmed[1:]
+            # A link or an email address is a way out of the conversation, not
+            # an ask: never delete one to remove a question.
+            return sentence
+        return ""
+
+    # Line by line, not sentence by sentence across the whole reply: a bare
+    # booking URL has no full stop before the next paragraph, so a flat
+    # sentence split swallowed the trial link along with the ask that followed
+    # it. Blank lines are kept because WhatsApp copy is written in blocks.
+    kept_lines: list[str] = []
+    for line in reply.split("\n"):
+        if not line.strip():
+            kept_lines.append("")
+            continue
+        kept = [_keep(part) for part in re.split(r"(?<=[.!?])\s+", line)]
+        text = " ".join(part.strip() for part in kept if part.strip()).strip()
+        if text:
+            kept_lines.append(text)
+    stripped = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
+    if not stripped:
+        return remove_extra_questions(reply)
+    return remove_extra_questions(stripped)
+
+
 def enforce_contact_and_handoff_progression(reply: str, session_id: str) -> str:
     """Avoid repeated lead-capture and handoff loops once details are known."""
+    if is_whatsapp_session(session_id) and not contact_already_captured(session_id):
+        # The phone is known from turn one on WhatsApp, so the bot must stop
+        # asking for it even though the person never typed anything. Surgical
+        # strip, not the wholesale replacement (11 Sep 2026 diff, finding #3).
+        return wa_strip_contact_asks(reply, session_id)
     if not contact_already_captured(session_id):
         return remove_extra_questions(reply)
 
@@ -4009,9 +4181,24 @@ def annotate_lead_channel(lead_info: dict, session_id: str) -> dict:
     inside the 24 h window, not to ring a website visitor."""
     if is_whatsapp_session(session_id):
         lead_info["channel"] = "whatsapp"
-        digits = re.sub(r"\D", "", str(session_id).removeprefix("wa-"))
-        if digits and not lead_info.get("phone"):
-            lead_info["phone"] = f"+{digits} (the WhatsApp they are messaging from)"
+        sender = wa_sender_e164(session_id)
+        if sender:
+            typed = re.sub(r"\D", "", str(lead_info.get("phone") or ""))
+            # A second, DIFFERENT number they typed ("ring my partner on
+            # 0412...") is worth keeping, but the callable one is always the
+            # thread itself. Compared on the last 9 digits so 0412 345 678 and
+            # +61412345678 are recognised as the same phone.
+            if typed and typed[-9:] != sender[-9:]:
+                lead_info["phone_typed"] = lead_info["phone"]
+            # No " (the WhatsApp they are messaging from)" suffix any more: it
+            # broke tel: links and the E.164 the CRM expects.
+            lead_info["phone"] = sender
+        profile_name = get_wa_setting(f"wa_profile_name:{session_id}")
+        if profile_name:
+            # Display name only, never the lead's name: WhatsApp lets anyone
+            # set it to anything, so it is shown to Nick marked unverified and
+            # is kept out of the lead row, the prompt and event metadata.
+            lead_info["wa_profile_name"] = profile_name
     else:
         lead_info.setdefault("channel", "website")
     return lead_info
@@ -4279,6 +4466,8 @@ async def export_leads_csv(_: str = Depends(require_admin)):
         "handoff_summary",
         "raw_message",
         "session_id",
+        "channel",
+        "phone_typed",
     ]
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
@@ -5125,10 +5314,25 @@ def format_lead_summary_html(lead_info: dict) -> str:
     inner.append(_email_section("Contact"))
     phone = lead_info.get("phone")
     email_addr = lead_info.get("email")
+    is_whatsapp = str(lead_info.get("channel") or "website") == "whatsapp"
+    inner.append(_email_row("Channel", "WhatsApp" if is_whatsapp else "Website"))
     inner.append(_email_row(
         "Phone",
         f'<a href="tel:{e(phone)}" style="color:{REALTIQ_NAVY};text-decoration:none;">{e(phone)}</a>' if phone else "not provided",
     ))
+    typed_number = lead_info.get("phone_typed")
+    if typed_number:
+        inner.append(_email_row(
+            "Typed number",
+            f'<a href="tel:{e(typed_number)}" style="color:{REALTIQ_NAVY};text-decoration:none;">{e(typed_number)}</a>',
+        ))
+    profile_name = str(lead_info.get("wa_profile_name") or "").strip()
+    if is_whatsapp and profile_name:
+        # Labelled, never presented as the name: the sender picks this value.
+        inner.append(_email_row(
+            "WhatsApp name",
+            f'{e(profile_name)} <span style="color:#94a3b8;">(their WhatsApp display name, not verified)</span>',
+        ))
     inner.append(_email_row(
         "Email",
         f'<a href="mailto:{e(email_addr)}" style="color:{REALTIQ_NAVY};text-decoration:none;">{e(email_addr)}</a>' if email_addr else "not provided",
@@ -5152,7 +5356,12 @@ def format_lead_summary_html(lead_info: dict) -> str:
             f'&ldquo;{e(lead_info["raw_message"])}&rdquo;</div>'
         )
 
-    inner.append(_email_button("Open the conversation", f"{PUBLIC_BASE_URL}/admin"))
+    # Straight to the WhatsApp tab: Nick has 24 hours to answer in the thread
+    # and should not have to hunt for it (11 Sep 2026 diff, finding #18).
+    inner.append(_email_button(
+        "Open the conversation",
+        f"{PUBLIC_BASE_URL}/admin#whatsapp" if is_whatsapp else f"{PUBLIC_BASE_URL}/admin",
+    ))
     if email_addr:
         inner.append(
             '<div style="font-size:12px;color:#94a3b8;padding-top:8px;">Tip: replying to this email replies straight to the prospect.</div>'
@@ -5750,10 +5959,20 @@ def _wa_capture_lead(message: str, session_id: str, human_request_handled: bool,
     lead_info = extract_lead_info(message, session_id)
     if not lead_info:
         return
-    annotate_lead_channel(lead_info, session_id)
+    # extract_lead_info already stamped the channel and the sender number.
     save_lead(lead_info)
-    has_contact = has_contact_details(message)
-    log_event("lead_captured" if has_contact else "lead_updated", **lead_info)
+    # A first name typed on WhatsApp is a NEW lead, not a silent update: the
+    # phone was already known, so the name is the detail Nick was missing
+    # (11 Sep 2026 diff, finding #3).
+    has_contact = bool(
+        has_contact_details(message)
+        or (is_whatsapp_session(session_id)
+            and (extract_contact_name(message, session_id=session_id)
+                 or wa_bare_name_reply(message, session_id)))
+    )
+    # Splatted through the column whitelist so an attacker-chosen WhatsApp
+    # display name can never land in the events table.
+    log_event("lead_captured" if has_contact else "lead_updated", **_lead_row(lead_info))
     if not has_contact:
         return
     # Owner alert: deduped against the human-request alert that already fired.
@@ -5872,6 +6091,10 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
     reply = render_for_whatsapp(reply)
     try:
         reply = prevent_repetitive_reply(reply, message, session_id)
+        # The guard can substitute a fresh non_repeating_followup, which has
+        # never been through the render pass; render again so the sent body
+        # and the stored turn agree (11 Sep 2026 diff, finding #3).
+        reply = render_for_whatsapp(reply)
         history = load_conversation(session_id)
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
@@ -5900,6 +6123,29 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
                   error=str(detail)[:200])
         # The nudge must not follow a reply that never arrived (finding #13).
         set_wa_setting(f"undelivered:{session_id}", "1")
+
+
+def _wa_remember_profile_name(session_id: str, raw: str, wa_id: str = "") -> None:
+    """Store Twilio's ProfileName as an UNVERIFIED display name for the thread.
+
+    Nick reading "+61452006342" on an alert has no idea who that is, and the
+    display name is the only clue WhatsApp gives us (11 Sep 2026 diff,
+    finding #3). It is attacker-controlled text, so it never becomes the
+    lead's name and never enters the AI prompt: it is shown, labelled, and
+    that is all. WaId must agree with the sender or the value is ignored.
+    """
+    name = str(raw or "").strip()[:80]
+    if not name:
+        return
+    sender_digits = re.sub(r"\D", "", str(session_id).removeprefix("wa-"))
+    wa_digits = re.sub(r"\D", "", str(wa_id or ""))
+    if wa_digits and wa_digits != sender_digits:
+        return
+    key = f"wa_profile_name:{session_id}"
+    # Cached read on purpose: a display name changes about never, and an
+    # unconditional write would be one extra settings round trip per inbound.
+    if _cached_wa_setting(key, "") != name:
+        set_wa_setting(key, name)
 
 
 @app.post("/twilio-wa-webhook")
@@ -5945,6 +6191,9 @@ async def twilio_wa_webhook(request: Request):
         # finding #24). A flood is not an enquiry: log it, ack Twilio, stop.
         log_event("wa_rate_limited", session_id=session_id, channel="whatsapp")
         return _twiml_message(None)
+
+    _wa_remember_profile_name(session_id, str(form.get("ProfileName", "")),
+                              str(form.get("WaId", "")))
 
     message = str(form.get("Body", "")).strip()[:MAX_MESSAGE_LEN]
     if not message:
@@ -5996,6 +6245,11 @@ async def twilio_wa_webhook(request: Request):
     if should_use_local_tone_handler(message, session_id) and not wa_first_contact_greeting(message, session_id):
         reply = demo_fallback_reply(message, session_id=session_id)
         reply = prevent_repetitive_reply(reply, message, session_id)
+        # Render BEFORE persisting so the transcript, the repetition guard and
+        # the dashboard hold exactly what the customer received; _twiml_message
+        # renders again on the way out and the pass is idempotent
+        # (11 Sep 2026 diff, finding #3: the stored copy still said "+ mobile").
+        reply = render_for_whatsapp(reply)
         history.append({"role": "assistant", "content": reply})
         persist_conversation(session_id)
         log_chat_message(session_id, "assistant", reply)
@@ -6044,7 +6298,13 @@ async def wa_mute_endpoint(request: Request, _: str = Depends(require_admin)):
 # ── WhatsApp channel state, outbound sending, nudge, Momence push ────────────
 # Small key/value state shared across deploys: Supabase settings table when
 # available, a local JSON file otherwise (dev/tests). Holds the kill switch,
-# the rotating Momence refresh token, and per-thread nudge markers.
+# the rotating Momence refresh token, and per-thread markers. Per-thread keys:
+#   opted_out:{sid}, mute:{sid}, handoff:{sid}, nudged:{sid},
+#   lead_alerted:{sid}, momence_pushed:{sid}, undelivered:{sid}
+#   wa_profile_name:{sid}  the sender's own WhatsApp display name, UNVERIFIED
+#     (they choose it), added 11 Sep 2026 for finding #3. Shown to Nick
+#     labelled as such; never the lead's name, never in the AI prompt, never
+#     in event metadata.
 WA_STATE_FILE = Path(os.environ.get("OUTDOOR_SQUAD_WA_STATE_FILE",
                                     str(Path(__file__).parent / "wa_state.json")))
 
@@ -6107,6 +6367,45 @@ def get_wa_setting(key: str, default: str = "") -> str:
     if file_entry is not None:
         return file_value or default
     return default
+
+
+def wa_settings_snapshot() -> dict:
+    """Every WhatsApp setting in ONE read, for screens that need dozens.
+
+    get_wa_setting loads the whole state file and issues a Supabase GET per
+    key, which the dashboard was paying once per flag per thread (11 Sep 2026
+    diff, finding #19 follow-up). Same freshest-wins rule as get_wa_setting.
+    Returns {} on any failure so callers simply fall back to per-key reads.
+    """
+    merged: dict[str, str] = {}
+    stamps: dict[str, "datetime | None"] = {}
+    try:
+        for key, entry in _wa_state_file_load().items():
+            if isinstance(entry, dict):
+                merged[key] = str(entry.get("value", ""))
+                stamps[key] = _parse_any_ts(entry.get("updated_at"))
+            else:
+                merged[key] = "" if entry is None else str(entry)
+                stamps[key] = None
+        if supabase_enabled():
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["settings"],
+                params={"select": "key,value,updated_at", "limit": "2000"},
+            ) or []
+            for row in rows:
+                raw_key = str(row.get("key") or "")
+                if not raw_key.startswith(_WA_SETTING_PREFIX):
+                    continue
+                key = raw_key[len(_WA_SETTING_PREFIX):]
+                db_dt = _parse_any_ts(row.get("updated_at"))
+                file_dt = stamps.get(key)
+                if key not in merged or file_dt is None or (db_dt and db_dt >= file_dt):
+                    merged[key] = str(row.get("value") or "")
+                    stamps[key] = db_dt
+    except Exception:
+        return {}
+    return merged
 
 
 def set_wa_setting(key: str, value: str) -> bool:
@@ -6386,6 +6685,10 @@ def wa_dashboard_payload() -> dict:
             if parsed and (sid not in last_user_ts or parsed > last_user_ts[sid]):
                 last_user_ts[sid] = parsed
     now = datetime.now()
+    # One settings read for the whole screen instead of one per flag per
+    # thread; an empty snapshot means "read them the old way".
+    snapshot = wa_settings_snapshot()
+    flag = (lambda key: snapshot.get(key, "")) if snapshot else (lambda key: get_wa_setting(key))
     for sid, entry in threads.items():
         last_in = last_user_ts.get(sid)
         if last_in is None:
@@ -6398,7 +6701,11 @@ def wa_dashboard_payload() -> dict:
                 "last_inbound_at": last_in.isoformat(),
             })
         entry["muted"] = wa_muted(sid)
-        entry["opted_out"] = get_wa_setting(f"opted_out:{sid}") == "1"
+        entry["opted_out"] = flag(f"opted_out:{sid}") == "1"
+        # The callable number and the (unverified) display name, so Nick can
+        # tell one +61 thread from another (11 Sep 2026 diff, finding #3).
+        entry["phone"] = wa_sender_e164(sid)
+        entry["profile_name"] = flag(f"wa_profile_name:{sid}")
     return {
         "channel_enabled": wa_channel_enabled(),
         "conversations": sorted(
@@ -8031,7 +8338,14 @@ def extract_lead_info(message: str, session_id: str) -> dict | None:
     info.update(extract_contact_details(message))
 
     if not info:
-        return None
+        # On WhatsApp the phone is known from the first message, so a typed
+        # first name is enough to be a real lead even with nothing else
+        # (11 Sep 2026 diff, finding #3). A bare "hi", a question or a suburb
+        # still creates nothing: the name check below is the whole gate.
+        if not (is_whatsapp_session(session_id)
+                and (extract_contact_name(message, session_id=session_id)
+                     or wa_bare_name_reply(message, session_id))):
+            return None
 
     name = extract_contact_name(message, session_id=session_id)
     if name:
@@ -8041,7 +8355,133 @@ def extract_lead_info(message: str, session_id: str) -> dict | None:
     info['timestamp'] = datetime.now().isoformat()
     info['raw_message'] = message
     info.update(build_lead_summary(session_id, message))
+    # Every lead row says which channel it came from, and a WhatsApp row
+    # carries the callable number (11 Sep 2026 diff, findings #3 and #19).
+    annotate_lead_channel(info, session_id)
     return info
+
+
+# Reject common non-name words so "I'm pretty unfit" doesn't become the
+# name "Pretty Unfit", and "Sure, it's a@b.com" doesn't become "Sure"
+# (Nicholas 2026-06-09 + the earlier "Pretty" report).
+NON_NAME_WORDS = {
+    "and", "but", "a", "an", "the", "not", "very", "really", "super", "pretty",
+    "quite", "so", "too", "unfit", "fit", "keen", "nervous", "scared", "intimidated",
+    "interested", "new", "here", "just", "still", "also", "gonna", "trying", "looking",
+    "hoping", "wanting", "ready", "done", "good", "great", "fine", "ok", "okay", "cool",
+    "nice", "sure", "yeah", "yep", "yes", "nope", "no", "thanks", "hi", "hey", "hello",
+    "mate", "sorry", "actually", "probably", "maybe", "free", "busy", "back", "into",
+    "about", "after", "from", "curious", "unsure", "definitely", "absolutely", "torn",
+    # Idiomatic fillers that follow "I'm ..." but are never names, the same
+    # name-collision class as "Torn"/"Pretty" ("I'm flat out" -> "Flat",
+    # Nicholas round-7 Q7 retest, 2026-06-16).
+    "flat", "out", "slammed", "swamped", "stuck", "keen", "down", "up",
+    # Scheduling/time words after "call me ..." ("call me tomorrow on
+    # 0412..." -> "Tomorrow On"), prepositions, and common adjectives/verbs
+    # after "this is ..."/"i'm ..." ("this is ridiculous" -> "Ridiculous",
+    # "i'm working on..." -> "Working On"). Deliberately excludes words that
+    # are real given names (months, Dawn, Summer, etc.).
+    "tomorrow", "today", "tonight", "later", "soon", "now", "asap",
+    "anytime", "sometime", "whenever", "monday", "tuesday", "wednesday",
+    "thursday", "friday", "saturday", "sunday", "morning", "afternoon",
+    "evening", "arvo", "weekend", "next", "this", "week",
+    "on", "at", "in", "by", "when", "around", "before", "please", "for",
+    "with", "if", "of", "to",
+    # Inner-west suburbs after "I'm ..." ("I'm Newtown based" -> "Newtown
+    # Based"). On WhatsApp a wrong name here creates a lead out of nothing,
+    # because the phone is already known (11 Sep 2026 diff, finding #3).
+    "camperdown", "redfern", "newtown", "glebe", "marrickville", "erskineville",
+    "stanmore", "annandale", "leichhardt", "enmore", "surry", "bondi", "sydney",
+    "ridiculous", "crazy", "annoying", "frustrating", "important", "urgent",
+    "weird", "confusing", "difficult", "silly", "stupid", "exciting",
+    "amazing", "awesome", "interesting", "hard", "tough",
+    "working", "starting", "thinking", "struggling", "considering",
+    "wondering", "planning", "feeling", "getting", "coming", "signing",
+    "asking", "calling", "texting", "emailing", "reaching",
+    # Present-participle disclosure verbs after "i'm ..." that are never
+    # names ("I'm recovering from anorexia" -> "Recovering"; "I'm starving
+    # myself" -> "Starving"). 2026-07-02 audit finding #8.
+    "recovering", "suffering", "starving", "healing", "dealing", "coping",
+    # "it's my first time" used to become the name "My First" on both
+    # channels (11 Sep 2026 diff, finding #3 verification).
+    "my",
+    "battling", "fighting", "dieting", "fasting", "bingeing", "purging",
+    "cutting", "overcoming", "managing", "grieving", "hurting", "restricting",
+}
+
+
+# A bare one-word answer to "what's your first name?" is a NAME on WhatsApp and
+# a suburb, a time or a yes/no everywhere else. Anything in here is never a
+# name, because a wrong guess reaches Nick's alert and the AI prompt as the
+# customer's name (11 Sep 2026 diff, finding #3).
+WA_BARE_NAME_STOPLIST = {
+    "who", "what", "when", "where", "why", "how", "which", "whats", "hows",
+    "sms", "text", "call", "ring", "email", "either", "both", "yes", "no",
+    "ok", "okay", "yep", "nah", "thanks", "cheers", "hi", "hello", "hey",
+    "prices", "price", "trial", "timetable",
+    "camperdown", "redfern", "newtown", "glebe", "marrickville", "erskineville",
+    "stanmore", "annandale", "leichhardt", "enmore", "surry", "bondi", "sydney",
+    "spt", "pt", "ytp", "kids", "stop",
+    "mornings", "morning", "evenings", "evening", "weekends", "weekend",
+    "weekdays", "arvo", "tonight", "tomorrow",
+}
+_WA_BARE_NAME_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z'\-]{1,19}$")
+
+
+def _wa_bare_name_from(message: str, asked_text: str) -> str | None:
+    """The shared body of the bare-name check: `asked_text` is the assistant
+    turn the person was replying to, so history and live inbound share one
+    rule."""
+    if "first name" not in str(asked_text or "").lower():
+        return None
+    raw = str(message or "").strip()
+    if not raw or "?" in raw or any(ch.isdigit() for ch in raw):
+        return None
+    tokens = raw.split()
+    if not 1 <= len(tokens) <= 2:
+        return None
+    for token in tokens:
+        if not _WA_BARE_NAME_TOKEN_RE.match(token):
+            return None
+        lowered = token.lower()
+        if lowered in WA_BARE_NAME_STOPLIST or lowered in NON_NAME_WORDS:
+            return None
+        if lowered.endswith("s") and lowered[:-1] in NON_NAME_WORDS:
+            return None
+        # Reuse the classifiers that already own these words rather than
+        # growing the stoplist forever: "Bondi" is a location answer and
+        # "trial" is a trial question, neither is anyone's first name.
+        if is_location_question(lowered) or is_trial_question(lowered) or is_vague_message(lowered):
+            return None
+    return " ".join(tokens).title()
+
+
+def wa_bare_name_reply(message: str, session_id: str) -> str | None:
+    """"Sarah" straight after "what's your first name?" is the name."""
+    if not is_whatsapp_session(session_id):
+        return None
+    return _wa_bare_name_from(message, recent_assistant_message(session_id))
+
+
+def wa_name_from_history(session_id: str) -> str | None:
+    """The newest bare-name answer already sitting in the thread, matched
+    against the assistant turn that preceded it rather than the newest one."""
+    if not is_whatsapp_session(session_id):
+        return None
+    found = None
+    previous_assistant = ""
+    for item in load_conversation(session_id):
+        role = item.get("role")
+        content = item.get("content", "")
+        if role == "assistant":
+            previous_assistant = content
+            continue
+        if role != "user":
+            continue
+        candidate = _wa_bare_name_from(content, previous_assistant)
+        if candidate:
+            found = candidate
+    return found
 
 
 def extract_contact_name(message: str, session_id: str = "default") -> str | None:
@@ -8056,45 +8496,6 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
     explicit_source = "\n".join(part for part in [message, history_with_contact] if part).strip()
     contact_stripped = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', explicit_source)
     contact_stripped = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', contact_stripped)
-    # Reject common non-name words so "I'm pretty unfit" doesn't become the
-    # name "Pretty Unfit", and "Sure, it's a@b.com" doesn't become "Sure"
-    # (Nicholas 2026-06-09 + the earlier "Pretty" report).
-    non_names = {
-        "and", "but", "a", "an", "the", "not", "very", "really", "super", "pretty",
-        "quite", "so", "too", "unfit", "fit", "keen", "nervous", "scared", "intimidated",
-        "interested", "new", "here", "just", "still", "also", "gonna", "trying", "looking",
-        "hoping", "wanting", "ready", "done", "good", "great", "fine", "ok", "okay", "cool",
-        "nice", "sure", "yeah", "yep", "yes", "nope", "no", "thanks", "hi", "hey", "hello",
-        "mate", "sorry", "actually", "probably", "maybe", "free", "busy", "back", "into",
-        "about", "after", "from", "curious", "unsure", "definitely", "absolutely", "torn",
-        # Idiomatic fillers that follow "I'm ..." but are never names — same
-        # name-collision class as "Torn"/"Pretty" ("I'm flat out" -> "Flat",
-        # Nicholas round-7 Q7 retest, 2026-06-16).
-        "flat", "out", "slammed", "swamped", "stuck", "keen", "down", "up",
-        # Scheduling/time words after "call me ..." ("call me tomorrow on
-        # 0412..." -> "Tomorrow On"), prepositions, and common adjectives/verbs
-        # after "this is ..."/"i'm ..." ("this is ridiculous" -> "Ridiculous",
-        # "i'm working on..." -> "Working On"). Deliberately excludes words that
-        # are real given names (months, Dawn, Summer, etc.).
-        "tomorrow", "today", "tonight", "later", "soon", "now", "asap",
-        "anytime", "sometime", "whenever", "monday", "tuesday", "wednesday",
-        "thursday", "friday", "saturday", "sunday", "morning", "afternoon",
-        "evening", "arvo", "weekend", "next", "this", "week",
-        "on", "at", "in", "by", "when", "around", "before", "please", "for",
-        "with", "if", "of", "to",
-        "ridiculous", "crazy", "annoying", "frustrating", "important", "urgent",
-        "weird", "confusing", "difficult", "silly", "stupid", "exciting",
-        "amazing", "awesome", "interesting", "hard", "tough",
-        "working", "starting", "thinking", "struggling", "considering",
-        "wondering", "planning", "feeling", "getting", "coming", "signing",
-        "asking", "calling", "texting", "emailing", "reaching",
-        # Present-participle disclosure verbs after "i'm ..." that are never
-        # names ("I'm recovering from anorexia" -> "Recovering"; "I'm starving
-        # myself" -> "Starving"). 2026-07-02 audit finding #8.
-        "recovering", "suffering", "starving", "healing", "dealing", "coping",
-        "battling", "fighting", "dieting", "fasting", "bingeing", "purging",
-        "cutting", "overcoming", "managing", "grieving", "hurting", "restricting",
-    }
     # Try EACH "i'm X" / "my name is X" trigger, not just the first — "I'm keen,
     # I'm Sarah, 0412..." must still capture Sarah rather than aborting on the
     # filler "keen" after the first "I'm" (2026-07-02 QA).
@@ -8105,14 +8506,21 @@ def extract_contact_name(message: str, session_id: str = "default") -> str | Non
     ):
         # If the first word right after the trigger isn't a plausible name, skip
         # this trigger and keep looking at later ones.
-        if (explicit_name.group(1) or "").lower() in non_names:
+        if (explicit_name.group(1) or "").lower() in NON_NAME_WORDS:
             continue
         captured = [
             part for part in explicit_name.groups()
-            if part and part.lower() not in non_names
+            if part and part.lower() not in NON_NAME_WORDS
         ]
         if captured:
             return " ".join(captured).title()
+    # On WhatsApp a name also arrives as a bare "Sarah" answering the bot's
+    # own "what's your first name?" ask, with no trigger phrase to match
+    # (11 Sep 2026 diff, finding #3). One hook here gives last_known_name,
+    # the guard, the prompt, the alert and the lead row the same answer.
+    if is_whatsapp_session(session_id):
+        live = wa_bare_name_reply(message, session_id) if message else None
+        return live or wa_name_from_history(session_id)
     return None
 
 
@@ -8342,6 +8750,18 @@ def format_lead_summary(lead_info: dict) -> str:
         "(after that WhatsApp only allows an approved template).\n"
         if channel == "whatsapp" else ""
     )
+    # The WhatsApp display name is whatever the sender typed into their own
+    # phone, so it is labelled rather than presented as the customer's name
+    # (11 Sep 2026 diff, finding #3).
+    profile_name = str(lead_info.get("wa_profile_name") or "").strip()
+    display_name_line = (
+        f"WhatsApp name: {profile_name} (their WhatsApp display name, not verified)\n"
+        if channel == "whatsapp" and profile_name else ""
+    )
+    typed_number_line = (
+        f"Typed number: {lead_info.get('phone_typed')}\n"
+        if lead_info.get("phone_typed") else ""
+    )
     return (
         f"{heading}\n\n"
         f"Channel: {channel_label}\n"
@@ -8349,6 +8769,8 @@ def format_lead_summary(lead_info: dict) -> str:
         f"Name: {lead_info.get('name') or 'unknown'}\n"
         f"Email: {lead_info.get('email') or 'not provided'}\n"
         f"Phone: {lead_info.get('phone') or 'not provided'}\n"
+        f"{display_name_line}"
+        f"{typed_number_line}"
         f"Route: {lead_info.get('route') or 'unknown'}\n"
         f"Location preference: {lead_info.get('location_preference') or 'unknown'}\n"
         f"Time preference: {lead_info.get('time_preference') or 'unknown'}\n"
@@ -8492,7 +8914,7 @@ def send_lead_summary_twilio(lead_info: dict) -> bool:
         return False
     channel_label = "WhatsApp" if lead_info.get("channel") == "whatsapp" else "website"
     name = lead_info.get("name") or lead_info.get("route") or f"{channel_label} enquiry"
-    phone = str(lead_info.get("phone") or "no phone").split(" (")[0]
+    phone = str(lead_info.get("phone") or "no phone")
     body = (
         f"New Outdoor Squad {channel_label} lead: {name} "
         f"({phone}), {lead_info.get('route') or 'enquiry'}. "
@@ -8729,34 +9151,73 @@ def find_existing_supabase_lead(lead_info: dict) -> dict | None:
     return None
 
 
+# Exactly the columns the leads table has. Alert-only keys (the unverified
+# WhatsApp display name, alert_type) travel on the same dict and must never
+# reach PostgREST, the CSV or the events table (11 Sep 2026 diff, finding #3).
+LEAD_ROW_FIELDS = (
+    "timestamp", "name", "email", "phone", "phone_typed", "route",
+    "location_preference", "time_preference", "concerns", "handoff_summary",
+    "raw_message", "session_id", "channel",
+)
+_MISSING_COLUMN_RE = re.compile(r"'([A-Za-z_][A-Za-z0-9_]*)' column", re.IGNORECASE)
+
+
+def _lead_row(lead_info: dict) -> dict:
+    return {key: value for key, value in lead_info.items() if key in LEAD_ROW_FIELDS}
+
+
+def _supabase_missing_lead_column(error_text: str, body: dict) -> str:
+    """The column PostgREST says it does not know, when we actually sent it.
+
+    A migration that has not been run yet answers 400 PGRST204 ("Could not
+    find the 'channel' column of 'outdoor_squad_leads'"). Before 11 Sep that
+    sank the WHOLE row to Render's ephemeral disk, so every WhatsApp lead was
+    quietly lost at the next deploy. A missing migration may cost one field,
+    never the lead.
+    """
+    for name in _MISSING_COLUMN_RE.findall(str(error_text or "")):
+        if name in body:
+            return name
+    return ""
+
+
 def save_lead(lead_info: dict):
     """Upsert a lead to Supabase when configured, otherwise local JSON."""
-    normalized = dict(lead_info)
+    normalized = _lead_row(lead_info)
     normalized.setdefault("concerns", [])
     if supabase_enabled():
-        try:
-            existing = find_existing_supabase_lead(normalized)
-            if existing and existing.get("id") is not None:
-                merged = merge_lead(existing, normalized)
-                merged.pop("id", None)
-                supabase_request(
-                    "PATCH",
-                    SUPABASE_TABLES["leads"],
-                    params={"id": f"eq.{existing['id']}"},
-                    json_body=merged,
-                    prefer="return=minimal",
-                )
-            else:
-                supabase_request(
-                    "POST",
-                    SUPABASE_TABLES["leads"],
-                    json_body=normalized,
-                    prefer="return=minimal",
-                )
-            return
-        except Exception as exc:
-            log_event("lead_storage_error", session_id=normalized.get("session_id", "unknown"), error=str(exc)[:180])
-            pass
+        body = dict(normalized)
+        for attempt in (1, 2):
+            try:
+                existing = find_existing_supabase_lead(body)
+                if existing and existing.get("id") is not None:
+                    merged = merge_lead(existing, body)
+                    merged.pop("id", None)
+                    supabase_request(
+                        "PATCH",
+                        SUPABASE_TABLES["leads"],
+                        params={"id": f"eq.{existing['id']}"},
+                        json_body=merged,
+                        prefer="return=minimal",
+                    )
+                else:
+                    supabase_request(
+                        "POST",
+                        SUPABASE_TABLES["leads"],
+                        json_body=body,
+                        prefer="return=minimal",
+                    )
+                return
+            except Exception as exc:
+                column = _supabase_missing_lead_column(exc, body) if attempt == 1 else ""
+                if column:
+                    log_event("lead_storage_degraded",
+                              session_id=str(body.get("session_id") or "unknown"),
+                              column=column)
+                    body.pop(column, None)
+                    continue
+                log_event("lead_storage_error", session_id=normalized.get("session_id", "unknown"), error=str(exc)[:180])
+                break
     leads = read_json_array_file(LEADS_FILE)
     match_index = next(
         (
@@ -9834,7 +10295,8 @@ ADMIN_HTML = """
         const last = t.last_message || {};
         items.push({
           channel: 'whatsapp', id: t.session_id, ts: last.timestamp,
-          name: waPhone(t.session_id), preview: last.content || ''
+          name: waPhone(t.session_id) + (t.profile_name ? ' \u00b7 ' + t.profile_name : ''),
+          preview: last.content || ''
         });
       });
       items.sort(function(a, b) { return new Date(b.ts || 0) - new Date(a.ts || 0); });
@@ -9894,7 +10356,7 @@ ADMIN_HTML = """
         return '<div class="plain-row">'
           + '<span class="feed-main">'
           +   '<span class="feed-name">' + esc(lead.name || 'Unnamed lead') + '</span>'
-          +   '<span class="feed-preview">' + esc(lead.email || lead.phone || 'No contact details') + '</span>'
+          +   '<span class="feed-preview">' + esc([lead.phone, lead.email].filter(Boolean).join(' \u00b7 ') || 'No contact details') + '</span>'
           + '</span>'
           + '<span class="feed-time">' + esc(fmtRelative(lead.timestamp)) + '</span>'
           + '</div>';
@@ -10002,21 +10464,28 @@ ADMIN_HTML = """
         return;
       }
       // data-label on every cell: under 700px the CSS drops the header row and
-      // restacks each lead as a labelled card, because six columns on a phone
+      // restacks each lead as a labelled card, because the columns on a phone
       // clipped Contact and Context off the right edge — the two things you
       // actually open this on your phone to read.
       wrap.innerHTML = ''
         + '<div class="table-wrap"><table class="lead-table">'
-        + '<thead><tr><th>When</th><th>Name</th><th>Contact</th><th>Route</th><th>Context</th><th>Session</th></tr></thead>'
+        + '<thead><tr><th>When</th><th>Channel</th><th>Name</th><th>Contact</th><th>Route</th><th>Context</th><th>Session</th></tr></thead>'
         + '<tbody>'
         + leads.slice().reverse().map(function(lead) {
-            const contact = lead.email || lead.phone || '';
-            // A phone can act on a contact: make it dialable/mailable.
-            const contactCell = contact
-              ? '<a href="' + (lead.email ? 'mailto:' : 'tel:') + encodeURIComponent(contact) + '">' + esc(contact) + '</a>'
-              : '<span class="dim">–</span>';
+            // Every way to reach them, not just the first: a WhatsApp lead has
+            // the thread number AND may have typed a second one or an email.
+            const links = [];
+            // Keep the leading + readable in the href: %2B dials, but a tapped
+            // link Nick can also read aloud is worth the two characters.
+            const tel = function(n) { return encodeURIComponent(n).replace(/%2B/g, '+'); };
+            if (lead.phone) links.push('<a href="tel:' + tel(lead.phone) + '">' + esc(lead.phone) + '</a>');
+            if (lead.phone_typed) links.push('<a href="tel:' + tel(lead.phone_typed) + '">' + esc(lead.phone_typed) + '</a>');
+            if (lead.email) links.push('<a href="mailto:' + encodeURIComponent(lead.email) + '">' + esc(lead.email) + '</a>');
+            const contactCell = links.length ? links.join('<br>') : '<span class="dim">–</span>';
+            const channel = lead.channel || (String(lead.session_id || '').indexOf('wa-') === 0 ? 'whatsapp' : 'website');
             return '<tr>'
               + '<td class="nowrap mono" data-label="When">' + esc(fmtDate(lead.timestamp)) + '</td>'
+              + '<td data-label="Channel"><span class="chip ' + esc(channel) + '">' + (channel === 'whatsapp' ? ICON_CHAT : ICON_GLOBE) + '</span></td>'
               + '<td data-label="Name">' + esc(lead.name || '–') + '</td>'
               + '<td class="mono" data-label="Contact">' + contactCell + '</td>'
               + '<td data-label="Route">' + badgeFor(lead.route) + '</td>'
@@ -10060,7 +10529,8 @@ ADMIN_HTML = """
         return '<button class="session-row' + active + '" type="button" data-wa-session="' + esc(t.session_id) + '">'
           + '<div class="session-avatar">' + ICON_CHAT + '</div>'
           + '<div class="session-meta">'
-          +   '<span class="session-id">' + esc(waPhone(t.session_id)) + '</span>'
+          +   '<span class="session-id">' + esc(t.phone || waPhone(t.session_id))
+          +     (t.profile_name ? ' \u00b7 ' + esc(t.profile_name) : '') + '</span>'
           +   '<div class="session-time">' + esc(fmtRelative(last.timestamp)) + ' · ' + esc(t.message_count || 0) + ' msgs'
           +     (t.muted ? ' <span class="badge amber">Bot muted</span>' : '') + '</div>'
           +   '<div class="session-preview">' + esc(last.content || '') + '</div>'
@@ -10089,8 +10559,11 @@ ADMIN_HTML = """
         document.getElementById('waMessages').innerHTML = '';
         return;
       }
-      meta.innerHTML = '<strong>' + esc(waPhone(thread.session_id)) + '</strong> ' + waWindowBadge(thread)
-        + (thread.muted ? ' <span class="badge amber">Bot muted, you are driving</span>' : '');
+      meta.innerHTML = '<strong>' + esc(thread.phone || waPhone(thread.session_id)) + '</strong> ' + waWindowBadge(thread)
+        + (thread.muted ? ' <span class="badge amber">Bot muted, you are driving</span>' : '')
+        // Anyone can set their own WhatsApp display name, so it is labelled
+        // rather than shown as the customer's real name.
+        + (thread.profile_name ? '<div class="footnote">WhatsApp name: ' + esc(thread.profile_name) + ' (unverified)</div>' : '');
       muteBtn.disabled = false;
       muteBtn.textContent = thread.muted ? 'Hand back to bot' : 'Mute bot';
       const canReply = !!thread.window_open;
