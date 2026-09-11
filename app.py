@@ -5683,9 +5683,9 @@ def _wa_wait_for_inflight() -> None:
     Render sends SIGTERM during a deploy and the inbound was acked ~18 seconds
     earlier, so Twilio will never retry it: a worker killed here is an answer
     the customer simply never gets, with nothing anywhere to say so (11 Sep
-    2026 diff, audit row #15). The in-flight map belongs to the message
-    coalescing work, so it is read defensively and this hook is correct with
-    or without it.
+    2026 diff, audit row #15). The in-flight map is the one kept by the
+    message-coalescing queue (finding #10); it is read defensively so this
+    hook is correct with or without it.
     """
     deadline = time.time() + 10
     while time.time() < deadline:
@@ -6042,6 +6042,22 @@ async def wa_webhook_receive(request: Request):
 _twilio_wa_seen_sids: "collections.OrderedDict[str, str | None]" = collections.OrderedDict()
 _TWILIO_WA_SEEN_MAX = 500
 
+# One answer per thread at a time. Every inbound used to spawn its own daemon
+# thread with nothing between them, so "hello?" sent fifteen seconds after a
+# question produced two overlapping replies, the second written without the
+# first and possibly arriving first, and an instant scripted answer could
+# overtake the AI answer to the message before it (11 Sep 2026 diff, finding
+# #10). sid -> claim token (the time the claim was taken, also the identity of
+# the worker that holds it) and sid -> the inbounds waiting for an answer.
+_wa_inflight: "dict[str, float]" = {}
+_wa_pending: "dict[str, list[dict]]" = {}
+_wa_inflight_lock = threading.Lock()
+# A worker that dies without releasing its claim must not wedge the thread
+# forever: past this age the claim is treated as free and the next inbound
+# takes it. Three minutes is ten times the slowest generation we have seen.
+WA_INFLIGHT_MAX_AGE_SECONDS = int(
+    os.environ.get("OUTDOOR_SQUAD_WA_INFLIGHT_MAX_AGE_SECONDS", "180"))
+
 # Bot-mute per conversation (stage-1 commitment: the moment Nick types, the bot
 # goes quiet in that thread until handed back). The dashboard's manual-reply UI
 # sets this; the webhook honours it. File-backed so a deploy doesn't unmute
@@ -6246,6 +6262,86 @@ async def twilio_sms_webhook(request: Request):
                     media_type="application/xml")
 
 
+def _wa_claim_live(session_id: str) -> bool:
+    """Is someone answering this thread right now? Caller holds the lock."""
+    started = _wa_inflight.get(session_id)
+    if started is None:
+        return False
+    return (time.time() - started) <= WA_INFLIGHT_MAX_AGE_SECONDS
+
+
+def _wa_queue_if_inflight(session_id: str, item: dict) -> int:
+    """Park an inbound behind the answer already being written for this thread.
+
+    Returns the queue length when the message was parked, 0 when the thread is
+    free and the caller should answer it as usual. A claim older than
+    WA_INFLIGHT_MAX_AGE_SECONDS counts as free: a crashed worker must not
+    silence a customer for the life of the process (11 Sep 2026 diff, #10).
+    """
+    with _wa_inflight_lock:
+        if not _wa_claim_live(session_id):
+            return 0
+        queue = _wa_pending.setdefault(session_id, [])
+        queue.append(item)
+        return len(queue)
+
+
+def _wa_claim_inflight(session_id: str) -> float:
+    """Take the thread's claim and return the token that identifies this worker."""
+    with _wa_inflight_lock:
+        token = time.time()
+        while _wa_inflight.get(session_id) == token:
+            # Two claims inside one clock tick would be indistinguishable, and
+            # the whole point of the token is telling this worker from the one
+            # that took the thread off it.
+            token += 1e-6
+        _wa_inflight[session_id] = token
+        return token
+
+
+def _wa_take_pending(session_id: str, token):
+    """Hand the worker whatever arrived while it was writing, or release.
+
+    Returns (items, token). An empty list with a token means this worker has
+    been superseded and must stop; an empty list with None means the thread is
+    now free. Draining refreshes the token so the max-age guard measures the
+    NEW answer, not the one that has already been sent.
+    """
+    if token is None:
+        return [], None
+    with _wa_inflight_lock:
+        if _wa_inflight.get(session_id) != token:
+            return [], token
+        queued = _wa_pending.pop(session_id, [])
+        if queued:
+            fresh = time.time()
+            while _wa_inflight.get(session_id) == fresh:
+                fresh += 1e-6
+            _wa_inflight[session_id] = fresh
+            return queued, fresh
+        _wa_inflight.pop(session_id, None)
+        return [], None
+
+
+def _wa_release_inflight(session_id: str, token):
+    """Drop this worker's claim. Returns (stranded items, any of them an opt-out).
+
+    Belt and braces for a worker that raised: the claim goes whatever happened,
+    and anything left queued is reported rather than silently forgotten. An
+    opt-out is never queued in the first place, so had_opt_out is a tripwire.
+    """
+    with _wa_inflight_lock:
+        if token is None or _wa_inflight.get(session_id) != token:
+            return 0, False
+        _wa_inflight.pop(session_id, None)
+        stranded = _wa_pending.pop(session_id, [])
+    had_opt_out = any(
+        is_opt_out_message(normalise_chat_text(str(item.get("message", ""))))
+        for item in stranded
+    )
+    return len(stranded), had_opt_out
+
+
 def _wa_async_dispatch(target, args) -> None:
     """Run the slow reply work off the request thread.
 
@@ -6256,8 +6352,52 @@ def _wa_async_dispatch(target, args) -> None:
 
 
 def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
-                          human_request_handled: bool, message_sid: str) -> None:
-    """Generate the AI answer and deliver it over REST, off the webhook thread.
+                          human_request_handled: bool, message_sid: str,
+                          inflight_token=None) -> None:
+    """Answer this inbound, then drain anything that arrived while we wrote it.
+
+    One worker owns a thread at a time (see _wa_queue_if_inflight): messages
+    that land mid-generation are persisted as user turns by the webhook and
+    their ANSWER waits here, so two quick questions get one reply, in order,
+    instead of two overlapping ones (11 Sep 2026 diff, finding #10). Several
+    queued messages are answered as a single turn, newest six, because that is
+    how the person meant them: one thought split across three taps.
+
+    The claim is released in a finally, and it also has a max age, so a worker
+    that crashes or hangs cannot leave the thread mute.
+    """
+    try:
+        gate = False
+        while True:
+            _wa_answer_one(message, session_id, sender_digits, human_request_handled,
+                           message_sid, gate=gate, inflight_token=inflight_token)
+            queued, inflight_token = _wa_take_pending(session_id, inflight_token)
+            if not queued:
+                return
+            # The rate limiter bounds how MANY messages a number can send, not
+            # how long they are, so cap the join: twenty full-length messages
+            # in one prompt is a slow answer and a large bill.
+            texts = [str(item.get("message", "")) for item in queued][-6:]
+            message = "\n".join(texts)[:MAX_MESSAGE_LEN]
+            human_request_handled = any(item.get("human_request_handled") for item in queued)
+            message_sid = str(queued[-1].get("message_sid", ""))
+            if len(queued) > 1:
+                log_event("wa_reply_coalesced", session_id=session_id, channel="whatsapp",
+                          count=len(queued), chars=sum(len(t) for t in texts))
+            # A queued message never met the webhook's deterministic gate, so
+            # the drained turn asks it here instead.
+            gate = True
+    finally:
+        dropped, had_opt_out = _wa_release_inflight(session_id, inflight_token)
+        if dropped:
+            log_event("wa_queue_dropped", session_id=session_id, channel="whatsapp",
+                      count=dropped, had_opt_out="1" if had_opt_out else "0")
+
+
+def _wa_answer_one(message: str, session_id: str, sender_digits: str,
+                   human_request_handled: bool, message_sid: str,
+                   *, gate: bool = False, inflight_token=None) -> None:
+    """Write one answer and deliver it over REST, off the webhook thread.
 
     Twilio gives a webhook 15 seconds and then DISCARDS whatever it returns
     (error 11200). A real answer takes about 18, so replying inside the request
@@ -6272,28 +6412,52 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
     is_intro = wa_needs_intro(session_id)
     kind = "intro" if is_intro else "reply"
     ekey = wa_episode_key(session_id)
-    try:
-        reply, ai_provider = generate_ai_reply(message, session_id)
-        fallback = False
-    except Exception:
-        fallback = True
-        if (os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message)
-                or is_vague_message(normalise_chat_text(message))):
-            # A vague opener ("hi") during an outage gets the scripted ladder,
-            # not an error line as the first impression (diff finding #16).
-            reply = demo_fallback_reply(message, session_id=session_id)
-        else:
-            reply = "I\u2019m having a moment reaching my brain. Give me a minute and message again."
+    fallback = False
+    if gate and should_use_local_tone_handler(message, session_id) and not wa_first_contact_greeting(message, session_id):
+        # Drained messages skipped the webhook's gate, so "prices?" queued
+        # behind a greeting still gets the scripted ladder, just after the
+        # greeting rather than ahead of it (11 Sep 2026 diff, finding #10).
+        reply = demo_fallback_reply(message, session_id=session_id)
+        log_event("local_tone_handler_used", session_id=session_id, channel="whatsapp")
+    else:
+        try:
+            reply, ai_provider = generate_ai_reply(message, session_id)
+        except Exception:
+            fallback = True
+            if (os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message)
+                    or is_vague_message(normalise_chat_text(message))):
+                # A vague opener ("hi") during an outage gets the scripted
+                # ladder, not an error line as the first impression (#16).
+                reply = demo_fallback_reply(message, session_id=session_id)
+            else:
+                reply = "I\u2019m having a moment reaching my brain. Give me a minute and message again."
 
     # The kill switch and the per-thread mute were checked when the message
     # arrived, but the answer takes seconds to write. If Nick flipped the
     # switch or replied by hand in the meantime, this answer must not land on
     # top of his (diff finding #12). Checked BEFORE persisting so the
     # transcript never shows a reply the customer did not get.
-    if not wa_channel_enabled() or wa_muted(session_id):
+    suppressed = ""
+    if not wa_channel_enabled():
+        suppressed = "channel_off"
+    elif wa_muted(session_id):
+        suppressed = "muted"
+    elif get_wa_setting(f"opted_out:{session_id}") == "1":
+        # A STOP that arrived mid-generation is answered inside the request and
+        # sets the flag immediately, so the answer already in flight is dropped
+        # here. Replying after someone says stop is what gets a WhatsApp sender
+        # blocked (11 Sep 2026 diff, findings #4 and #10).
+        suppressed = "opted_out"
+    if suppressed:
         log_event("wa_reply_suppressed", session_id=session_id, channel="whatsapp",
-                  reason="channel_off" if not wa_channel_enabled() else "muted")
+                  reason=suppressed)
         _wa_capture_lead(message, session_id, human_request_handled, "wa_suppressed_contact_capture")
+        return
+
+    if inflight_token is not None and _wa_inflight.get(session_id) != inflight_token:
+        # Our claim aged out and another inbound took the thread. Sending now
+        # would be the double reply the queue exists to prevent.
+        log_event("wa_reply_superseded", session_id=session_id, channel="whatsapp", kind=kind)
         return
 
     reply = render_for_whatsapp(reply)
@@ -6500,6 +6664,25 @@ async def twilio_wa_webhook(request: Request):
         _wa_capture_lead(message, session_id, human_request_handled, "wa_muted_contact_capture")
         return _twiml_message(None)
 
+    # Two messages fifteen seconds apart used to get two answers written in
+    # parallel, the second blind to the first and free to arrive before it
+    # (11 Sep 2026 diff, finding #10). While an answer is in flight for this
+    # thread, the inbound is still recorded above and only its ANSWER waits;
+    # the worker drains the queue as one turn when it is done. This sits BELOW
+    # the opt-out and ABOVE the deterministic gate on purpose: an opt-out is
+    # instant and must be acknowledged inside the request, and a scripted
+    # answer queued behind an AI one is exactly the overtaking we are fixing.
+    if not is_opt_out_message(normalise_chat_text(message)):
+        queued = _wa_queue_if_inflight(session_id, {
+            "message": message,
+            "message_sid": message_sid,
+            "human_request_handled": human_request_handled,
+        })
+        if queued:
+            log_event("wa_reply_queued", session_id=session_id, channel="whatsapp",
+                      queued=queued, message_sid=message_sid)
+            return _twiml_message(None)
+
     if should_use_local_tone_handler(message, session_id) and not wa_first_contact_greeting(message, session_id):
         reply = demo_fallback_reply(message, session_id=session_id)
         reply = prevent_repetitive_reply(reply, message, session_id)
@@ -6522,9 +6705,11 @@ async def twilio_wa_webhook(request: Request):
     # and instant. The AI answer is not: it takes ~18s and Twilio hangs up at
     # 15, discarding the reply. So acknowledge Twilio now and deliver the real
     # answer over REST from a worker thread.
+    inflight_token = _wa_claim_inflight(session_id)
     _wa_async_dispatch(
         target=_wa_generate_and_send,
-        args=(message, session_id, re.sub(r"\D", "", sender), human_request_handled, message_sid),
+        args=(message, session_id, re.sub(r"\D", "", sender), human_request_handled,
+              message_sid, inflight_token),
     )
     # The SID and the sender are what let a post-deploy sweep pair a deferred
     # inbound with the absence of any outcome event, which is the only trace a

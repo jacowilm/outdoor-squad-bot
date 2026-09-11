@@ -194,5 +194,9 @@
   {
     "date": "2026-09-11",
     "line": "WhatsApp replies are now sent first and recorded only once Twilio accepted them, retried once when Twilio is briefly overloaded, and every outbound message carries a delivery receipt so the dashboard shows sent, delivered, read or not delivered."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "WhatsApp: two quick messages in a row now get one answer, in order, instead of two overlapping replies."
   }
 ]
