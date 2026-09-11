@@ -84,6 +84,11 @@ alter table public.outdoor_squad_leads enable row level security;
 -- and since 11 Sep 2026 "wa::wa_profile_name:{session_id}", the sender's own
 -- WhatsApp display name, stored unverified for the owner's alerts and thread
 -- list only).
+-- Also since 11 Sep 2026 (findings #2 and #9): the per-thread markers
+-- handoff/nudged/lead_alerted/momence_pushed/undelivered are keyed on the
+-- EPISODE, so from the second conversation onwards the key reads
+-- "wa::nudged:wa-614...#e2"; "wa::nudge_count:{session_id}" counts the
+-- follow-ups ever sent to a thread and is never reset.
 -- The table already exists in the live project; recorded here so a fresh
 -- provision from this file matches production. "key" must be PRIMARY KEY or
 -- the on_conflict upserts in app.py degrade to blind inserts.

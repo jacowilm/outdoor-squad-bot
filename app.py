@@ -797,7 +797,17 @@ def trim_conversation_state(messages: list[dict]) -> list[dict]:
         return messages
     if len(messages) <= CONVERSATION_STATE_MAX_MESSAGES:
         return messages
-    return messages[-CONVERSATION_STATE_MAX_MESSAGES:]
+    kept = messages[-CONVERSATION_STATE_MAX_MESSAGES:]
+    dropped = messages[:-CONVERSATION_STATE_MAX_MESSAGES]
+    # A WhatsApp episode boundary is a marker on one turn. If the trim throws
+    # that turn away, the whole thread reads as one long conversation again and
+    # the counters silently un-reset, so the marker moves to the first kept
+    # turn, whatever its role (11 Sep 2026 diff, finding #9).
+    if not any(_turn_episode(m) for m in kept):
+        carried = next((_turn_episode(m) for m in reversed(dropped) if _turn_episode(m)), 0)
+        if carried and isinstance(kept[0], dict):
+            kept = [{**kept[0], "episode": carried}] + kept[1:]
+    return kept
 
 
 def load_conversation(session_id: str) -> list[dict]:
@@ -1102,7 +1112,14 @@ Anti-repeat rule: if the recent assistant phrasing already gave the same locatio
 Latest-message primacy rule: the user's newest message may be a completely new topic, not a follow-up. If it asks a fresh question, changes subject, or contradicts the prior path, answer that new message directly first and do not force continuity from the previous assistant reply. Use history only for useful known details such as name, contact info, location, goals, or earlier constraints.
 
 Contact rule: if the conversation history already includes a phone number or email, never ask for contact details again. Do not repeatedly say the team will SMS/call; say it once, or ask the user's preference once, then close cleanly."""
-    recent = load_conversation(session_id)[-16:]
+    # The last 16 turns still cross an episode boundary on purpose: a returning
+    # customer's name and goals are worth knowing. Only role and content are
+    # copied, so the per-turn bookkeeping this code keeps ("at", "episode")
+    # never reaches a model provider (11 Sep 2026 diff, finding #9).
+    recent = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in load_conversation(session_id)[-16:]
+    ]
     system_blocks = [
         {"role": "system", "content": BASE_AGENT_PROMPT},
         {"role": "system", "content": source_prompt},
@@ -1129,6 +1146,79 @@ def wa_sender_e164(session_id: str) -> str:
     return f"+{digits}" if digits else ""
 
 
+# ── WhatsApp episodes (11 Sep 2026 diff, findings #2 and #9) ─────────────────
+# A widget visitor gets a fresh session id per tab, so "once per session" means
+# what it says. A WhatsApp thread is one phone number for life, so the same
+# phrase silently meant "once per customer, ever": the person who asked for
+# Nick in July never reached him again in September, the follow-up nudge was
+# spent for good, and someone coming back months later was answered as if they
+# were mid-conversation (rung three of the vague ladder, stale goal and
+# location, no conversation_started for the report). An inbound that arrives
+# more than WA_EPISODE_GAP_HOURS after the previous one opens a NEW EPISODE:
+# the per-episode markers move to an episode-suffixed key, the counters that
+# read history start again from the boundary, and the stored history is kept
+# whole so the model still knows their name.
+
+
+def _turn_episode(turn) -> int:
+    """The episode marker on a stored turn, 0 when there is none."""
+    if not isinstance(turn, dict):
+        return 0
+    try:
+        return int(turn.get("episode") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def episode_history(session_id: str) -> list[dict]:
+    """The turns of the CURRENT episode: history from the newest turn carrying
+    an episode marker onwards, the whole thread when there is none.
+
+    The marker may sit on a turn of ANY role, because trim_conversation_state
+    re-stamps the first kept turn when a trim drops the original user turn.
+    Identity for a website session, checked FIRST so no episode helper ever
+    reads or mutates conversation state for a widget id.
+    """
+    history = load_conversation(session_id)
+    if not is_whatsapp_session(session_id):
+        return history
+    for index in range(len(history) - 1, -1, -1):
+        if _turn_episode(history[index]):
+            return history[index:]
+    return history
+
+
+def wa_episode_number(session_id: str) -> int:
+    """Which episode this thread is on, 1 for a thread that never broke.
+
+    Reads the IN-MEMORY entry, never load_conversation: the nudge sweep, the
+    owner-alert thread and the Momence worker all key their markers on this,
+    and a cache miss there must cost a default of 1 rather than a Supabase
+    fetch plus an LRU prune of somebody else's live thread.
+    """
+    if not is_whatsapp_session(session_id):
+        return 1
+    for turn in reversed(conversations.get(session_id) or []):
+        episode = _turn_episode(turn)
+        if episode:
+            return episode
+    return 1
+
+
+def wa_episode_key(session_id: str) -> str:
+    """The settings-key scope for this thread's per-episode markers.
+
+    Episode 1 is the bare session id, so nothing migrates and every marker
+    written before 11 Sep 2026 keeps being read. Later episodes get "#eN".
+    The "#" is deliberately outside sanitize_session_id's character set: an
+    episode key can never be addressed by a public endpoint.
+    """
+    if not is_whatsapp_session(session_id):
+        return str(session_id)
+    episode = wa_episode_number(session_id)
+    return str(session_id) if episode <= 1 else f"{session_id}#e{episode}"
+
+
 def whatsapp_channel_prompt(session_id: str) -> str:
     """The shared brain was written for the website widget and was never told
     when it is answering on WhatsApp (11 Sep 2026 diff, findings #6 and #7):
@@ -1138,7 +1228,10 @@ def whatsapp_channel_prompt(session_id: str) -> str:
     header for the bot disclosure. This block corrects each of those for a
     wa- session; the deterministic render pass in render_for_whatsapp() is
     the backstop when the model ignores it."""
-    first_reply = not any(m.get("role") == "assistant" for m in load_conversation(session_id))
+    # Scoped to the current episode: someone coming back after a day and a
+    # half is meeting Robo-Nick again, so the introduction is owed again
+    # (11 Sep 2026 diff, finding #9).
+    first_reply = not any(m.get("role") == "assistant" for m in episode_history(session_id))
     # Once the person has typed a first name (or answered a "first name?" ask
     # with a bare name), the model is told it and told to stop asking. Only a
     # name WE extracted is used here: the Twilio ProfileName is attacker-set
@@ -1165,6 +1258,11 @@ def whatsapp_channel_prompt(session_id: str) -> str:
         + "Do not offer 'SMS or a call'; if you need a preference, offer 'reply here or a quick call'. "
         "Do not quote a phone number as the way to reach the team: Humanoid-Nick or Lyn reply in this same chat. "
         "The app may send ONE short follow-up message later if the person goes quiet; never promise reminders beyond that."
+        + (
+            " The earlier turns in this thread are from a PREVIOUS conversation with this person: "
+            "use them only as background such as their name or goals, and answer the newest message fresh."
+            if wa_episode_number(session_id) > 1 else ""
+        )
     )
 
 
@@ -1960,9 +2058,12 @@ def non_repeating_followup(message: str, session_id: str) -> str:
 
 def prevent_repetitive_reply(reply: str, message: str, session_id: str) -> str:
     reply = enforce_contact_and_handoff_progression(reply, session_id)
+    # Episode-scoped: a price answer from a conversation two months ago must
+    # not turn today's price question into the short "as I said" reply
+    # (11 Sep 2026 diff, finding #9).
     recent_assistant = [
         item.get("content", "")
-        for item in load_conversation(session_id)[-8:]
+        for item in episode_history(session_id)[-8:]
         if item.get("role") == "assistant"
     ][-3:]
     if not recent_assistant:
@@ -1978,7 +2079,7 @@ def prevent_repetitive_reply(reply: str, message: str, session_id: str) -> str:
 def contact_already_captured(session_id: str) -> bool:
     return any(
         has_contact_details(item.get("content", ""))
-        for item in load_conversation(session_id)
+        for item in episode_history(session_id)
         if item.get("role") == "user"
     )
 
@@ -2154,7 +2255,7 @@ def enforce_contact_and_handoff_progression(reply: str, session_id: str) -> str:
 
 
 def recent_assistant_message(session_id: str) -> str:
-    for item in reversed(load_conversation(session_id)):
+    for item in reversed(episode_history(session_id)):
         if item.get("role") == "assistant":
             return item.get("content", "")
     return ""
@@ -2173,7 +2274,7 @@ TRIAL_CLOSES = (
 def assistant_history_lower(session_id: str) -> str:
     return "\n".join(
         item.get("content", "").lower()
-        for item in load_conversation(session_id)
+        for item in episode_history(session_id)
         if item.get("role") == "assistant"
     )
 
@@ -2472,7 +2573,7 @@ def youth_context(text: str, session_id: str) -> bool:
     if YOUTH_REF_RE.search(text):
         return any(
             mentions_youth(normalise_chat_text(m.get("content", "")))
-            for m in load_conversation(session_id)
+            for m in episode_history(session_id)
             if m.get("role") == "user"
         )
     return False
@@ -3582,7 +3683,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
 def known_goal_from_history(session_id: str) -> str | None:
     joined = "\n".join(
         m.get("content", "")
-        for m in load_conversation(session_id)
+        for m in episode_history(session_id)
         if m.get("role") == "user"
     ).lower()
     if any(word in joined for word in ["food", "nutrition", "meal plan", "weight loss", "lose weight"]):
@@ -4153,7 +4254,11 @@ def notify_human_request_if_needed(
         session_id=session_id,
         alert_eligible=True,
     )
-    if not claim_human_request(session_id):
+    # Claimed per EPISODE, not per phone number: the claim store is
+    # append-only and never expires, so a customer who asked for Nick in July
+    # could never reach him again (11 Sep 2026 diff, finding #2). Episode 1
+    # claims under the bare session id, so nothing already claimed changes.
+    if not claim_human_request(wa_episode_key(session_id)):
         return False
 
     lead_info = {
@@ -4663,6 +4768,15 @@ def _event_ts(event: dict) -> str:
     return ts[:-1] if ts.endswith("Z") else ts
 
 
+def _event_episode(event: dict) -> int:
+    """The WhatsApp episode an event belongs to; 1 for rows written before
+    11 Sep 2026, when a thread was one conversation for life (finding #9)."""
+    try:
+        return int(event.get("episode") or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
 # A session with any of these did something only a person does: stayed on a
 # page 10+ seconds (teaser_shown), or interacted with the widget. Crawlers
 # execute widget.js enough to fire ONE widget_impression per crawled page but
@@ -4899,7 +5013,13 @@ def build_report_stats(days: int = 7) -> dict:
         and e.get("session_id") != "wa-system"
         and str(e.get("session_id") or "") not in excluded_sessions
     ]
-    wa_conversations = {e.get("session_id") for e in wa_events if e.get("event_type") == "conversation_started"}
+    # One thread, several conversations: a customer who comes back after a day
+    # and a half counts again, which is what Nick means by "conversations"
+    # (11 Sep 2026 diff, finding #9). Distinct (thread, episode) pairs.
+    wa_conversations = {
+        (e.get("session_id"), _event_episode(e))
+        for e in wa_events if e.get("event_type") == "conversation_started"
+    }
     wa_messages = sum(1 for e in wa_events if e.get("event_type") == "message_received")
     wa_leads = {e.get("session_id") for e in wa_events if e.get("event_type") == "lead_captured"}
     wa_manual_replies = sum(1 for e in wa_events if e.get("event_type") == "wa_manual_reply_sent")
@@ -6114,15 +6234,15 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
         log_event("wa_reply_fallback" if fallback else "wa_reply_sent",
                   session_id=session_id, channel="whatsapp",
                   ai_provider=ai_provider, delivery="rest")
-        if get_wa_setting(f"undelivered:{session_id}") == "1":
-            set_wa_setting(f"undelivered:{session_id}", "")
+        if get_wa_setting(f"undelivered:{wa_episode_key(session_id)}") == "1":
+            set_wa_setting(f"undelivered:{wa_episode_key(session_id)}", "")
     else:
         # An answer that was generated but never reached the person is a LOST
         # reply, not a delivered one, and must not look the same in the log.
         log_event("wa_reply_undelivered", session_id=session_id, channel="whatsapp",
                   error=str(detail)[:200])
         # The nudge must not follow a reply that never arrived (finding #13).
-        set_wa_setting(f"undelivered:{session_id}", "1")
+        set_wa_setting(f"undelivered:{wa_episode_key(session_id)}", "1")
 
 
 def _wa_remember_profile_name(session_id: str, raw: str, wa_id: str = "") -> None:
@@ -6205,9 +6325,20 @@ async def twilio_wa_webhook(request: Request):
         return _twiml_message(None)
 
     history = load_conversation(session_id)
-    if len(history) == 0:
-        log_event("conversation_started", session_id=session_id, channel="whatsapp")
-    history.append({"role": "user", "content": message})
+    # A WhatsApp thread is one phone number for life, so without an episode
+    # boundary a customer returning in October was still "mid-conversation"
+    # from July: no owner alert, no greeting, rung three of the vague ladder
+    # (11 Sep 2026 diff, findings #2 and #9). The dedupe above has already
+    # returned for a Twilio retry, so a retried opener cannot open an episode
+    # twice. Stamped on WhatsApp user turns only.
+    episode = wa_episode_for_inbound(history, session_id)
+    turn = {"role": "user", "content": message, "at": now_iso()}
+    if episode:
+        turn["episode"] = episode
+        _wa_prune_episode_keys(session_id, episode)
+        log_event("conversation_started", session_id=session_id, channel="whatsapp",
+                  episode=episode)
+    history.append(turn)
     persist_conversation(session_id)
     log_chat_message(session_id, "user", message)
     log_event(
@@ -6226,8 +6357,9 @@ async def twilio_wa_webhook(request: Request):
     )
     if human_request_handled:
         # Someone Nick is about to phone must not get the automated nudge
-        # ninety minutes later (diff finding #13).
-        set_wa_setting(f"handoff:{session_id}", "1")
+        # ninety minutes later (diff finding #13). Per episode: it must not
+        # silence the follow-up in a conversation months later (finding #2).
+        set_wa_setting(f"handoff:{wa_episode_key(session_id)}", "1")
 
     if not wa_channel_enabled():
         # Kill switch: the BOT is silent, the business is not. The enquiry is
@@ -6299,8 +6431,14 @@ async def wa_mute_endpoint(request: Request, _: str = Depends(require_admin)):
 # Small key/value state shared across deploys: Supabase settings table when
 # available, a local JSON file otherwise (dev/tests). Holds the kill switch,
 # the rotating Momence refresh token, and per-thread markers. Per-thread keys:
-#   opted_out:{sid}, mute:{sid}, handoff:{sid}, nudged:{sid},
-#   lead_alerted:{sid}, momence_pushed:{sid}, undelivered:{sid}
+#   opted_out:{sid}, mute:{sid}, nudge_count:{sid}  lifetime, never reset
+#   handoff:{ekey}, nudged:{ekey}, lead_alerted:{ekey}, momence_pushed:{ekey},
+#   undelivered:{ekey}  per EPISODE, where ekey = wa_episode_key(sid): the bare
+#     session id for episode 1 and "{sid}#eN" after a gap of
+#     WA_EPISODE_GAP_HOURS, so a customer who comes back is a fresh
+#     conversation (11 Sep 2026 diff, findings #2 and #9)
+#   nudge_count:{sid}  follow-ups ever sent to this thread, capped at
+#     WA_NUDGE_MAX_PER_THREAD for its whole life
 #   wa_profile_name:{sid}  the sender's own WhatsApp display name, UNVERIFIED
 #     (they choose it), added 11 Sep 2026 for finding #3. Shown to Nick
 #     labelled as such; never the lead's name, never in the AI prompt, never
@@ -6582,6 +6720,100 @@ def wa_last_inbound_at(session_id: str) -> datetime | None:
     return newest
 
 
+def wa_last_inbound_at_fast(session_id: str) -> "datetime | None":
+    """Same answer as wa_last_inbound_at, one row instead of five pages.
+
+    The scan above pulls up to EVENTS-sized pages of transcript rows, and the
+    episode check runs on the inbound webhook inside Twilio's 15 second budget
+    (11 Sep 2026 diff, finding #9). With Supabase off there is nothing to
+    query, so it falls back to the scan.
+    """
+    if not supabase_enabled():
+        return wa_last_inbound_at(session_id)
+    try:
+        rows = supabase_request(
+            "GET",
+            SUPABASE_TABLES["conversation_logs"],
+            params={
+                "select": "timestamp",
+                "session_id": f"eq.{session_id}",
+                "role": "eq.user",
+                "order": "timestamp.desc",
+                "limit": "1",
+            },
+        ) or []
+    except Exception:
+        return None
+    return _parse_any_ts(rows[0].get("timestamp")) if rows else None
+
+
+def wa_episode_for_inbound(history: list[dict], session_id: str,
+                           now: "datetime | None" = None) -> int:
+    """The episode number this inbound OPENS, or 0 when it continues the last one.
+
+    A gap of WA_EPISODE_GAP_HOURS since the previous inbound means the person
+    has been away long enough that this is a new conversation: Nick is alerted
+    again if they ask for him, the follow-up can fire again, and a returning
+    "hi" is greeted rather than answered as message six (11 Sep 2026 diff,
+    findings #2 and #9). Set the env var to 0 to switch episodes off.
+    """
+    if not history:
+        return 1
+    if WA_EPISODE_GAP_HOURS <= 0:
+        return 0
+    last_at = None
+    for turn in reversed(history):
+        if turn.get("role") == "user":
+            last_at = _parse_any_ts(turn.get("at"))
+            break
+    if last_at is None:
+        # Turns stored before 11 Sep 2026 carry no "at"; the transcript does.
+        last_at = wa_last_inbound_at_fast(session_id)
+    if last_at is None:
+        return 0
+    elapsed = ((now or datetime.now()) - last_at).total_seconds()
+    if elapsed < WA_EPISODE_GAP_HOURS * 3600:
+        return 0
+    return wa_episode_number(session_id) + 1
+
+
+# The per-episode markers, for the prune below. opted_out, mute and
+# nudge_count are deliberately absent: they are lifetime flags.
+_WA_EPISODE_MARKERS = ("handoff", "nudged", "lead_alerted", "momence_pushed",
+                       "undelivered", "intro_failed", "introduced")
+
+
+def _wa_prune_episode_keys(session_id: str, current_episode: int) -> None:
+    """Drop marker keys for episodes at or below N-2 from the LOCAL FILE.
+
+    get_wa_setting loads the whole state file on every read, so file keys are
+    the only ones whose number costs anything; the Supabase rows are fetched by
+    an indexed single-key eq and are never read again once their episode has
+    passed, so they are left alone (11 Sep 2026 diff, finding #9 follow-up).
+    """
+    if current_episode < 3:
+        return
+    pattern = re.compile(
+        r"^(?:" + "|".join(_WA_EPISODE_MARKERS) + r"):"
+        + re.escape(str(session_id)) + r"#e(\d+)$"
+    )
+    try:
+        with _wa_state_file_lock:
+            data = _wa_state_file_load()
+            stale = [
+                key for key in list(data)
+                if (match := pattern.match(key)) and int(match.group(1)) <= current_episode - 2
+            ]
+            if not stale:
+                return
+            for key in stale:
+                data.pop(key, None)
+                _wa_setting_cache.pop(key, None)
+            _json_dict_save(WA_STATE_FILE, data)
+    except Exception:
+        pass  # housekeeping only: a failed prune must never cost the answer
+
+
 def wa_window_state(session_id: str, now: datetime | None = None) -> dict:
     last_in = wa_last_inbound_at(session_id)
     if last_in is None:
@@ -6659,6 +6891,24 @@ async def wa_manual_reply(request: Request, _: str = Depends(require_admin)):
     return JSONResponse({"ok": True, "message_sid": detail, "muted": True})
 
 
+def _wa_episode_from_timestamps(stamps: list) -> int:
+    """Episode number for the dashboard, from the inbound timestamps alone.
+
+    The transcript rows carry no episode marker (the marker lives on the
+    conversation state), and reading that state per thread would undo the
+    single-sweep design of this payload, so the boundary is recomputed from the
+    same rule the webhook applies (11 Sep 2026 diff, finding #9).
+    """
+    if not stamps or WA_EPISODE_GAP_HOURS <= 0:
+        return 1
+    ordered = sorted(stamps)
+    gap = WA_EPISODE_GAP_HOURS * 3600
+    return 1 + sum(
+        1 for earlier, later in zip(ordered, ordered[1:])
+        if (later - earlier).total_seconds() >= gap
+    )
+
+
 def wa_dashboard_payload() -> dict:
     """Every WhatsApp thread with its 24h-window state and mute flag — the
     per-conversation indicator promised in stage 1. Single pass over the logs:
@@ -6667,6 +6917,7 @@ def wa_dashboard_payload() -> dict:
     log store once per conversation)."""
     threads: dict[str, dict] = {}
     last_user_ts: dict[str, datetime] = {}
+    user_ts: dict[str, list] = {}
     for row in read_conversation_logs():
         sid = str(row.get("session_id", ""))
         if not sid.startswith("wa-"):
@@ -6682,8 +6933,10 @@ def wa_dashboard_payload() -> dict:
             }
         if row.get("role") == "user":
             parsed = _parse_any_ts(ts)
-            if parsed and (sid not in last_user_ts or parsed > last_user_ts[sid]):
-                last_user_ts[sid] = parsed
+            if parsed:
+                user_ts.setdefault(sid, []).append(parsed)
+                if sid not in last_user_ts or parsed > last_user_ts[sid]:
+                    last_user_ts[sid] = parsed
     now = datetime.now()
     # One settings read for the whole screen instead of one per flag per
     # thread; an empty snapshot means "read them the old way".
@@ -6706,8 +6959,13 @@ def wa_dashboard_payload() -> dict:
         # tell one +61 thread from another (11 Sep 2026 diff, finding #3).
         entry["phone"] = wa_sender_e164(sid)
         entry["profile_name"] = flag(f"wa_profile_name:{sid}")
+        # Which conversation this thread is on, counted from the gaps between
+        # inbounds in the sweep above rather than one load_conversation per
+        # thread (11 Sep 2026 diff, finding #9).
+        entry["episode"] = _wa_episode_from_timestamps(user_ts.get(sid, []))
     return {
         "channel_enabled": wa_channel_enabled(),
+        "episode_gap_hours": WA_EPISODE_GAP_HOURS,
         "conversations": sorted(
             threads.values(),
             key=lambda t: (t["last_message"] or {}).get("timestamp", ""),
@@ -6724,6 +6982,14 @@ async def wa_conversations(_: str = Depends(require_admin)):
 # ── Follow-up nudge (the "single follow-up nudge" on the invoice) ────────────
 WA_NUDGE_MINUTES = int(os.environ.get("OUTDOOR_SQUAD_WA_NUDGE_MINUTES", "90"))
 WA_SENDER_MAX_PER_10_MIN = int(os.environ.get("OUTDOOR_SQUAD_WA_SENDER_MAX_PER_10_MIN", "20"))
+# Silence this long before an inbound means the person is starting a NEW
+# conversation, not continuing the old one (11 Sep 2026 diff, findings #2 and
+# #9). 0 switches episodes off, which is the pre-sign-off safety valve.
+WA_EPISODE_GAP_HOURS = float(os.environ.get("OUTDOOR_SQUAD_WA_EPISODE_GAP_HOURS", "36"))
+# The nudge resets per episode, so without a lifetime cap a customer who comes
+# back four times a year gets four unsolicited follow-ups. Three for the life
+# of the thread, then never again.
+WA_NUDGE_MAX_PER_THREAD = int(os.environ.get("OUTDOOR_SQUAD_WA_NUDGE_MAX_PER_THREAD", "3"))
 # The nudge is an unsolicited message: keep it to waking hours in the
 # customer's timezone (Sydney), or it lands at 2 am and gets the number
 # blocked and reported (finding #13).
@@ -6736,9 +7002,12 @@ WA_NUDGE_TEXT = (
 
 def wa_sessions_needing_nudge(now: datetime | None = None) -> list[str]:
     """Pure selection logic, separated from the thread for testability.
-    A thread earns its ONE nudge when: the bot spoke last, the visitor has
-    been silent for WA_NUDGE_MINUTES, the 24h window is still open, the
-    thread isn't muted, and it was never nudged before."""
+    A thread earns ONE nudge per episode when: the bot spoke last, the visitor
+    has been silent for WA_NUDGE_MINUTES, the 24h window is still open, the
+    thread isn't muted, and it was not nudged in this episode. The cheap
+    filters run first: the per-episode keys need wa_episode_key, so they are
+    read only for the handful of threads that survive everything else
+    (11 Sep 2026 diff, finding #9 follow-up)."""
     if WA_NUDGE_MINUTES <= 0 or not wa_channel_enabled():
         return []
     now = now or datetime.now()
@@ -6757,13 +7026,11 @@ def wa_sessions_needing_nudge(now: datetime | None = None) -> list[str]:
     for sid, last in latest.items():
         if last["role"] != "assistant":
             continue
-        if get_wa_setting(f"nudged:{sid}") == "1":
-            continue
         if wa_muted(sid):
             continue
-        # Finding #13: never nudge someone who said goodbye, asked to stop,
-        # is already being phoned by Nick, or whose last answer never arrived.
-        if any(get_wa_setting(f"{flag}:{sid}") == "1" for flag in ("opted_out", "handoff", "undelivered")):
+        # An opt-out outlives every episode: it is only lifted by the person
+        # writing back and asking (11 Sep 2026 diff, finding #9).
+        if get_wa_setting(f"opted_out:{sid}") == "1":
             continue
         last_text = normalise_chat_text(last_user.get(sid, {}).get("content", ""))
         if last_text and (is_definite_close(last_text) or is_opt_out_message(last_text)):
@@ -6777,8 +7044,26 @@ def wa_sessions_needing_nudge(now: datetime | None = None) -> list[str]:
             continue
         if not wa_window_state(sid, now)["window_open"]:
             continue
+        # The per-episode nudge must not become a standing subscription: three
+        # unsolicited follow-ups for the life of a thread, then never again.
+        if _wa_nudge_count(sid) >= WA_NUDGE_MAX_PER_THREAD:
+            continue
+        ekey = wa_episode_key(sid)
+        # Finding #13: never nudge someone who said goodbye, asked to stop,
+        # is already being phoned by Nick, or whose last answer never arrived.
+        if any(get_wa_setting(f"{flag}:{ekey}") == "1" for flag in ("nudged", "handoff", "undelivered")):
+            continue
         due.append(sid)
     return due
+
+
+def _wa_nudge_count(session_id: str) -> int:
+    """How many follow-ups this thread has ever been sent. Lifetime, not per
+    episode, which is the whole point of the cap."""
+    try:
+        return int(get_wa_setting(f"nudge_count:{session_id}", "0") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def wa_nudge_hours_open(now_sydney: datetime | None = None) -> bool:
@@ -6798,10 +7083,23 @@ def _wa_nudge_loop() -> None:
             if not wa_nudge_hours_open():
                 continue
             for sid in wa_sessions_needing_nudge():
+                # Claim BEFORE sending. Render keeps the old instance alive
+                # through a deploy, so two processes run this loop at once, and
+                # claiming afterwards let both of them nudge the same customer
+                # (11 Sep 2026 diff, finding #9 follow-up). The claim also
+                # stands on a failed send: one attempt per episode, never a
+                # loop that re-pesters the same person every ten minutes.
+                ekey = wa_episode_key(sid)
+                nudge_count = _wa_nudge_count(sid)
+                set_wa_setting(f"nudged:{ekey}", "1")
+                set_wa_setting(f"nudge_count:{sid}", str(nudge_count + 1))
                 ok, detail = send_whatsapp_via_twilio(sid.removeprefix("wa-"), WA_NUDGE_TEXT)
-                # Mark even on failure: one attempt per thread, never a loop
-                # that re-pesters the same person every ten minutes.
-                set_wa_setting(f"nudged:{sid}", "1")
+                if not ok and str(detail) == "twilio sending not configured":
+                    # Nothing was attempted, so nothing was spent: hand the
+                    # claim back rather than burning this thread's follow-up on
+                    # a missing credential.
+                    set_wa_setting(f"nudged:{ekey}", "")
+                    set_wa_setting(f"nudge_count:{sid}", str(nudge_count))
                 if ok:
                     history = load_conversation(sid)
                     history.append({"role": "assistant", "content": WA_NUDGE_TEXT})
@@ -7118,7 +7416,10 @@ def maybe_push_lead_to_momence(lead_info, session_id: str, *, source: str,
 def _push_lead_guarded(lead_info: dict, *, source: str, session_id: str) -> None:
     """Worker-thread body: dedupe, push, and roll the flag back on failure so
     the lead's NEXT message retries instead of being lost forever."""
-    flag_key = f"momence_pushed:{session_id}"
+    # Per episode: a returning customer is pushed again, which is safe
+    # because push_lead_to_momence looks the member up by email server-side
+    # (11 Sep 2026 diff, finding #2).
+    flag_key = f"momence_pushed:{wa_episode_key(session_id)}"
     if get_wa_setting(flag_key) == "1":
         return
     set_wa_setting(flag_key, "1")
@@ -7872,7 +8173,7 @@ def should_use_local_tone_handler(message: str, session_id: str, *, ignore_vague
 
     # If the user repeats the same short message, answer the behaviour rather
     # than pretending it is a fresh FAQ.
-    user_messages = [m["content"] for m in load_conversation(session_id) if m.get("role") == "user"]
+    user_messages = [m["content"] for m in episode_history(session_id) if m.get("role") == "user"]
     short_repeats = [normalise_chat_text(m) for m in user_messages if len(normalise_chat_text(m)) <= 18]
     return len(short_repeats) >= 2 and short_repeats[-1] == short_repeats[-2]
 
@@ -7899,7 +8200,7 @@ def wa_first_contact_greeting(message: str, session_id: str) -> bool:
         return False
     prior_vague = sum(
         1
-        for m in load_conversation(session_id)
+        for m in episode_history(session_id)
         if m.get("role") == "user" and is_vague_message(normalise_chat_text(m.get("content", "")))
     )
     # The inbound message is already appended to history by this point.
@@ -8036,7 +8337,7 @@ def is_location_choice_reply(text: str, session_id: str) -> bool:
 
 
 def known_location_from_history(session_id: str) -> str | None:
-    for item in reversed(load_conversation(session_id)):
+    for item in reversed(episode_history(session_id)):
         if item.get("role") != "user":
             continue
         text = normalise_chat_text(item.get("content", ""))
@@ -8116,7 +8417,7 @@ def demo_fallback_reply(message: str, session_id: str = "default") -> str:
     if is_vague_message(clean):
         vague_count = sum(
             1
-            for m in load_conversation(session_id)
+            for m in episode_history(session_id)
             if m.get("role") == "user" and is_vague_message(normalise_chat_text(m.get("content", "")))
         )
         if is_whatsapp_session(session_id):
@@ -8961,7 +9262,7 @@ def notify_lead_summary(lead_info: dict, *, reason: str) -> bool:
     # claim, so it only records its fingerprint here.
     session_id = lead_info.get("session_id", "unknown")
     fingerprint = _lead_alert_fingerprint(lead_info)
-    flag_key = f"lead_alerted:{session_id}"
+    flag_key = f"lead_alerted:{wa_episode_key(session_id)}"
     if fingerprint and reason != "explicit_human_request" and get_wa_setting(flag_key) == fingerprint:
         log_event("lead_summary_notification_deduped", session_id=session_id, reason=reason)
         return False
@@ -9893,6 +10194,11 @@ ADMIN_HTML = """
       border: 1px solid var(--line); color: var(--ink);
       border-bottom-left-radius: 4px;
     }
+    .episode-break {
+      align-self: stretch; text-align: center; font-size: .66rem; font-weight: 700;
+      letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+      border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 4px;
+    }
 
     /* ── WhatsApp extras ─────────────────────────────────────── */
     .switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; }
@@ -10561,6 +10867,10 @@ ADMIN_HTML = """
       }
       meta.innerHTML = '<strong>' + esc(thread.phone || waPhone(thread.session_id)) + '</strong> ' + waWindowBadge(thread)
         + (thread.muted ? ' <span class="badge amber">Bot muted, you are driving</span>' : '')
+        // Episode = how many separate conversations this number has had. The
+        // bot treats each one as a fresh start, so it matters that Nick can
+        // see which one he is reading (11 Sep 2026 diff, finding #9).
+        + ((thread.episode || 1) > 1 ? ' <span class="badge">Episode ' + esc(thread.episode) + '</span>' : '')
         // Anyone can set their own WhatsApp display name, so it is labelled
         // rather than shown as the customer's real name.
         + (thread.profile_name ? '<div class="footnote">WhatsApp name: ' + esc(thread.profile_name) + ' (unverified)</div>' : '');
@@ -10569,10 +10879,26 @@ ADMIN_HTML = """
       const canReply = !!thread.window_open;
       input.disabled = !canReply; send.disabled = !canReply;
       input.placeholder = canReply ? 'Reply as Nick…' : 'Window closed. WhatsApp only allows template messages now.';
+      // Draw the episode boundaries in the transcript itself: the same gap
+      // rule the server uses, applied to the customer's own messages, so a
+      // six-week silence does not read as one continuous chat.
+      const gapMs = (waData().episode_gap_hours || 0) * 3600 * 1000;
+      let prevUser = null, episodeNo = 1;
       document.getElementById('waMessages').innerHTML = waThreadMessages(thread.session_id).map(function(m) {
         const role = esc(m.role || 'unknown');
         const who = m.role === 'user' ? 'Customer' : 'Robo-Nick';
-        return '<article class="chat-message ' + role + '">'
+        let divider = '';
+        if (m.role === 'user') {
+          const at = Date.parse(m.timestamp || '');
+          if (gapMs > 0 && prevUser && at && (at - prevUser) >= gapMs) {
+            episodeNo += 1;
+            const days = Math.round((at - prevUser) / 86400000);
+            divider = '<div class="episode-break">Episode ' + episodeNo
+              + ', new conversation after ' + days + 'd</div>';
+          }
+          if (at) prevUser = at;
+        }
+        return divider + '<article class="chat-message ' + role + '">'
           + '<div class="role">' + esc(who) + ' · ' + esc(fmtDate(m.timestamp)) + '</div>'
           + esc(m.content || '')
         + '</article>';

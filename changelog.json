@@ -186,5 +186,9 @@
   {
     "date": "2026-09-11",
     "line": "WhatsApp leads now carry the number the person is writing from and the channel; on WhatsApp the bot asks for a first name only, never the mobile; alerts show the customer's WhatsApp display name marked as unverified."
+  },
+  {
+    "date": "2026-09-11",
+    "line": "WhatsApp: a customer who comes back after a day and a half starts a fresh conversation, so Nick is alerted again if they ask for him, the follow-up can fire again (at most three over the life of a thread) and a returning hi is greeted properly; older messages stay on the dashboard as background."
   }
 ]
