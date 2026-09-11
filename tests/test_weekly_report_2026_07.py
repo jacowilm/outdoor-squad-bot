@@ -191,7 +191,7 @@ def test_shipped_lines_windowed_and_report_section():
     try:
         _seed_funnel()
         stats = app.build_report_stats(days=7)
-        assert stats["shipped_lines"] == [f"{_ts(1)[:10]} — New thing went live"]
+        assert stats["shipped_lines"] == [f"{_ts(1)[:10]}: New thing went live"]
         text = app.format_report_text(stats)
         assert "WENT LIVE THIS WEEK" in text
         assert "New thing went live" in text

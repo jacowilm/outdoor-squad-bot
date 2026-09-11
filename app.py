@@ -4925,7 +4925,7 @@ def read_changelog_entries(since_iso: str) -> list[str]:
     except Exception:
         return []
     return [
-        f"{entry.get('date')} — {entry.get('line')}"
+        f"{entry.get('date')}: {entry.get('line')}"
         for entry in entries
         if str(entry.get("date", "")) >= since_iso[:10]
     ]
