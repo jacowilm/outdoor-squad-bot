@@ -8324,6 +8324,11 @@ MOMENCE_V2_CLIENT_SECRET = os.environ.get("MOMENCE_V2_CLIENT_SECRET", "").strip(
 MOMENCE_SEED_REFRESH_TOKEN = os.environ.get("MOMENCE_V2_REFRESH_TOKEN", "").strip()
 MOMENCE_WA_TAG_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_WA_TAG_ID", "").strip()
 MOMENCE_WEB_TAG_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_WEB_TAG_ID", "").strip()
+# Optional, additive WhatsApp source badge. Both tag ids above currently point
+# at the SAME generic "Lead" tag (41226) in production, so it stays exactly as
+# it is — this is a second, distinct tag layered on top for WhatsApp leads
+# only, never a replacement. Absent (the default), behaviour is unchanged.
+MOMENCE_WA_SOURCE_TAG_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_WA_SOURCE_TAG_ID", "").strip()
 MOMENCE_DEFAULT_LOCATION_ID = os.environ.get("OUTDOOR_SQUAD_MOMENCE_DEFAULT_LOCATION_ID", "").strip()
 
 
@@ -8508,7 +8513,14 @@ def push_lead_to_momence(lead_info: dict, *, source: str, session_id: str) -> di
     if existing:
         log_event("momence_push_skipped", session_id=session_id, reason="already_in_momence",
                   source=source, member_id=str(existing)[:40])
-        return {"ok": True, "member_id": existing, "already_existed": True}
+        tag_outcome = _apply_source_tags(token, existing, source=source, session_id=session_id,
+                                         is_new_member=False)
+        result = {"ok": True, "member_id": existing, "already_existed": True}
+        if tag_outcome["tags_failed"]:
+            result["tags_failed"] = tag_outcome["tags_failed"]
+        if tag_outcome["tag_config_errors"]:
+            result["tag_config_errors"] = tag_outcome["tag_config_errors"]
+        return result
 
     name = str(lead_info.get("name") or "").strip()
     first, _, last = name.partition(" ")
@@ -8538,10 +8550,15 @@ def push_lead_to_momence(lead_info: dict, *, source: str, session_id: str) -> di
     member_id = data.get("memberId") or data.get("id")
     log_event("momence_lead_pushed", session_id=session_id, source=source, member_id=str(member_id)[:40])
 
-    tag_id = MOMENCE_WA_TAG_ID if source == "whatsapp" else MOMENCE_WEB_TAG_ID
-    if member_id and tag_id:
-        _momence_assign_tag(token, member_id, tag_id, session_id=session_id, source=source)
-    return {"ok": True, "member_id": member_id, "already_existed": False}
+    tag_outcome = (_apply_source_tags(token, member_id, source=source, session_id=session_id,
+                                      is_new_member=True) if member_id
+                  else {"tags_failed": [], "tag_config_errors": []})
+    result = {"ok": True, "member_id": member_id, "already_existed": False}
+    if tag_outcome["tags_failed"]:
+        result["tags_failed"] = tag_outcome["tags_failed"]
+    if tag_outcome["tag_config_errors"]:
+        result["tag_config_errors"] = tag_outcome["tag_config_errors"]
+    return result
 
 
 def _as_momence_id(value):
@@ -8573,6 +8590,112 @@ def _momence_assign_tag(token: str, member_id, tag_id, *, session_id: str, sourc
     except Exception as exc:
         log_event("momence_tag_error", session_id=session_id, source=source, error=str(exc)[:200])
     return False
+
+
+def _configured_momence_tag_id(raw: str, *, label: str):
+    """A config value is either absent (fine, backwards-compatible: no tag)
+    or a positive integer. Anything else — a typo, a name pasted instead of
+    an id — is a configuration error and must say so rather than quietly
+    behaving like "no tag configured": that would look like a successful,
+    complete push while actually never assigning the tag the operator
+    thinks is live. Returns (tag_id_or_None, error_message_or_None). The raw
+    value is NEVER echoed into the message: an env var typo could just as
+    easily be an accidentally pasted secret, so only the field label and a
+    fixed description go into logs/results."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None, None
+    parsed = _as_momence_id(raw)
+    if parsed is None:
+        return None, f"{label} is not a positive integer tag id"
+    return parsed, None
+
+
+def _momence_tags_for_source(source: str):
+    """Returns (generic_tag_id, wa_source_badge_id, config_errors).
+
+    generic_tag_id is the existing per-channel Lead tag (WA and web both
+    point at 41226 in production today) — untouched behaviour for a NEW
+    member. wa_source_badge_id is the new, optional, additive WhatsApp
+    source badge; it is the ONLY tag ever applied to an already-existing
+    contact found by email search, so this integration cannot newly enrol
+    an unrelated pre-existing (possibly paying) customer into lead nurture."""
+    generic_label = ("OUTDOOR_SQUAD_MOMENCE_WA_TAG_ID" if source == "whatsapp"
+                     else "OUTDOOR_SQUAD_MOMENCE_WEB_TAG_ID")
+    generic_tag, generic_err = _configured_momence_tag_id(
+        MOMENCE_WA_TAG_ID if source == "whatsapp" else MOMENCE_WEB_TAG_ID, label=generic_label)
+    badge_tag, badge_err = (None, None)
+    if source == "whatsapp":
+        badge_tag, badge_err = _configured_momence_tag_id(
+            MOMENCE_WA_SOURCE_TAG_ID, label="OUTDOOR_SQUAD_MOMENCE_WA_SOURCE_TAG_ID")
+        if badge_tag is not None and badge_tag == generic_tag:
+            # A distinct WA source tag that's the SAME id as the generic Lead
+            # tag defeats the entire point of this feature (source
+            # attribution) — that's the bug being fixed, not a harmless
+            # dedup, so it must surface as a config error, not silently
+            # collapse to "one POST instead of two".
+            badge_tag = None
+            badge_err = ("OUTDOOR_SQUAD_MOMENCE_WA_SOURCE_TAG_ID must not equal the generic "
+                         "per-channel Lead tag id — configure a distinct tag")
+    errors = [e for e in (generic_err, badge_err) if e]
+    return generic_tag, badge_tag, errors
+
+
+def _momence_pending_generic_tag_flag(member_id) -> str:
+    return f"momence_pending_generic_tag:{member_id}"
+
+
+def _apply_source_tags(token: str, member_id, *, source: str, session_id: str,
+                       is_new_member: bool) -> dict:
+    """Tag scope depends on whether THIS push just created the member:
+
+    - A brand-new member gets the generic per-channel Lead tag (unchanged
+      behaviour) plus the optional WhatsApp source badge. If the generic tag
+      fails, a durable pending marker is recorded against this member id so
+      a later push for the SAME member can finish that one specific
+      assignment.
+    - An already-existing member (found by email search — possibly a
+      pre-existing paying customer this integration never created) only
+      ever gets the WhatsApp source badge, UNLESS the pending marker above
+      says THIS integration created them earlier and still owes them the
+      generic tag. Arbitrary pre-existing contacts are never newly
+      Lead-tagged.
+
+    Idempotent per member+tag via a local flag, so a returning contact does
+    not fire the same POST/event on every later message. A config error
+    (malformed, non-empty tag id) is logged and reported back rather than
+    silently treated as "nothing to do", so an operator typo doesn't read
+    as a complete, successful push."""
+    generic_tag, badge_tag, config_errors = _momence_tags_for_source(source)
+    for err in config_errors:
+        log_event("momence_tag_config_error", session_id=session_id, source=source, error=err)
+
+    pending_flag = _momence_pending_generic_tag_flag(member_id)
+    wanted = []
+    if is_new_member:
+        if generic_tag:
+            wanted.append(generic_tag)
+    elif generic_tag and get_wa_setting(pending_flag) == "1":
+        wanted.append(generic_tag)
+    if badge_tag:
+        wanted.append(badge_tag)
+
+    failed = []
+    for tag_id in wanted:
+        flag_key = f"momence_tagged:{member_id}:{tag_id}"
+        if get_wa_setting(flag_key) == "1":
+            if tag_id == generic_tag:
+                set_wa_setting(pending_flag, "0")
+            continue
+        if _momence_assign_tag(token, member_id, tag_id, session_id=session_id, source=source):
+            set_wa_setting(flag_key, "1")
+            if tag_id == generic_tag:
+                set_wa_setting(pending_flag, "0")
+        else:
+            failed.append(tag_id)
+            if tag_id == generic_tag:
+                set_wa_setting(pending_flag, "1")
+    return {"tags_failed": failed, "tag_config_errors": config_errors}
 
 
 def push_lead_async(lead_info: dict, *, source: str, session_id: str) -> None:
@@ -8624,7 +8747,15 @@ def _push_lead_guarded(lead_info: dict, *, source: str, session_id: str) -> None
         return
     set_wa_setting(flag_key, "1")
     result = push_lead_to_momence(lead_info, source=source, session_id=session_id)
-    if not result.get("ok"):
+    if not result.get("ok") or result.get("tags_failed") or result.get("tag_config_errors"):
+        # Either the whole push failed, a tag didn't stick, or a tag env var
+        # is misconfigured — roll back so the lead's NEXT message retries.
+        # The retry is usually a no-op re-create: the email search finds the
+        # existing member and _apply_source_tags skips any tag already
+        # confirmed applied. Note this is NOT an absolute duplicate-create
+        # guarantee — _momence_find_member_by_email fails OPEN, so a
+        # transient search error at retry time could still create a second
+        # member, same pre-existing tradeoff as the original design.
         set_wa_setting(flag_key, "0")
 
 

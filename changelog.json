@@ -214,5 +214,9 @@
   {
     "date": "2026-09-13",
     "line": "The internal build README is no longer read into the bot's answer material; it is operational documentation, not visitor-facing knowledge. Greeting and bot-identity answers also defer to medical, eating-disorder, youth and human-request safeguards."
+  },
+  {
+    "date": "2026-09-13",
+    "line": "A returning contact who books again now still gets tagged as a lead in the CRM (before, only brand-new contacts were tagged); WhatsApp contacts can now also get their own distinct source tag in the CRM, separate from the shared Lead tag, once that tag is set up."
   }
 ]
