@@ -86,6 +86,17 @@ def test_internal_email_not_in_source_corpus():
     assert any("lyn-updated-faq" in t for t in titles)
 
 
+# ── source-docs/README.md is build/operational metadata, not visitor KB ──────
+def test_source_docs_readme_not_in_llm_corpus():
+    titles = [d["title"] for d in app.SOURCE_DOCS]
+    assert "README" not in titles
+    corpus_text = " ".join(d["text"] for d in app.SOURCE_DOCS)
+    # The README names an internal Google Doc and an AgentMail thread ID —
+    # neither should be retrievable from the visitor-facing corpus.
+    assert "docs.google.com/document" not in corpus_text
+    assert "AgentMail thread" not in corpus_text
+
+
 # ── merge_lead cross-session integrity ────────────────────────────────────────
 def test_merge_lead_no_cross_session_overwrite():
     existing = {"session_id": "sA", "name": "Alice", "email": "fam@x.com",

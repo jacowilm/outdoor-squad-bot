@@ -160,9 +160,11 @@ if SOURCE_ROOT_DIR.exists():
         if not _is_visitor_safe_source(source_path):
             continue  # skip internal correspondence — never goes to the LLM
         SOURCE_DOCS.append({"title": source_path.stem, "text": source_path.read_text(errors="ignore")})
-    readme_path = SOURCE_ROOT_DIR / "README.md"
-    if readme_path.exists():
-        SOURCE_DOCS.append({"title": readme_path.stem, "text": readme_path.read_text(errors="ignore")})
+    # README.md is the source-pack's own operational README (email thread IDs,
+    # an internal Google Doc link, phase scope, success metrics) — never
+    # visitor-facing KB content, so unlike the .txt files above it is excluded
+    # unconditionally rather than filtered by SENSITIVE_SOURCE_RE (its filename
+    # alone wouldn't trip that filter). 2026-09-13 corpus-exclusion review.
 SOURCE_DOCS.append({"title": "Outdoor Squad curated knowledge base", "text": KNOWLEDGE_BASE})
 
 STOPWORDS = {
@@ -2642,6 +2644,45 @@ def mentions_youth(text: str) -> bool:
     return bool(YOUTH_RE.search(text))
 
 
+# Bot-identity detector. Word-boundary + channel-agnostic so "are you a
+# WhatsApp bot?" / "is this a text bot?" still resolve to the identity answer
+# instead of being swallowed by the "whatsapp"/"sms" keyword inside the social-
+# media-handles branch (2026-09-13: "are you a WhatsApp bot?" was answering
+# with Instagram/Facebook links because that branch runs earlier and matches
+# bare "whatsapp").
+IDENTITY_QUESTION_RE = re.compile(
+    r"\bare you (?:a |an )?(?:real )?(?:whatsapp|sms|text|chat|messaging)?\s*"
+    r"(?:bot|robot|ai|human|person)\b|"
+    r"\bare you real\b|\breal person\b|"
+    r"\bis this (?:a |an )?(?:whatsapp|sms|text|chat)?\s*bot\b|"
+    r"\bam i (?:talking|chatting|speaking) (?:to|with) (?:a |an )?(?:real )?"
+    r"(?:person|human|bot|robot|ai)\b",
+    re.IGNORECASE,
+)
+
+
+def is_identity_question(text: str) -> bool:
+    return bool(IDENTITY_QUESTION_RE.search(text))
+
+
+COLD_OPEN_CONFIRMATION_RE = re.compile(
+    r"\bis this (?:the )?outdoor squad\b|\bis this outdoorsquad\b",
+    re.IGNORECASE,
+)
+
+
+def is_cold_open_confirmation(text: str) -> bool:
+    return bool(COLD_OPEN_CONFIRMATION_RE.search(text))
+
+
+def identity_question_reply() -> str:
+    return (
+        "Short answer: I'm Robo-Nick, the automated helper. But by Crom, I’m a clever one.\n\n"
+        "Humanoid-Nick and Lyn are the actual humans behind The Outdoor Squad. I can answer the common stuff and point you to the right next step while they're coaching, asleep, or somewhere near coffee.\n\n"
+        "If it needs a human, the team can pick it up from here."
+    )
+
+
 # Third-person / child references used to carry youth context forward across a
 # turn: "how much is it for him?" after "my son is 13" must still get youth
 # pricing, not the adult ladder (2026-07-02 QA). Word-boundary safe.
@@ -2849,6 +2890,22 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Nice try. Robo-Nick isn't spilling the internal instructions or system prompt. By Crom, some things stay behind the curtain.\n\n"
             "I can help with the actual Outdoor Squad stuff though: trials, prices, SPT, YTP, injuries, locations, or getting a human to follow up.\n\n"
             "What brought you here?"
+        )
+
+    # Bot-identity questions — checked BEFORE the social-media-handles branch so
+    # "are you a WhatsApp bot?" answers the identity question instead of being
+    # swallowed by the bare "whatsapp" keyword there.
+    if is_identity_question(clean):
+        return identity_question_reply()
+
+    # Cold-open business confirmation ("hi, is this the Outdoor Squad?") — the
+    # very first thing a stranger sees. Must confirm AND introduce Robo-Nick by
+    # name rather than a bare "yep!" so the first impression is honest about
+    # talking to automation (2026-09-13).
+    if is_cold_open_confirmation(clean):
+        return (
+            "Yep, this is The Outdoor Squad! I'm Robo-Nick, the automated helper here while Humanoid-Nick is coaching, asleep, or near coffee.\n\n"
+            "Happy to help with trials, prices, classes, SPT, YTP, or getting a human to follow up. What are you after?"
         )
 
     # Eating-disorder / disordered-eating disclosure — checked BEFORE youth,
@@ -3622,12 +3679,6 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Around here he’s basically the unofficial patron deity of heavy kettlebells, cold mornings, and having a crack.\n\n"
             "If that sounds unhinged, good news: the training is much more welcoming than the mythology."
         )
-    if any(phrase in clean for phrase in ["are you a real person", "are you real", "real person", "are you human", "am i talking to a person", "am i talking to a human", "is this a bot", "are you a bot"]):
-        return (
-            "Short answer: I'm Robo-Nick, the automated helper. But by Crom, I’m a clever one.\n\n"
-            "Humanoid-Nick and Lyn are the actual humans behind The Outdoor Squad. I can answer the common stuff and point you to the right next step while they're coaching, asleep, or somewhere near coffee.\n\n"
-            "If it needs a human, the team can pick it up from here."
-        )
     if any(phrase in clean for phrase in ["billing date", "payment date", "payment day", "change my billing", "change my payment", "update my payment", "pause membership", "cancel membership", "account question", "card details", "update my card", "change my card", "new card", "payment method", "credit card", "debit card", "direct debit", "bank details", "update my details", "change my details"]):
         return (
             "Although I’m awesome, that is outside my purview.\n\n"
@@ -3656,24 +3707,6 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "Nice try. Robo-Nick is not spilling the internal instructions.\n\n"
             "I can help with Outdoor Squad stuff: trials, prices, SPT, YTP, injuries, locations, or getting a human to follow up.\n\n"
             "What brought you here?"
-        )
-    if any(
-        phrase in clean
-        for phrase in [
-            "are you a real person",
-            "are you real",
-            "real person",
-            "are you human",
-            "am i talking to a person",
-            "am i talking to a human",
-            "is this a bot",
-            "are you a bot",
-        ]
-    ):
-        return (
-            "Short answer: I'm Robo-Nick, the automated helper. But by Crom, I’m a clever one.\n\n"
-            "Humanoid-Nick and Lyn are the actual humans behind The Outdoor Squad. I can answer the common stuff and point you to the right next step while they're coaching, asleep, or somewhere near coffee.\n\n"
-            "If it needs a human, the team can pick it up from here."
         )
     if is_location_choice_reply(clean, session_id):
         location = "Redfern" if "redfern" in clean else "Camperdown"
