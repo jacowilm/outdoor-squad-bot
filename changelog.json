@@ -217,6 +217,6 @@
   },
   {
     "date": "2026-09-13",
-    "line": "A returning contact who books again now still gets tagged as a lead in the CRM (before, only brand-new contacts were tagged); WhatsApp contacts can now also get their own distinct source tag in the CRM, separate from the shared Lead tag, once that tag is set up."
+    "line": "WhatsApp contacts can now receive a separate source label once configured, including returning contacts. Existing Lead labels are preserved, and failed label assignments can be retried without treating existing customers as new leads."
   }
 ]
