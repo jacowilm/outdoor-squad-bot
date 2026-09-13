@@ -218,19 +218,26 @@ def main() -> int:
                     failures.append(f"{name}: missing serious-case health-practitioner guardrail")
 
         extra_conversion_cases = [
-            ("nervous-beginner", "I'm pretty unfit and nervous. Is the first class okay for beginners?", ["free trial", "coach", "beginner"]),
+            # required_terms below are re-synced to the CURRENT deliberate copy
+            # (2026-09-13, offline smoke run): several had drifted stale since
+            # earlier positioning/wording passes polished the actual replies
+            # without anyone updating these assertions (same class of drift as
+            # the 2026-08-31 sync noted in outdoor_squad_bot_verify memory).
+            ("nervous-beginner", "I'm pretty unfit and nervous. Is the first class okay for beginners?", ["free trial", "coach", "scales"]),
             ("bring-friend", "Can I bring my partner or a friend to try it with me?", ["free trial", "friend", "value-stack"]),
             ("rain", "What if it rains during the session?", ["undercover", "layers", "free trial"]),
-            ("over-50", "I'm over 50, am I too old for this?", ["50s", "functional strength", "free trial"]),
+            ("over-50", "I'm over 50, am I too old for this?", ["groceries at 75", "functional strength", "free trial"]),
             ("browsing", "Just browsing for now, thanks.", ["free trial"]),
             ("winter", "Isn't it awkward training outdoors in winter?", ["free trial"]),
             ("quit-gyms", "I've quit gyms before. Why would this be different?", ["free trial"]),
-            ("plus-fitness", "$51 a week is a lot. Plus Fitness is $18.", ["free trial", "Plus Fitness", "$51"]),
+            # Deliberate positioning (Nicholas): don't get baited into a direct
+            # competitor-name/price restatement — point to coaching + reviews.
+            ("plus-fitness", "$51 a week is a lot. Plus Fitness is $18.", ["free trial", "coached", "google reviews"]),
             ("pt-redirect", "Do you do personal training?", ["SPT", "28-Day Kickstarter"]),
             ("coach-program", "I want a coach who knows my goals and writes me a program.", ["SPT", "28-Day Kickstarter"]),
-            ("partner-budget", "My partner and I are keen but we're on a budget. Is pricing flexible?", ["membership levels", "$51/wk", "SPT"]),
+            ("partner-budget", "My partner and I are keen but we're on a budget. Is pricing flexible?", ["different levels", "$51/wk", "SPT"]),
             ("generic-group", "Are group classes just generic, or does the coach actually pay attention?", ["coached", "cues", "modifications"]),
-            ("flow-flex", "What's Yoga Squad like?", ["Flow'N'Flex", "mobility", "balance"]),
+            ("flow-flex", "What's Yoga Squad like?", ["Flow'N'Flex", "mobility", "core control"]),
             ("researching", "I'm still looking at options and thinking about it.", ["free trial", "Crom weeps", "research"]),
         ]
         for name, message, required_terms in extra_conversion_cases:
@@ -263,7 +270,9 @@ def main() -> int:
             (
                 "family-all-people",
                 "My wife and I both want to join, and our 14-year-old is keen too.",
-                ["two Squad Ascent", "Youth Training Program", "Saturday", "9:15"],
+                # "two Squad Ascent" -> current copy says "$51/wk each" instead
+                # of enumerating the plan name twice (2026-09-13 re-sync).
+                ["$51/wk each", "Youth Training Program", "Saturday", "9:15"],
                 ["discount"],
             ),
             (

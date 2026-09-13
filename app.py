@@ -2675,6 +2675,22 @@ def is_cold_open_confirmation(text: str) -> bool:
     return bool(COLD_OPEN_CONFIRMATION_RE.search(text))
 
 
+def _has_safety_or_handoff_priority(message: str, clean: str) -> bool:
+    """True if a message mixing a greeting/identity phrase with a genuine
+    safety, medical, youth, or explicit human-handoff signal must route to
+    THAT guard instead of the identity/cold-open reply. Checked ahead of
+    is_identity_question/is_cold_open_confirmation so "is this the Outdoor
+    Squad? I have an eating disorder" cannot be swallowed by a cheerful
+    confirmation (2026-09-13 parent review finding)."""
+    return (
+        mentions_eating_disorder(clean)
+        or mentions_pregnancy(clean)
+        or mentions_injury(clean)
+        or mentions_youth(clean)
+        or is_explicit_human_request(message)
+    )
+
+
 def identity_question_reply() -> str:
     return (
         "Short answer: I'm Robo-Nick, the automated helper. But by Crom, I’m a clever one.\n\n"
@@ -2892,21 +2908,27 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "What brought you here?"
         )
 
-    # Bot-identity questions — checked BEFORE the social-media-handles branch so
-    # "are you a WhatsApp bot?" answers the identity question instead of being
-    # swallowed by the bare "whatsapp" keyword there.
-    if is_identity_question(clean):
-        return identity_question_reply()
+    # Bot-identity questions and the cold-open confirmation below are checked
+    # BEFORE the social-media-handles branch so "are you a WhatsApp bot?"
+    # answers the identity question instead of being swallowed by the bare
+    # "whatsapp" keyword there. But a mixed message that ALSO carries a
+    # safety/youth/human-handoff signal ("is this the Outdoor Squad? I have an
+    # eating disorder") must NOT be swallowed by a greeting/identity answer —
+    # those guards are checked first and always win (2026-09-13 parent review:
+    # the first version of this fix let identity/cold-open preempt them).
+    if not _has_safety_or_handoff_priority(message, clean):
+        if is_identity_question(clean):
+            return identity_question_reply()
 
-    # Cold-open business confirmation ("hi, is this the Outdoor Squad?") — the
-    # very first thing a stranger sees. Must confirm AND introduce Robo-Nick by
-    # name rather than a bare "yep!" so the first impression is honest about
-    # talking to automation (2026-09-13).
-    if is_cold_open_confirmation(clean):
-        return (
-            "Yep, this is The Outdoor Squad! I'm Robo-Nick, the automated helper here while Humanoid-Nick is coaching, asleep, or near coffee.\n\n"
-            "Happy to help with trials, prices, classes, SPT, YTP, or getting a human to follow up. What are you after?"
-        )
+        # Cold-open business confirmation ("hi, is this the Outdoor Squad?") —
+        # the very first thing a stranger sees. Must confirm AND introduce
+        # Robo-Nick by name rather than a bare "yep!" so the first impression
+        # is honest about talking to automation (2026-09-13).
+        if is_cold_open_confirmation(clean):
+            return (
+                "Yep, this is The Outdoor Squad! I'm Robo-Nick, the automated helper here while Humanoid-Nick is coaching, asleep, or near coffee.\n\n"
+                "Happy to help with trials, prices, classes, SPT, YTP, or getting a human to follow up. What are you after?"
+            )
 
     # Eating-disorder / disordered-eating disclosure — checked BEFORE youth,
     # weight-loss, nutrition, meal-plan and nervous-beginner branches so it can

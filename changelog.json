@@ -213,6 +213,6 @@
   },
   {
     "date": "2026-09-13",
-    "line": "The internal build README is no longer read into the bot's answer material (it was never meant for visitors and never came up in an answer, but it shouldn't have been in there)."
+    "line": "The internal build README is no longer read into the bot's answer material; it is operational documentation, not visitor-facing knowledge. Greeting and bot-identity answers also defer to medical, eating-disorder, youth and human-request safeguards."
   }
 ]
