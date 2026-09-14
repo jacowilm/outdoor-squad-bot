@@ -165,7 +165,13 @@ def test_repetition_guard_is_scoped_to_the_episode():
     app.conversations[sid] = [{"role": "assistant", "content": draft},
                               {"role": "user", "content": "what about the timetable",
                                "episode": 2, "at": app.now_iso()}]
-    assert app.prevent_repetitive_reply(draft, "what about the timetable", sid) == draft
+    result = app.prevent_repetitive_reply(draft, "what about the timetable", sid)
+    # The episode-scoped repetition guard must NOT rewrite the draft (that's
+    # what this test protects) — but the draft is a substantive timetable
+    # answer, so the shared final-answer footer legitimately appends its
+    # exact-one link on top of the untouched draft.
+    assert result.startswith(draft)
+    assert result == draft + app.topic_link_line("timetable", draft)
     app.conversations.pop(sid, None)
 
 

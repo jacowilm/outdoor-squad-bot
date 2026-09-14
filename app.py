@@ -222,6 +222,7 @@ BRAND_VOICE_REFERENCE = """Required brand voice reference:
 - Prefer capability language over aesthetics: strong, build, consistency, carrying groceries at 75; avoid shred, summer body, transformation-photo hype, hustle-culture or LinkedIn-ish phrasing.
 - SPT always means Semi-Private Personal Training. Never expand it as Specific Program Training.
 - Pricing guardrail: the 28-Day Kickstarter is $397 total for 28 days. $125/wk is SPT 2x + Group, not the Kickstarter price. Never conflate them in pricing, discount, or budget answers.
+- Full pricing ladder for any "what are your prices" answer: free trial $0, Squad Ascent $51/wk, Squad Student $25/wk, 28-Day Kickstarter $397 total, SPT 2x + Group $125/wk, SPT 3x + Group $175/wk, Youth Training Program $25/wk per kid, casual drop-in $37. Never state the ladder without SPT 3x and the Youth Training Program — both are real, current tiers.
 - Youth Training Program / Young'N'Strong are the current youth-program names. Prefer Youth Training Program on first mention, and use Young'N'Strong only as a parenthetical/alternate name when useful.
 - Flow'N'Flex is the current umbrella class name for the old Yoga Squad plus the yoga, Pilates and mobility-style sessions. Do not offer Power'N'Pilates as a separate current class unless Nicholas/Lyn reintroduce it.
 - References are seasoning: Crom/Conan, Tolkien, Princess Bride, RPG/dungeon jokes, sci-fi, Inner West specifics. Use only when they fit the visitor and never for nervous, medical, or sensitive first-contact moments.
@@ -246,6 +247,40 @@ TRIAL_LINK = os.environ.get("OUTDOOR_SQUAD_TRIAL_LINK", DEFAULT_TRIAL_LINK)
 HUMAN_EMAIL = os.environ.get("OUTDOOR_SQUAD_HUMAN_EMAIL", "innerwest@outdoorsquad.com.au")
 HUMAN_PHONE = os.environ.get("OUTDOOR_SQUAD_HUMAN_PHONE", "0402 439 361")
 GOOGLE_REVIEW_LINE = "Google reviews: Camperdown https://share.google/Fy2fcWRWx9uxeXx0f · Redfern https://share.google/z6uRDTUZAw82nOqTo"
+
+# Verified public website pages (live-fetched 2026-09-14) for optional
+# "if you want, here's the page" bottom links. Deterministic answers already
+# carry the full answer plus the Momence trial/booking link inline; these are
+# a distinct, additional pointer to the informational page on the real site,
+# only appended when relevant to the topic just answered and never in place
+# of the answer itself. Keep this list to pages actually verified live —
+# no invented paths.
+TOPIC_PAGE_LINKS = {
+    "prices": ("https://www.outdoorsquad.com.au/membership-options", "the full pricing page"),
+    "timetable": ("https://www.outdoorsquad.com.au/timetable-and-classes", "the timetable page"),
+    "locations": ("https://www.outdoorsquad.com.au/bootcamp-locations", "the locations page"),
+    "trial": ("https://www.outdoorsquad.com.au/new-page-squad-intro-offer", "the free trial page"),
+}
+
+# Same trigger phrases the deterministic pricing branch matches on, shared so
+# the central footer classifier (attach_topic_footer) can't drift from what
+# actually counts as a "prices" question.
+PRICING_TRIGGER_PHRASES = ["roughly what", "set me back", "what will it set me back", "how much", "cost", "price", "pricing"]
+
+
+def topic_link_line(topic: str, existing_text: str) -> str:
+    """Optional bottom link for a verified topic page, e.g. prices/timetable.
+
+    Returns "" for an unknown topic or when that exact URL is already present
+    in existing_text, so a reply never carries the same link twice.
+    """
+    entry = TOPIC_PAGE_LINKS.get(topic)
+    if not entry:
+        return ""
+    url, label = entry
+    if url in existing_text:
+        return ""
+    return f"\n\nIf you want, you can check out {label}: {url}"
 LEAD_SUMMARY_EMAIL_TO = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_EMAIL_TO", HUMAN_EMAIL).strip()
 LEAD_SUMMARY_PHONE_TO = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_PHONE_TO", "+61402439361").strip()
 LEAD_SUMMARY_WEBHOOK_URL = os.environ.get("OUTDOOR_SQUAD_LEAD_SUMMARY_WEBHOOK_URL", "").strip()
@@ -2097,7 +2132,7 @@ def non_repeating_followup(message: str, session_id: str) -> str:
             )
         if any(w in clean for w in ["how much", "price", "cost", "$"]):
             return (
-                "Short version: free trial $0, Squad Ascent $51/wk unlimited group ($25/wk verified students), 28-Day Kickstarter $397 total, casual drop-in $37.\n\n"
+                "Short version: free trial $0, Squad Ascent $51/wk unlimited group, Squad Student $25/wk (verified students), 28-Day Kickstarter $397 total, SPT 2x + Group $125/wk, SPT 3x + Group $175/wk, Youth Training Program $25/wk per kid, casual drop-in $37.\n\n"
                 "Which lane are you actually weighing up, group or SPT?"
             )
         return (
@@ -2129,6 +2164,129 @@ def non_repeating_followup(message: str, session_id: str) -> str:
     )
 
 
+def _footer_topic_for_message(clean: str) -> str | None:
+    """Best-effort topic classification for the optional bottom-link footer.
+    Reuses the same detectors the routing branches themselves use, so the
+    footer tracks what was actually asked rather than a bespoke second
+    router that could drift out of sync."""
+    if any(phrase in clean for phrase in PRICING_TRIGGER_PHRASES):
+        return "prices"
+    if is_timetable_question(clean):
+        return "timetable"
+    if is_trial_question(clean):
+        return "trial"
+    if is_location_question(clean) or asks_venue_address(clean) or asks_location_detail(clean):
+        return "locations"
+    return None
+
+
+_TIMETABLE_TIME_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b|\bmonday|tuesday|wednesday|thursday|friday|saturday|sunday\b")
+
+
+def _reply_is_substantive_for_topic(reply: str, topic: str) -> bool:
+    """Does this reply actually contain the topic's facts, as opposed to
+    being a refusal/handoff/error/contact-capture line that merely mentions
+    the topic in passing (e.g. "that one's outside what Robo-Nick can
+    reliably do... drop your mobile") or an optional CTA tacked onto an
+    otherwise-empty reply? Real answers for these topics always carry a
+    concrete fact; a pure handoff never does, even when it also ends with
+    an optional "want me to flag Nick or Lyn?" next-step question."""
+    lowered = reply.lower()
+    if topic == "prices":
+        return "$" in reply
+    if topic == "timetable":
+        return bool(_TIMETABLE_TIME_RE.search(lowered))
+    if topic == "locations":
+        return any(w in lowered for w in [
+            "mallett", "camperdown", "redfern", "parking", "station", "meeting point",
+        ])
+    if topic == "trial":
+        return any(w in lowered for w in ["free trial", "one class", "$0", "no cost", "no catch"])
+    return False
+
+
+# Lead-in copy for known primary refusal/handoff/error replies (not a
+# blanket "mentions Nick" or "asks for mobile" check — a real answer with an
+# optional CTA at the END must still keep its footer). Any of these appearing
+# means the reply's actual job is refusal/handoff/error, not answering, even
+# if it happens to quote a price or a time along the way.
+_ANSWER_PRIMARY_REFUSAL_MARKERS = [
+    "trouble reaching the ai backend",
+    "having a moment reaching my brain",
+    "that one's outside what robo-nick can reliably do",
+    "that one’s outside what robo-nick can reliably do",
+    "outside my purview",
+    "outside what robo-nick can",
+    "won't pretend to be a physio",
+    "wont pretend to be a physio",
+    "every injury is individual",
+    "that's a humanoid-nick conversation",
+]
+
+
+def _reply_is_primary_refusal_or_error(reply: str) -> bool:
+    lowered = reply.lower()
+    return any(marker in lowered for marker in _ANSWER_PRIMARY_REFUSAL_MARKERS)
+
+
+def _answer_based_topic(reply: str) -> str | None:
+    """When the user's own wording didn't name a topic, still recognise a
+    genuinely factual pricing or timetable answer by its content — e.g. an
+    AI reply that mentions real dollar prices or real class times while
+    answering a broader question. Deliberately narrow: only prices/timetable
+    (both have unambiguous, hard-to-fake markers — a real $ figure, a real
+    day/time). Locations and trial are NOT inferred this way, so a bare
+    "free trial" mention in a generic greeting can't manufacture a trial
+    pitch out of nowhere."""
+    if re.search(r"\$\d", reply):
+        return "prices"
+    if _TIMETABLE_TIME_RE.search(reply.lower()):
+        return "timetable"
+    return None
+
+
+def attach_topic_footer(reply: str, message: str, session_id: str) -> str:
+    """Append the optional "if you want, here's the page" footer for a
+    verified topic (prices/timetable/locations/trial) to a FINAL reply,
+    after all other reply-shaping has run.
+
+    Answers fully first, link second: this only ever appends, never
+    replaces content. The gate distinguishes a PRIMARY handoff/refusal/
+    contact-capture/error reply (no real facts for the topic — skip) from a
+    substantive answer that merely ENDS with an optional human CTA ("want me
+    to flag Nick or Lyn?") — those still get the link, so a real SPT/trial
+    price answer isn't punished for also offering a next step. Topic
+    selection prefers the user's own wording; when that names nothing, a
+    reply is still eligible if it factually answers prices or timetable (a
+    real $ figure or a real class time) — never trial/locations, and never
+    when the reply is itself a primary refusal/handoff/error even if it
+    happens to quote a price. Sensitive user content, prompt injection, and
+    explicit human-handoff requests are still always skipped outright. Never
+    duplicates a URL (topic_link_line itself guards that) and never pushes
+    the reply over the WhatsApp body budget.
+    """
+    clean = normalise_chat_text(message)
+    if is_prompt_injection(message):
+        return reply
+    if mentions_injury(clean) or mentions_pregnancy(clean) or mentions_eating_disorder(clean):
+        return reply
+    if is_explicit_human_request(message):
+        return reply
+    if _reply_is_primary_refusal_or_error(reply):
+        return reply
+    topic = _footer_topic_for_message(clean) or _answer_based_topic(reply)
+    if not topic:
+        return reply
+    if not _reply_is_substantive_for_topic(reply, topic):
+        return reply
+    footer = topic_link_line(topic, reply)
+    if not footer:
+        return reply
+    if len(reply) + len(footer) > WA_BODY_LIMIT:
+        return reply
+    return reply + footer
+
+
 def prevent_repetitive_reply(reply: str, message: str, session_id: str) -> str:
     reply = enforce_contact_and_handoff_progression(reply, session_id)
     # Episode-scoped: a price answer from a conversation two months ago must
@@ -2139,14 +2297,18 @@ def prevent_repetitive_reply(reply: str, message: str, session_id: str) -> str:
         for item in episode_history(session_id)[-8:]
         if item.get("role") == "assistant"
     ][-3:]
-    if not recent_assistant:
-        return reply
+    final_reply = reply
     for previous in recent_assistant:
         if len(reply) < 120 or len(previous) < 120:
             continue
         if reply_similarity(reply, previous) >= 0.68 or repeats_key_block(reply, previous):
-            return non_repeating_followup(message, session_id)
-    return reply
+            final_reply = non_repeating_followup(message, session_id)
+            break
+    # Single chokepoint: every /api/chat and WhatsApp reply path (deterministic,
+    # LLM, and the non-repeating-followup rewrite) funnels through here, so
+    # this is where the optional topic-link footer gets attached once,
+    # instead of scattering it across each individual answer branch.
+    return attach_topic_footer(final_reply, message, session_id)
 
 
 def contact_already_captured(session_id: str) -> bool:
@@ -2410,7 +2572,7 @@ CLASS_ALIAS_GROUPS = {
     "HiiT'N'Run": ["hiit'n'run", "hiit n run", "hiit", "conditioning"],
     "Flow'N'Flex": ["flow'n'flex", "flow n flex", "flownflex", "yoga squad", "yoga", "pilates", "mobility"],
     "Core'N'Sore": ["core'n'sore", "core n sore"],
-    "Youth Training Program": ["youth", "ytp", "young'n'strong", "young n strong", "kid", "kids", "teen", "teenager"],
+    "Youth Training Program": ["youth", "ytp", "ypt", "young'n'strong", "young n strong", "kid", "kids", "teen", "teenager"],
 }
 
 def is_timetable_question(text: str) -> bool:
@@ -2479,11 +2641,12 @@ def timetable_reply(text: str, session_id: str) -> str:
         lines = [f"- {day.title()} {time}: {class_name} ({location})" for day, time, class_name, location in filtered[:8]]
         if len(filtered) > 8:
             lines.append("- Plus a few more across the full timetable.")
-        return (
+        filtered_reply = (
             "From the current timetable:\n"
             + "\n".join(lines)
             + f"\n\nFor live availability, use the timetable/free-trial booking view: {TRIAL_LINK} (I won’t invent spots from here)."
         )
+        return filtered_reply + topic_link_line("timetable", filtered_reply)
 
     if had_filter and not filtered:
         # The asked combination doesn't exist — say so plainly and give the real
@@ -2505,7 +2668,7 @@ def timetable_reply(text: str, session_id: str) -> str:
         parts.append(f"For live availability, the booking view is the source of truth: {TRIAL_LINK}, or the team can confirm directly.")
         return "\n\n".join(parts)
 
-    return (
+    overview_reply = (
         "Quick version of the current week:\n\n"
         "- Mornings: 6am most weekdays, plus 9:30am Mon/Wed/Fri at Camperdown.\n"
         "- Evenings: 6:30pm at Camperdown on Mon/Tue/Wed.\n"
@@ -2517,6 +2680,7 @@ def timetable_reply(text: str, session_id: str) -> str:
         # (Nicholas's stranger pass, 2026-09-10).
         f"Exact live spots can change in the booking view: {TRIAL_LINK}\n\n" + trial_close(session_id)
     )
+    return overview_reply + topic_link_line("timetable", overview_reply)
 
 
 # Sensitive-topic detectors. Word-boundary safe on purpose — bare substring
@@ -2635,7 +2799,7 @@ def eating_disorder_handoff_reply() -> str:
 # answer (Nicholas 2026-06-09 Q4 regression).
 YOUTH_RE = re.compile(
     r"\b(?:kids?|child|children|sons?|daughters?|teens?|teenagers?|youngsters?|"
-    r"young\W?n\W?strong|youth|ytp|boys?|girls?|11 and 15|year[\s-]?olds?|"
+    r"young\W?n\W?strong|youth|ytp|ypt|boys?|girls?|11 and 15|year[\s-]?olds?|"
     r"(?:1[0-7]|[5-9])\s?yo|(?:1[0-7]|[5-9])\s?y[\.\/]?o)\b"
 )
 
@@ -3329,7 +3493,7 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
             "In Squad Ascent/core group sessions the coach gives cues, modifications, options, regressions/progressions and movement fixes as you go. SPT is for people who want bespoke programming, regular assessments and a four-person max, but the group sessions still get real coach attention.\n\n"
             "Do you want general routine, or that more personal SPT level of detail?"
         )
-    if any(phrase in clean for phrase in ["roughly what", "set me back", "what will it set me back", "how much", "cost", "price", "pricing"]):
+    if any(phrase in clean for phrase in PRICING_TRIGGER_PHRASES):
         # A cost question about the kids should get YTP pricing, not the adult
         # ladder (Nicholas-style miss: "two kids, 11 and 13 — cost for both?").
         # Also catches "how much is it for him?" carrying youth context forward
@@ -3343,17 +3507,23 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         # Exact prices get stated exactly — no "Roughly" hedge (Nicholas's
         # stranger pass, 2026-09-10). Squad Student belongs on the ladder, and
         # the booking link rides along so the person can act on the answer.
-        return (
+        # SPT 3x + Group and the Youth Training Program were missing from this
+        # ladder (Nick signoff meeting, 2026-09-14) even though both are
+        # approved KB pricing — add them so the full door list is complete.
+        base_reply = (
             "The main doors are:\n\n"
             "- Free trial: $0, one class to see if the Squad fits.\n"
             "- Squad Ascent: $51/wk for unlimited coached group classes.\n"
             "- Squad Student: $25/wk for verified students, same unlimited group classes.\n"
             "- 28-Day Kickstarter: $397 total for 28 days on the SPT trial path, with more coaching, assessment, programming and nutrition support.\n"
             "- SPT 2x + Group: $125/wk after that if you want ongoing semi-private coaching plus group classes.\n"
+            "- SPT 3x + Group: $175/wk for three semi-private sessions a week plus group classes.\n"
+            "- Youth Training Program: $25/wk per kid, ages 10–17, Saturday 9:15am at Camperdown.\n"
             "- Casual drop-in: $37 if you just need a one-off.\n\n"
             f"You can grab the free trial here: {TRIAL_LINK}\n\n"
             "If you’re not sure which bucket you’re in, the free trial is usually the least silly first step."
         )
+        return base_reply + topic_link_line("prices", base_reply)
     if any(phrase in clean for phrase in ["pay for the year", "pay for the whole year", "pay yearly", "pay annually", "annual payment", "annual membership", "yearly membership", "upfront for the year", "pay up front", "pay upfront", "year up front", "prepay", "pay in advance", "pay it all up front"]):
         return (
             "Group memberships (Squad Ascent at $51/wk, Squad Student at $25/wk) are weekly-rolling, so there’s no lock-in to prepay. You just stay on while it’s working for you.\n\n"
@@ -9972,7 +10142,7 @@ def build_lead_summary(session_id: str, latest_message: str = "") -> dict:
 # perSON", so "can I talk to a real person?" was filed as a YTP / parent
 # enquiry in the owner alert (sign-off dry run, 2026-09-10). Same collision
 # class as bus/busy and pt/prompt.
-_ROUTE_YOUTH_RE = re.compile(r"\b(?:kids?|child(?:ren)?|son|daughter|teens?|teenagers?|ytp|young'n'strong|youth)\b")
+_ROUTE_YOUTH_RE = re.compile(r"\b(?:kids?|child(?:ren)?|son|daughter|teens?|teenagers?|ytp|ypt|young'n'strong|youth)\b")
 _ROUTE_CASUAL_RE = re.compile(r"\b(?:casual|drop-?in|visiting)\b")
 _ROUTE_HUMAN_RE = re.compile(
     r"\b(?:human|nick|call me|talk to someone|speak to someone|real person|medical|rehab|pregnant|postnatal)\b"

@@ -149,8 +149,19 @@ def test_youth_price_carries_context():
 
 
 def test_adult_price_unaffected():
+    # A plain enquiry (no youth context) must still get the full door ladder,
+    # not the youth-only redirect. The ladder itself now legitimately lists
+    # every current tier, including the Youth Training Program line, per the
+    # 2026-09-14 Nick signoff-meeting fix — so this test now asserts multiple
+    # adult tiers are present alongside it, rather than asserting the youth
+    # tier is absent outright.
     r = _reply("how much does it cost?", "func-A2")
-    assert "$51/wk" in r and "$25/wk per kid" not in r
+    assert "$51/wk" in r  # Squad Ascent
+    assert "$125/wk" in r  # SPT 2x + Group
+    assert "$397" in r  # 28-Day Kickstarter
+    assert "$25/wk per kid" in r  # Youth Training Program, now on the ladder
+    # Must still be the full-ladder answer, not the youth-only redirect reply.
+    assert "No sibling discounts" not in r
 
 
 # ── B: timetable "run" collision ──────────────────────────────────────────────
