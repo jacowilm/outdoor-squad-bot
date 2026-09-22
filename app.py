@@ -2461,11 +2461,16 @@ def wa_strip_contact_asks(reply: str, session_id: str) -> str:
 
 def enforce_contact_and_handoff_progression(reply: str, session_id: str) -> str:
     """Avoid repeated lead-capture and handoff loops once details are known."""
-    if is_whatsapp_session(session_id) and not contact_already_captured(session_id):
+    if is_whatsapp_session(session_id):
         # The phone is known from turn one on WhatsApp, so the bot must stop
         # asking for it even though the person never typed anything. Surgical
         # strip, not the wholesale replacement (11 Sep 2026 diff, finding #3).
-        return wa_strip_contact_asks(reply, session_id)
+        # Applied whether or not details were typed: once "My name is Pépé,
+        # 0412..." is in the thread, a "what's your first name?" draft used to
+        # skip this strip and go out anyway (handover test, 14 Sep 2026).
+        reply = wa_strip_contact_asks(reply, session_id)
+        if not contact_already_captured(session_id):
+            return reply
     if not contact_already_captured(session_id):
         return remove_extra_questions(reply)
 
@@ -4589,32 +4594,88 @@ def notify_human_request_if_needed(
     return True
 
 
+_WA_PROFILE_NAME_KEEP_RE = re.compile(r"[^\w\s'’.\-]|[\d_]", re.UNICODE)
+
+
+def sanitize_wa_profile_name(raw) -> str | None:
+    """Reduce Twilio's ProfileName to something safe to store as a name.
+
+    The value is attacker-set text: emoji, markup, template braces, newlines
+    and URLs all arrive verbatim. Letters (any script), spaces, apostrophes,
+    hyphens and periods survive; everything else is dropped, whitespace is
+    collapsed and the result is capped at 60 characters. None when nothing
+    name-like is left ("🏋🏋🏋", a URL), so the fallback simply does not
+    apply. It is still never fed to the model: see whatsapp_channel_prompt.
+    """
+    text = str(raw or "")
+    if not text.strip():
+        return None
+    # A URL is never a person's name; strip it whole rather than keeping
+    # "https evil example" as three plausible-looking words.
+    text = re.sub(r"(?i)\b(?:https?://|www\.)\S+", " ", text)
+    text = re.sub(r"<[^>]*>", " ", text)
+    text = _WA_PROFILE_NAME_KEEP_RE.sub(" ", text)
+    # A trailing period is an initial ("Louise M."); leading punctuation and
+    # dangling hyphens/apostrophes are noise.
+    text = re.sub(r"\s+", " ", text).strip().lstrip("'’.-").rstrip("'’-").strip()
+    if not text or not any(ch.isalpha() for ch in text):
+        return None
+    return text[:60].strip()
+
+
+def wa_phone_e164(raw) -> str | None:
+    """A typed AU mobile in dialable E.164, so the row, the alert's tel: link
+    and the CRM all carry one and the same number."""
+    digits = re.sub(r"\D", "", str(raw or ""))
+    if not digits:
+        return None
+    if digits.startswith("0"):
+        digits = "61" + digits[1:]
+    return f"+{digits}"
+
+
 def annotate_lead_channel(lead_info: dict, session_id: str) -> dict:
     """Owner alerts and lead rows must say which channel they came from and,
-    on WhatsApp, carry the number the person is writing from even when they
-    never typed it (11 Sep 2026 diff, findings #3 and #18). Nick reads the
-    alert on his phone and needs to know to answer in the WhatsApp thread
-    inside the 24 h window, not to ring a website visitor."""
+    on WhatsApp, resolve ONE identity that the row, the alert and the CRM all
+    share (11 Sep 2026 diff, findings #3 and #18; Jacobo's handover test of
+    14 Sep 2026).
+
+    Rules, each applied independently:
+    - a name typed in the conversation wins; otherwise the sanitised WhatsApp
+      display name is the lead's name, labelled unverified in the alert;
+    - a phone typed in the conversation wins; otherwise the number they are
+      writing from is the phone. The thread number is kept beside it as
+      wa_sender_phone (alert-only) because that is where Nick must reply
+      inside the 24 h window, whatever number they asked to be rung on.
+    The WhatsApp TRANSPORT is untouched: every outbound still goes to the
+    session's sender digits, never to lead_info["phone"]."""
     if is_whatsapp_session(session_id):
         lead_info["channel"] = "whatsapp"
         sender = wa_sender_e164(session_id)
         if sender:
-            typed = re.sub(r"\D", "", str(lead_info.get("phone") or ""))
-            # A second, DIFFERENT number they typed ("ring my partner on
-            # 0412...") is worth keeping, but the callable one is always the
-            # thread itself. Compared on the last 9 digits so 0412 345 678 and
-            # +61412345678 are recognised as the same phone.
+            typed_raw = str(lead_info.get("phone") or "")
+            typed = re.sub(r"\D", "", typed_raw)
+            # Compared on the last 9 digits so 0412 345 678 and +61412345678
+            # are recognised as the same phone.
             if typed and typed[-9:] != sender[-9:]:
-                lead_info["phone_typed"] = lead_info["phone"]
-            # No " (the WhatsApp they are messaging from)" suffix any more: it
-            # broke tel: links and the E.164 the CRM expects.
-            lead_info["phone"] = sender
+                lead_info["phone_typed"] = typed_raw
+                lead_info["phone"] = wa_phone_e164(typed_raw) or sender
+                lead_info["wa_sender_phone"] = sender
+            else:
+                lead_info.pop("phone_typed", None)
+                lead_info["phone"] = sender
         profile_name = get_wa_setting(f"wa_profile_name:{session_id}")
         if profile_name:
-            # Display name only, never the lead's name: WhatsApp lets anyone
-            # set it to anything, so it is shown to Nick marked unverified and
-            # is kept out of the lead row, the prompt and event metadata.
+            # Shown to Nick marked unverified, and kept out of the prompt and
+            # the events table (only the whitelisted row columns get there).
             lead_info["wa_profile_name"] = profile_name
+            fallback = sanitize_wa_profile_name(profile_name)
+            current = str(lead_info.get("name") or "").strip()
+            if fallback and (not current or current == fallback):
+                # Also re-labels a stored row whose name came from the profile
+                # earlier, so the alert never presents it as verified.
+                lead_info["name"] = fallback
+                lead_info["name_source"] = "whatsapp_profile"
     else:
         lead_info.setdefault("channel", "website")
     return lead_info
@@ -5932,15 +5993,24 @@ def format_lead_summary_html(lead_info: dict) -> str:
         "Phone",
         f'<a href="tel:{e(phone)}" style="color:{REALTIQ_NAVY};text-decoration:none;">{e(phone)}</a>' if phone else "not provided",
     ))
-    typed_number = lead_info.get("phone_typed")
-    if typed_number:
+    sender_phone = str(lead_info.get("wa_sender_phone") or "").strip()
+    if is_whatsapp and sender_phone and sender_phone != phone:
+        # They asked to be rung on a typed number, but the reply window is on
+        # the thread they are writing from.
         inner.append(_email_row(
-            "Typed number",
-            f'<a href="tel:{e(typed_number)}" style="color:{REALTIQ_NAVY};text-decoration:none;">{e(typed_number)}</a>',
+            "WhatsApp thread",
+            f'<a href="tel:{e(sender_phone)}" style="color:{REALTIQ_NAVY};text-decoration:none;">{e(sender_phone)}</a>'
+            ' <span style="color:#94a3b8;">(the number they are messaging from)</span>',
         ))
     profile_name = str(lead_info.get("wa_profile_name") or "").strip()
-    if is_whatsapp and profile_name:
-        # Labelled, never presented as the name: the sender picks this value.
+    from_profile = lead_info.get("name_source") == "whatsapp_profile"
+    if is_whatsapp and from_profile:
+        inner.append(_email_row(
+            "Name",
+            f'{e(lead_info.get("name"))} <span style="color:#94a3b8;">(their WhatsApp display name, not verified)</span>',
+        ))
+    elif is_whatsapp and profile_name:
+        # A typed name won; the display name is still shown, labelled.
         inner.append(_email_row(
             "WhatsApp name",
             f'{e(profile_name)} <span style="color:#94a3b8;">(their WhatsApp display name, not verified)</span>',
@@ -8622,8 +8692,13 @@ def _momence_tags_for_source(source: str):
     an unrelated pre-existing (possibly paying) customer into lead nurture."""
     generic_label = ("OUTDOOR_SQUAD_MOMENCE_WA_TAG_ID" if source == "whatsapp"
                      else "OUTDOOR_SQUAD_MOMENCE_WEB_TAG_ID")
-    generic_tag, generic_err = _configured_momence_tag_id(
-        MOMENCE_WA_TAG_ID if source == "whatsapp" else MOMENCE_WEB_TAG_ID, label=generic_label)
+    generic_raw = MOMENCE_WA_TAG_ID if source == "whatsapp" else MOMENCE_WEB_TAG_ID
+    if source == "whatsapp" and not generic_raw.strip() and MOMENCE_WEB_TAG_ID.strip():
+        # There is ONE generic Lead tag; a WhatsApp lead must not miss it just
+        # because only the website variable was set. A malformed WA value is
+        # still a config error above, never silently swapped for the web one.
+        generic_raw, generic_label = MOMENCE_WEB_TAG_ID, "OUTDOOR_SQUAD_MOMENCE_WEB_TAG_ID"
+    generic_tag, generic_err = _configured_momence_tag_id(generic_raw, label=generic_label)
     badge_tag, badge_err = (None, None)
     if source == "whatsapp":
         badge_tag, badge_err = _configured_momence_tag_id(
@@ -10065,7 +10140,8 @@ WA_BARE_NAME_STOPLIST = {
     "mornings", "morning", "evenings", "evening", "weekends", "weekend",
     "weekdays", "arvo", "tonight", "tomorrow",
 }
-_WA_BARE_NAME_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z'\-]{1,19}$")
+# Letters in any script ("Pépé", "Zoë"), apostrophes and hyphens; 2 to 20 chars.
+_WA_BARE_NAME_TOKEN_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|['’\-][^\W\d_]){1,19}$")
 
 
 def _wa_bare_name_from(message: str, asked_text: str) -> str | None:
@@ -10124,36 +10200,110 @@ def wa_name_from_history(session_id: str) -> str | None:
     return found
 
 
+# A name token is letters in ANY script plus apostrophes and hyphens: "Pépé",
+# "Zoë", "Anne-Marie", "O'Brien". The old [A-Za-z] class threw the accented
+# letters away, which is how "My name is Pépé" was saved as a null name and
+# then asked for a first name again (Jacobo's handover test, 14 Sep 2026).
+_NAME_TOKEN = r"[^\W\d_](?:[^\W\d_]|['’\-][^\W\d_])+"
+_EXPLICIT_NAME_RE = re.compile(
+    r"\b(?:my name is|name is|this is|call me|i am|i'm|im|it is|it's|its)\s+"
+    rf"({_NAME_TOKEN})(?:\s+({_NAME_TOKEN}))?",
+    flags=re.IGNORECASE,
+)
+# One token of a name-only line; a single letter is allowed here because an
+# initial ("Louise M") is how people sign a contact block.
+_NAME_LINE_TOKEN_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|['’\-][^\W\d_])*\.?$")
+# Acknowledgements and contact vocabulary that share a line with a number or
+# an address but are never a name ("Perfect / 0412...", "Mobile below").
+_CONTACT_BLOCK_STOPLIST = {
+    "me", "you", "us", "it", "i", "we", "they", "lovely", "brilliant",
+    "excellent", "correct", "right", "wrong", "there", "number", "phone",
+    "mobile", "details", "contact", "info", "name", "address", "below",
+    "above", "mine", "same", "sounds", "perfect", "sweet", "legend",
+}
+
+
+def _title_name(parts: list[str]) -> str:
+    # str.title() capitalises after every apostrophe ("O'brien" -> "O'Brien"
+    # is right, but "d'angelo" -> "D'Angelo" too), which matches how these
+    # names are written; it is Unicode-aware so "pépé" -> "Pépé".
+    return " ".join(part.title() for part in parts)
+
+
+def _name_from_contact_block(text: str) -> str | None:
+    """"Louise M / 0412 ... / louise@..." typed as one block, no trigger phrase.
+
+    Only considered for text that carries contact details, and only a segment
+    (a line, or a comma-separated part) made purely of one to three name
+    tokens counts: fillers, suburbs, times and the other classifier vocab
+    are refused, so "Thanks mate / 0412..." gives no name. The second live
+    repro on 14 Sep 2026 was exactly this shape and produced a null name."""
+    for segment in re.split(r"[\r\n,;|/]+", text):
+        tokens = segment.strip().split()
+        if not 1 <= len(tokens) <= 3:
+            continue
+        ok = True
+        for token in tokens:
+            lowered = token.lower().rstrip(".")
+            if (not _NAME_LINE_TOKEN_RE.match(token)
+                    or not lowered
+                    or lowered in NON_NAME_WORDS
+                    or lowered in WA_BARE_NAME_STOPLIST
+                    or lowered in _CONTACT_BLOCK_STOPLIST
+                    or lowered in _CLOSING_VOCAB
+                    or any(lowered in suburbs for suburbs in SUBURB_TO_VENUE.values())
+                    or (lowered.endswith("s") and lowered[:-1] in NON_NAME_WORDS)
+                    or is_location_question(lowered) or is_trial_question(lowered)
+                    # A single letter is an initial ("Louise M"); longer
+                    # tokens still go through the vague-answer classifier.
+                    or (len(lowered) > 1 and is_vague_message(lowered))):
+                ok = False
+                break
+        if ok and any(len(t.rstrip(".")) >= 2 for t in tokens):
+            # Keep an initial's period ("Louise M."), title-case the rest.
+            return " ".join(
+                t.upper() if len(t.rstrip(".")) == 1 else t.title() for t in tokens
+            )
+    return None
+
+
 def extract_contact_name(message: str, session_id: str = "default") -> str | None:
-    """Best-effort name extraction when a visitor drops contact details."""
-    history_with_contact = "\n".join(
+    """Best-effort name extraction when a visitor drops contact details.
+
+    Only names the person TYPED: the WhatsApp ProfileName is resolved
+    separately in annotate_lead_channel, so this value is safe for the prompt.
+    History is read newest first, so a later correction ("sorry, it's
+    Sarah") wins over the earlier attempt."""
+    history_with_contact = [
         content
-        for m in load_conversation(session_id)
+        for m in reversed(load_conversation(session_id))
         if m.get("role") == "user"
         for content in [m.get("content", "")]
         if has_contact_details(content)
-    )
-    explicit_source = "\n".join(part for part in [message, history_with_contact] if part).strip()
-    contact_stripped = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', explicit_source)
-    contact_stripped = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', contact_stripped)
-    # Try EACH "i'm X" / "my name is X" trigger, not just the first — "I'm keen,
-    # I'm Sarah, 0412..." must still capture Sarah rather than aborting on the
-    # filler "keen" after the first "I'm" (2026-07-02 QA).
-    for explicit_name in re.finditer(
-        r"\b(?:my name is|name is|this is|call me|i am|i'm|im|it is|it's|its)\s+([A-Za-z][A-Za-z'-]{1,})(?:\s+([A-Za-z][A-Za-z'-]{1,}))?",
-        contact_stripped,
-        flags=re.IGNORECASE,
-    ):
-        # If the first word right after the trigger isn't a plausible name, skip
-        # this trigger and keep looking at later ones.
-        if (explicit_name.group(1) or "").lower() in NON_NAME_WORDS:
+    ]
+    for source in [message] + history_with_contact:
+        if not source:
             continue
-        captured = [
-            part for part in explicit_name.groups()
-            if part and part.lower() not in NON_NAME_WORDS
-        ]
-        if captured:
-            return " ".join(captured).title()
+        contact_stripped = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', ' ', source)
+        contact_stripped = re.sub(r'(?:04\d{2}[\s-]?\d{3}[\s-]?\d{3}|\+?61\s?4\d{2}[\s-]?\d{3}[\s-]?\d{3})', ' ', contact_stripped)
+        # Try EACH "i'm X" / "my name is X" trigger, not just the first — "I'm keen,
+        # I'm Sarah, 0412..." must still capture Sarah rather than aborting on the
+        # filler "keen" after the first "I'm" (2026-07-02 QA).
+        for explicit_name in _EXPLICIT_NAME_RE.finditer(contact_stripped):
+            # If the first word right after the trigger isn't a plausible name, skip
+            # this trigger and keep looking at later ones.
+            if (explicit_name.group(1) or "").lower() in NON_NAME_WORDS:
+                continue
+            captured = [
+                part for part in explicit_name.groups()
+                if part and part.lower() not in NON_NAME_WORDS
+            ]
+            if captured:
+                return _title_name(captured)
+        if has_contact_details(source):
+            block_name = _name_from_contact_block(contact_stripped)
+            if block_name:
+                return block_name
     # On WhatsApp a name also arrives as a bare "Sarah" answering the bot's
     # own "what's your first name?" ask, with no trigger phrase to match
     # (11 Sep 2026 diff, finding #3). One hook here gives last_known_name,
@@ -10394,23 +10544,34 @@ def format_lead_summary(lead_info: dict) -> str:
     # phone, so it is labelled rather than presented as the customer's name
     # (11 Sep 2026 diff, finding #3).
     profile_name = str(lead_info.get("wa_profile_name") or "").strip()
+    from_profile = lead_info.get("name_source") == "whatsapp_profile"
+    name_line = (
+        f"Name: {lead_info.get('name')} (their WhatsApp display name, not verified)\n"
+        if from_profile and lead_info.get("name")
+        else f"Name: {lead_info.get('name') or 'unknown'}\n"
+    )
+    # Shown separately only when a TYPED name won over it; when it IS the
+    # name, the label above already says so.
     display_name_line = (
         f"WhatsApp name: {profile_name} (their WhatsApp display name, not verified)\n"
-        if channel == "whatsapp" and profile_name else ""
+        if channel == "whatsapp" and profile_name and not from_profile else ""
     )
-    typed_number_line = (
-        f"Typed number: {lead_info.get('phone_typed')}\n"
-        if lead_info.get("phone_typed") else ""
+    # A typed number is the phone; the thread they are writing from is where
+    # Nick has to answer, so it stays visible beside it.
+    sender_phone = str(lead_info.get("wa_sender_phone") or "").strip()
+    thread_line = (
+        f"WhatsApp thread: {sender_phone} (the number they are messaging from)\n"
+        if channel == "whatsapp" and sender_phone and sender_phone != lead_info.get("phone") else ""
     )
     return (
         f"{heading}\n\n"
         f"Channel: {channel_label}\n"
         f"{reply_hint}"
-        f"Name: {lead_info.get('name') or 'unknown'}\n"
+        f"{name_line}"
         f"Email: {lead_info.get('email') or 'not provided'}\n"
         f"Phone: {lead_info.get('phone') or 'not provided'}\n"
+        f"{thread_line}"
         f"{display_name_line}"
-        f"{typed_number_line}"
         f"Route: {lead_info.get('route') or 'unknown'}\n"
         f"Location preference: {lead_info.get('location_preference') or 'unknown'}\n"
         f"Time preference: {lead_info.get('time_preference') or 'unknown'}\n"
@@ -10737,8 +10898,15 @@ def merge_lead(existing: dict, incoming: dict) -> dict:
     lead. To avoid one person's data silently clobbering the other's, the
     operational fields are only OVERWRITTEN when this is the SAME conversation
     (same session_id) refreshing its own lead; on a cross-session contact match
-    everything is fill-only (existing values are preserved). `name` is always
-    fill-only. 2026-07-02 audit findings #4 (name) + #4-followup (all fields).
+    everything is fill-only (existing values are preserved). 2026-07-02 audit
+    findings #4 (name) + #4-followup (all fields).
+
+    Within the SAME conversation the identity fields follow the person's
+    latest word too: the incoming name/phone/email are always resolved from
+    the whole thread with the newest correction winning, so "sorry, it's
+    Sarah" and "ring me on 0498..." must replace what was stored, not sit
+    behind it (Jacobo's handover test, 14 Sep 2026). Across sessions `name`
+    stays fill-only.
     """
     merged = dict(existing)
     same_session = bool(
@@ -10747,6 +10915,10 @@ def merge_lead(existing: dict, incoming: dict) -> dict:
     )
     overwrite_fields = {
         "session_id",
+        "name",
+        "phone",
+        "phone_typed",
+        "email",
         "handoff_summary",
         "route",
         "location_preference",
@@ -12138,7 +12310,10 @@ ADMIN_HTML = """
             // link Nick can also read aloud is worth the two characters.
             const tel = function(n) { return encodeURIComponent(n).replace(/%2B/g, '+'); };
             if (lead.phone) links.push('<a href="tel:' + tel(lead.phone) + '">' + esc(lead.phone) + '</a>');
-            if (lead.phone_typed) links.push('<a href="tel:' + tel(lead.phone_typed) + '">' + esc(lead.phone_typed) + '</a>');
+            // phone_typed is the number AS TYPED; since 14 Sep 2026 the typed
+            // number is also the phone (E.164), so only list it when it differs.
+            const digits = function(n) { return String(n || '').replace(/\D/g, '').slice(-9); };
+            if (lead.phone_typed && digits(lead.phone_typed) !== digits(lead.phone)) links.push('<a href="tel:' + tel(lead.phone_typed) + '">' + esc(lead.phone_typed) + '</a>');
             if (lead.email) links.push('<a href="mailto:' + encodeURIComponent(lead.email) + '">' + esc(lead.email) + '</a>');
             const contactCell = links.length ? links.join('<br>') : '<span class="dim">–</span>';
             const channel = lead.channel || (String(lead.session_id || '').indexOf('wa-') === 0 ? 'whatsapp' : 'website');

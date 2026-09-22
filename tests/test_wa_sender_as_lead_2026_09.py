@@ -290,13 +290,17 @@ def test_typed_email_keeps_the_sender_as_the_phone_and_dedupes_the_alert(wa):
     assert len(wa.alerts) == 1
 
 
-def test_a_typed_second_number_is_kept_beside_the_sender(wa):
+def test_a_typed_second_number_becomes_the_phone_and_the_sender_is_kept(wa):
+    # Rule since 14 Sep 2026 (Jacobo's handover test): a number typed in the
+    # conversation IS the phone; the thread number stays beside it for Nick.
     post(wa, "ring my partner on 0412 345 678 instead")
     rows = leads()
     assert len(rows) == 1
-    assert rows[0]["phone"] == SENDER_E164
-    assert "412345678" in "".join(ch for ch in rows[0]["phone_typed"] if ch.isdigit())
-    assert wa.alerts[0]["phone_typed"] == rows[0]["phone_typed"]
+    assert rows[0]["phone"] == "+61412345678"
+    assert rows[0]["phone_typed"] == "0412 345 678"
+    assert "wa_sender_phone" not in rows[0]
+    assert wa.alerts[0]["phone"] == "+61412345678"
+    assert wa.alerts[0]["wa_sender_phone"] == SENDER_E164
 
 
 def test_typing_the_same_number_you_are_writing_from_is_not_a_second_number(wa):
@@ -339,13 +343,18 @@ def test_profile_name_is_stored_once_and_shown_as_unverified(wa, monkeypatch):
     lead = dict(leads()[0])
     app.annotate_lead_channel(lead, sid_for())
     text = app.format_lead_summary(lead)
-    assert "WhatsApp name: Saz" in text and "not verified" in text
+    assert "Name: Saz (their WhatsApp display name, not verified)" in text
     html = app.format_lead_summary_html(lead)
     assert "not verified" in html and f'tel:{SENDER_E164}' in html
     assert "/admin#whatsapp" in html
 
-    # The display name is never the lead's name and never event metadata.
-    assert leads()[0].get("name") is None
+    # Rule since 14 Sep 2026 (Jacobo's handover test): with no typed name the
+    # SANITISED display name is the lead's name, labelled unverified above and
+    # kept out of the prompt. The raw value (emoji and all) stays alert-only
+    # and never becomes event metadata.
+    assert leads()[0].get("name") == "Saz"
+    assert "🏋" not in json.dumps(leads())
+    assert "Saz 🏋" not in app.whatsapp_channel_prompt(sid_for())
     captured = events("lead_captured")
     assert captured and all("wa_profile_name" not in row for row in captured)
 
