@@ -218,5 +218,9 @@
   {
     "date": "2026-09-13",
     "line": "WhatsApp contacts can now receive a separate source label once configured, including returning contacts. Existing Lead labels are preserved, and failed label assignments can be retried without treating existing customers as new leads."
+  },
+  {
+    "date": "2026-09-22",
+    "line": "Verbose notification mode: a dial on the dashboard's Overview tab. Standard (the default) is exactly what you had: lead and human-request alerts plus the Monday report. Verbose adds an email for every new conversation (website and WhatsApp, test sessions left out), an email when a WhatsApp message is refused or not delivered, and a daily digest every evening; each of the three can be turned off on its own. Alerts are capped and never repeated for the same conversation. Missed calls are not part of this: that is the separate missed-call add-on. The dashboard can also mark the public WhatsApp buttons as live so the Monday report stops saying the number is not publicly reachable."
   }
 ]

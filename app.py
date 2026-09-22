@@ -4788,6 +4788,11 @@ async def chat(request: Request):
         trusted_widget=trusted_widget,
         internal_qa=internal_qa,
     )
+    # Verbose mode: the same trust bar as the owner alert. An unsigned or
+    # unverified caller is exactly the crawler noise that inflated the widget
+    # counts in July, and internal QA is never Nick's business.
+    if is_new_conversation and trusted_widget and not internal_qa:
+        notify_new_conversation_async(session_id, message, "website")
 
     if should_use_local_tone_handler(message, session_id):
         reply = demo_fallback_reply(message, session_id=session_id)
@@ -5847,10 +5852,11 @@ def _html_escape(value) -> str:
     )
 
 
-def format_report_html(stats: dict) -> str:
+def format_report_html(stats: dict, kind: str = "weekly") -> str:
     e = _html_escape
     days = stats["window_days"]
-    inner = [_email_h1(f"Weekly report"),
+    daily = kind == "daily"
+    inner = [_email_h1("Daily digest" if daily else "Weekly report"),
              f'<div style="font-size:13px;color:#64748b;margin-bottom:2px;">Last {days} days &middot; The Outdoor Squad website bot</div>']
 
     inner.append(_email_section("The funnel"))
@@ -5961,9 +5967,10 @@ def format_report_html(stats: dict) -> str:
     inner.append(_email_button("Open the live dashboard", f"{PUBLIC_BASE_URL}/admin"))
 
     return _email_shell(
-        "Weekly report",
+        "Daily digest" if daily else "Weekly report",
         "".join(inner),
-        "Sent automatically every Monday. Full transcripts live in the dashboard.",
+        "Sent automatically every evening while Verbose mode is on. Turn it down in the dashboard, Overview tab."
+        if daily else "Sent automatically every Monday. Full transcripts live in the dashboard.",
     )
 
 
@@ -6181,6 +6188,357 @@ def _weekly_report_loop() -> None:
 def _start_weekly_report_scheduler() -> None:
     if REPORT_EMAIL_TO and LEAD_SUMMARY_RESEND_API_KEY:
         threading.Thread(target=_weekly_report_loop, daemon=True, name="weekly-report").start()
+
+
+# ── Verbose notification mode (Nicholas, 22 Sep 2026) ────────────────────────
+# Nick's precondition for switching the published number: "every new
+# conversation, every missed call, every failed send, a daily digest, then a
+# dial I can turn down". This is the dial, over the signals the bot already
+# produces. Missed calls are NOT here: that is the separate missed-call
+# text-back add-on and there is no missed-call signal in this service yet.
+# Standard (the default, nothing selected) is exactly the pre-existing
+# behaviour: lead and human-request alerts plus the Monday report.
+NOTIFY_SIGNALS = ("conversations", "failed_sends", "daily_digest")
+NOTIFY_SETTING_KEY = "notify_verbose"
+DIGEST_HOUR = int(os.environ.get("OUTDOOR_SQUAD_DIGEST_HOUR", "18"))  # local Sydney hour
+# Storm control. A crawler storm or a Twilio outage must never turn into a
+# hundred emails on Nick's phone: extra alerts inside the window are logged
+# and folded into the digest, never sent.
+VERBOSE_ALERTS_MAX_PER_HOUR = int(os.environ.get("OUTDOOR_SQUAD_VERBOSE_ALERTS_MAX_PER_HOUR", "20"))
+VERBOSE_FAILED_SEND_DEDUPE_SECONDS = 3600
+VERBOSE_CONVERSATION_DEDUPE_SECONDS = 24 * 3600
+_VERBOSE_SEEN_CAP = 2000
+
+
+def verbose_signals() -> frozenset:
+    """The enabled Verbose signals, from the settings store (short-TTL cached)."""
+    raw = _cached_wa_setting(NOTIFY_SETTING_KEY, "")
+    return frozenset(s for s in (p.strip() for p in raw.split(",")) if s in NOTIFY_SIGNALS)
+
+
+def verbose_signal_enabled(signal: str) -> bool:
+    return signal in verbose_signals()
+
+
+def notification_settings_payload() -> dict:
+    signals = verbose_signals()
+    return {
+        "level": "verbose" if signals else "standard",
+        "signals": {name: (name in signals) for name in NOTIFY_SIGNALS},
+        "digest_hour": DIGEST_HOUR,
+        "entry_points_live": get_wa_setting("entry_points_live", "0") == "1",
+        "email_configured": lead_summary_email_configured(),
+    }
+
+
+def set_verbose_signals(signals) -> bool:
+    """Persist the dial. Order is canonical so the stored value is stable."""
+    wanted = [name for name in NOTIFY_SIGNALS if name in set(signals or ())]
+    return set_wa_setting(NOTIFY_SETTING_KEY, ",".join(wanted))
+
+
+_verbose_alert_lock = threading.Lock()
+_verbose_alert_times: list = []          # send timestamps inside the last hour
+_verbose_alert_seen: dict[str, float] = {}  # dedupe key -> last send time
+
+
+def _verbose_alert_admit(dedupe_key: str, dedupe_seconds: int) -> str:
+    """"ok", "duplicate" or "rate_limited". Bounded memory: the seen map is
+    pruned on every call and hard-capped, the hourly list is trimmed."""
+    now = time.time()
+    with _verbose_alert_lock:
+        for key, ts in list(_verbose_alert_seen.items()):
+            if now - ts > VERBOSE_CONVERSATION_DEDUPE_SECONDS:
+                _verbose_alert_seen.pop(key, None)
+        if len(_verbose_alert_seen) > _VERBOSE_SEEN_CAP:
+            for key in sorted(_verbose_alert_seen, key=_verbose_alert_seen.get)[: len(_verbose_alert_seen) - _VERBOSE_SEEN_CAP]:
+                _verbose_alert_seen.pop(key, None)
+        last = _verbose_alert_seen.get(dedupe_key)
+        if last is not None and now - last < dedupe_seconds:
+            return "duplicate"
+        _verbose_alert_times[:] = [t for t in _verbose_alert_times if now - t < 3600]
+        if len(_verbose_alert_times) >= VERBOSE_ALERTS_MAX_PER_HOUR:
+            return "rate_limited"
+        _verbose_alert_times.append(now)
+        _verbose_alert_seen[dedupe_key] = now
+        return "ok"
+
+
+def _verbose_recipients() -> list:
+    return [r.strip() for r in LEAD_SUMMARY_EMAIL_TO.split(",") if r.strip()]
+
+
+def send_verbose_alert(signal: str, session_id: str, subject: str, lines: list,
+                       *, dedupe_key: str, dedupe_seconds: int, footer: str) -> bool:
+    """One Verbose email on the existing owner-alert channel (Resend).
+
+    Never raises: this runs in a daemon thread and a delivery problem is a
+    log line, not a customer-facing error. Recipients are only ever the
+    configured owner address, never anything taken from a request.
+    """
+    try:
+        if not verbose_signal_enabled(signal):
+            return False
+        if session_id in report_excluded_session_ids():
+            log_event("verbose_alert_skipped", session_id=session_id, signal=signal,
+                      reason="excluded_session")
+            return False
+        if not lead_summary_email_configured():
+            log_event("verbose_alert_skipped", session_id=session_id, signal=signal,
+                      reason="email_not_configured")
+            return False
+        verdict = _verbose_alert_admit(dedupe_key, dedupe_seconds)
+        if verdict != "ok":
+            log_event("verbose_alert_skipped", session_id=session_id, signal=signal, reason=verdict)
+            return False
+        e = _html_escape
+        text = "\n".join(lines) + f"\n\nDashboard: {PUBLIC_BASE_URL}/admin\n{footer}\n"
+        rows = "".join(
+            f'<div style="font-size:14px;color:#334155;line-height:1.6;">{e(line)}</div>' for line in lines
+        )
+        html = _email_shell(
+            "Verbose notification",
+            _email_h1(subject) + rows + _email_button("Open the dashboard", f"{PUBLIC_BASE_URL}/admin"),
+            e(footer) + " Turn Verbose mode down in the dashboard, Overview tab.",
+        )
+        sent = send_email_resend(subject, text, _verbose_recipients(), html=html)
+        log_event("verbose_alert_sent" if sent else "verbose_alert_error",
+                  session_id=session_id, signal=signal, channels="email" if sent else None)
+        return bool(sent)
+    except Exception as exc:
+        log_event("verbose_alert_error", session_id=session_id, signal=signal, error=str(exc)[:120])
+        return False
+
+
+def notify_new_conversation(session_id: str, message: str, channel: str, episode=None) -> bool:
+    label = "WhatsApp" if channel == "whatsapp" else "Website"
+    ekey = wa_episode_key(session_id) if channel == "whatsapp" else session_id
+    subject = f"New {label} conversation started"
+    if episode and episode > 1:
+        subject = f"Returning {label} customer started a new conversation"
+    thread = (
+        f"WhatsApp thread: {re.sub(r'^wa-', '', session_id)}"
+        if channel == "whatsapp" else f"Session: {session_id}"
+    )
+    lines = [
+        f"Channel: {label}",
+        thread,
+        f"First message: {message}",
+        f"Started: {now_iso()}",
+        "Robo-Nick is handling it. You will get the usual alert if they leave details or ask for you.",
+    ]
+    return send_verbose_alert(
+        "conversations", session_id, subject, lines,
+        dedupe_key=f"conv:{ekey}", dedupe_seconds=VERBOSE_CONVERSATION_DEDUPE_SECONDS,
+        footer="Sent because Verbose mode is on and a new conversation started.",
+    )
+
+
+def notify_new_conversation_async(session_id: str, message: str, channel: str, episode=None) -> None:
+    if not verbose_signal_enabled("conversations"):
+        return
+    threading.Thread(
+        target=notify_new_conversation, args=(session_id, message, channel, episode), daemon=True,
+    ).start()
+
+
+# Two sources, two vocabularies: the send itself (Twilio said no, or said
+# nothing) and the delivery receipt that comes back later (WhatsApp could not
+# deliver what Twilio had accepted).
+_WA_FAILED_SEND_WORDING = {
+    "send": {
+        "failed": "Twilio refused the message",
+        "partial": "Twilio refused part of a split reply",
+        "unknown": "Twilio never confirmed the message went out",
+    },
+    "receipt": {
+        "failed": "WhatsApp reported it as failed",
+        "undelivered": "WhatsApp reported it as not delivered",
+    },
+}
+
+
+def notify_failed_send(session_id: str, kind: str, status: str, error_code: str, source: str) -> bool:
+    kind_label = {"intro": "the introduction", "reply": "a reply", "nudge": "the follow-up nudge",
+                  "manual": "your manual reply"}.get(str(kind or ""), "a message")
+    what = _WA_FAILED_SEND_WORDING.get(source, {}).get(status, f"delivery status {status}")
+    lines = [
+        f"Channel: WhatsApp",
+        f"WhatsApp thread: {re.sub(r'^wa-', '', session_id)}",
+        f"What failed: {kind_label}, {what}.",
+        f"Error code: {error_code or 'none given'}",
+        f"Reported by: {'delivery receipt' if source == 'receipt' else 'the send itself'}",
+        f"When: {now_iso()}",
+        "The thread shows it in red on the dashboard. Further failures in this thread within the hour are not emailed again.",
+    ]
+    return send_verbose_alert(
+        "failed_sends", session_id, "WhatsApp message not delivered", lines,
+        dedupe_key=f"failed:{session_id}", dedupe_seconds=VERBOSE_FAILED_SEND_DEDUPE_SECONDS,
+        footer="Sent because Verbose mode is on and a WhatsApp send failed.",
+    )
+
+
+def notify_failed_send_async(session_id: str, kind: str, status: str, error_code: str, source: str) -> None:
+    if not verbose_signal_enabled("failed_sends"):
+        return
+    threading.Thread(
+        target=notify_failed_send, args=(session_id, kind, status, error_code, source), daemon=True,
+    ).start()
+
+
+def digest_subject() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo(REPORT_TIMEZONE)).strftime("%d %b %Y")
+    except Exception:
+        today = datetime.now().strftime("%d %b %Y")
+    return f"Robo-Nick daily digest, {today}"
+
+
+def _digest_recipients() -> list:
+    return [r.strip() for r in (REPORT_EMAIL_TO or LEAD_SUMMARY_EMAIL_TO).split(",") if r.strip()]
+
+
+def send_daily_digest(recipients: list | None = None) -> dict:
+    """The last 24 hours, from the same numbers engine as the Monday report.
+    Email only, never the phone digest: Verbose is an email mode."""
+    stats = build_report_stats(days=1)
+    body = format_report_text(stats)
+    to_list = recipients if recipients is not None else _digest_recipients()
+    sent_email = False
+    errors = []
+    try:
+        sent_email = send_email_resend(digest_subject(), body, to_list, html=format_report_html(stats, kind="daily"))
+    except Exception as exc:
+        errors.append(f"email:{str(exc)[:120]}")
+    log_event(
+        "daily_digest_sent" if sent_email else "daily_digest_error",
+        session_id="system",
+        email=str(sent_email),
+        error="; ".join(errors)[:240] if errors else None,
+    )
+    return {"stats": stats, "sent_email": sent_email, "errors": errors}
+
+
+@app.get("/api/reports/daily")
+async def daily_digest_endpoint(send: int = 0, _: str = Depends(require_admin)):
+    """Dry-run by default (nothing leaves the server); ?send=1 emails it to the
+    configured owner address only. No recipient override: Verbose mail goes
+    to the configured address and nowhere else."""
+    if not send:
+        stats = build_report_stats(days=1)
+        return JSONResponse({"stats": stats, "report_text": format_report_text(stats), "sent_email": False})
+    result = send_daily_digest()
+    result["report_text"] = format_report_text(result["stats"])
+    return JSONResponse(result)
+
+
+def _next_digest_time(now):
+    """Next DIGEST_HOUR:00 strictly after `now` (tz-aware), any day."""
+    target = now.replace(hour=DIGEST_HOUR, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target
+
+
+def _daily_digest_due(today: str) -> bool:
+    """Sends only while the dial says so, and once per calendar day even
+    across a redeploy at the wrong minute (the marker lives in the store)."""
+    if not verbose_signal_enabled("daily_digest"):
+        return False
+    return get_wa_setting("digest_last_sent", "") != today
+
+
+def _daily_digest_loop() -> None:
+    """Daemon thread, same shape as the weekly loop. Always running when email
+    is configured so Nick can turn the digest on from the dashboard without a
+    restart; the dial is read at send time."""
+    while True:
+        try:
+            from zoneinfo import ZoneInfo
+
+            tz = ZoneInfo(REPORT_TIMEZONE)
+            target = _next_digest_time(datetime.now(tz))
+            while True:
+                remaining = (target - datetime.now(tz)).total_seconds()
+                if remaining <= 0:
+                    break
+                time.sleep(min(remaining, 3600))
+            today = datetime.now(tz).strftime("%Y-%m-%d")
+            if _daily_digest_due(today):
+                # Marker first, so a redeploy mid-send cannot double up; cleared
+                # again if nothing went out, so the day is not silently lost.
+                set_wa_setting("digest_last_sent", today)
+                if not send_daily_digest().get("sent_email"):
+                    set_wa_setting("digest_last_sent", "")
+        except Exception:
+            time.sleep(3600)
+
+
+@app.on_event("startup")
+def _start_daily_digest_scheduler() -> None:
+    if (REPORT_EMAIL_TO or LEAD_SUMMARY_EMAIL_TO) and LEAD_SUMMARY_RESEND_API_KEY:
+        threading.Thread(target=_daily_digest_loop, daemon=True, name="daily-digest").start()
+
+
+@app.get("/api/notifications")
+async def notifications_get(_: str = Depends(require_admin)):
+    return JSONResponse(notification_settings_payload())
+
+
+@app.post("/api/notifications")
+async def notifications_set(request: Request, _: str = Depends(require_admin)):
+    """The dial. {"level": "standard"} clears everything; {"level": "verbose",
+    "signals": [...]} enables exactly those signals (all three when omitted)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid body"}, status_code=400)
+    level = str(body.get("level", "")).strip().lower()
+    if level not in ("standard", "verbose"):
+        return JSONResponse({"ok": False, "error": "level must be standard or verbose"}, status_code=400)
+    if level == "standard":
+        wanted: list = []
+    else:
+        raw = body.get("signals")
+        if raw is None:
+            wanted = list(NOTIFY_SIGNALS)
+        elif isinstance(raw, list):
+            wanted = [str(s) for s in raw if str(s) in NOTIFY_SIGNALS]
+        else:
+            return JSONResponse({"ok": False, "error": "signals must be a list"}, status_code=400)
+        if not wanted:
+            # Verbose with nothing ticked IS standard; say so rather than store a lie.
+            level = "standard"
+    persisted = set_verbose_signals(wanted)
+    log_event("notification_mode_changed", session_id="wa-system", level=level,
+              signals=",".join(wanted), persisted=persisted)
+    if not persisted:
+        return JSONResponse({"ok": False, "error": "could not persist the setting; it may reset on redeploy"},
+                            status_code=503)
+    return JSONResponse({"ok": True, **notification_settings_payload()})
+
+
+@app.post("/api/wa/entry-points")
+async def wa_entry_points_set(request: Request, _: str = Depends(require_admin)):
+    """Whether the public buttons/links point at the WhatsApp number. Only the
+    report's status line reads it; the bot cannot know this on its own, and
+    the line kept saying "not publicly reachable" after the Google buttons
+    went live (Nicholas, 22 Sep 2026)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid body"}, status_code=400)
+    raw = body.get("live", False)
+    live = raw if isinstance(raw, bool) else str(raw).strip().lower() in ("true", "1", "yes")
+    persisted = set_wa_setting("entry_points_live", "1" if live else "0")
+    log_event("wa_entry_points_toggled", session_id="wa-system", live=live, persisted=persisted)
+    if not persisted:
+        return JSONResponse({"ok": False, "live": live,
+                             "error": "could not persist the setting; it may reset on redeploy"},
+                            status_code=503)
+    return JSONResponse({"ok": True, "live": live})
 
 
 @app.on_event("startup")
@@ -7165,6 +7523,9 @@ async def twilio_wa_webhook(request: Request):
         _wa_prune_episode_keys(session_id, episode)
         log_event("conversation_started", session_id=session_id, channel="whatsapp",
                   episode=episode)
+        # Verbose mode. The webhook is signed, so the thread is trusted; QA
+        # sessions are dropped inside by the report exclusion list.
+        notify_new_conversation_async(session_id, message, "whatsapp", episode)
     history.append(turn)
     persist_conversation(session_id)
     log_chat_message(session_id, "user", message)
@@ -7290,6 +7651,7 @@ def _wa_apply_delivery_receipt(session_id: str, message_sid: str, status: str,
         log_event("wa_reply_undelivered", session_id=session_id, channel="whatsapp",
                   kind=entry.get("kind"), message_sid=message_sid, status=status,
                   error_code=error_code, source="receipt")
+        notify_failed_send_async(session_id, entry.get("kind"), status, error_code, "receipt")
         if is_newest:
             # Only the LATEST outbound decides the follow-up: a late receipt
             # for an older message must not silence a thread that has since
@@ -7879,6 +8241,7 @@ def _wa_send_and_register(session_id: str, to_digits: str, body: str, kind: str,
             if failure == "unknown":
                 log_event("wa_send_unknown", session_id=session_id, channel="whatsapp",
                           kind=kind, error=str(detail)[:200])
+                notify_failed_send_async(session_id, kind, "unknown", wa_send_error_code(detail), "send")
                 return "unknown", str(detail), sent_parts, attempts
             # Register the refusal as well. Only successful sends reached the
             # ledger, so a reply Twilio rejected left the thread with no badge
@@ -7897,6 +8260,8 @@ def _wa_send_and_register(session_id: str, to_digits: str, body: str, kind: str,
                 kind=kind, group=group, status="failed",
                 error=wa_send_error_code(detail), preview="",
             )
+            notify_failed_send_async(session_id, kind, "partial" if sent_parts else "failed",
+                                     wa_send_error_code(detail), "send")
             return ("partial" if sent_parts else "failed"), str(detail), sent_parts, attempts
         last = str(detail)
         group = group or last
@@ -9037,6 +9402,7 @@ async def admin_dashboard(_: str = Depends(require_admin)):
         "logs": read_conversation_logs(120),
         "transcripts": grouped_transcripts(1000),
         "wa": wa_dashboard_payload(),
+        "notifications": notification_settings_payload(),
     }
     # html_safe_json (not plain json.dumps): a visitor's chat message containing
     # "</script>" would otherwise break out of this inline <script> and run in the
@@ -11754,6 +12120,19 @@ ADMIN_HTML = """
     .footnote { padding: 0 16px 12px; font-size: .72rem; color: var(--muted); min-height: 16px; }
     .footnote.err { color: var(--red); }
 
+    /* ── Notifications card ─────────────────────────────────── */
+    .notif-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 16px; border-bottom: 1px solid var(--line); }
+    .notif-row:last-child { border-bottom: 0; }
+    .notif-row .feed-main { font-size: .8rem; color: var(--ink); }
+    .notif-row .feed-sub { display: block; font-size: .7rem; color: var(--muted); margin-top: 2px; }
+    .notif-row select {
+      border: 1px solid var(--line-2); border-radius: 9px; padding: 6px 10px; font: inherit;
+      font-size: .8rem; color: var(--ink); background: var(--paper); outline: none;
+    }
+    .notif-row select:focus { border-color: var(--amber-deep); box-shadow: 0 0 0 3px rgba(255,208,112,.25); }
+    .notif-row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--green); flex: none; }
+    .notif-signals[hidden] { display: none; }
+
     /* ── Modal ───────────────────────────────────────────────── */
     .modal-backdrop {
       position: fixed; inset: 0; z-index: 50;
@@ -11909,6 +12288,27 @@ ADMIN_HTML = """
               <span class="card-title">Channels</span>
             </div>
             <div id="ovChannels"></div>
+          </div>
+          <div class="card" id="notifCard">
+            <div class="card-head">
+              <span class="card-title">Notifications</span>
+            </div>
+            <div class="notif-row">
+              <label class="feed-main" for="notifLevel">Alert level
+                <span class="feed-sub" id="notifLevelSub">Standard: leads, requests to speak with you, and the Monday report.</span>
+              </label>
+              <select id="notifLevel">
+                <option value="standard">Standard</option>
+                <option value="verbose">Verbose</option>
+              </select>
+            </div>
+            <div class="notif-signals" id="notifSignals" hidden>
+              <label class="notif-row"><span class="feed-main">Every new conversation<span class="feed-sub">Website and WhatsApp, one email each, test sessions left out.</span></span><input type="checkbox" id="notifSigConversations" data-signal="conversations"></label>
+              <label class="notif-row"><span class="feed-main">Every failed send<span class="feed-sub">A WhatsApp message Twilio refused or could not deliver.</span></span><input type="checkbox" id="notifSigFailedSends" data-signal="failed_sends"></label>
+              <label class="notif-row"><span class="feed-main">Daily digest<span class="feed-sub" id="notifDigestSub">The last 24 hours, every evening.</span></span><input type="checkbox" id="notifSigDailyDigest" data-signal="daily_digest"></label>
+            </div>
+            <label class="notif-row"><span class="feed-main">Public WhatsApp buttons are live<span class="feed-sub">Tells the Monday report the Google buttons and links point at the number.</span></span><input type="checkbox" id="notifEntryPoints"></label>
+            <div class="footnote" id="notifNote"></div>
           </div>
           <div class="card">
             <div class="card-head">
@@ -12521,6 +12921,99 @@ ADMIN_HTML = """
       } catch (e) {}
     }
 
+    function notifData() { return (window.__OS_ADMIN_DATA__ || {}).notifications || { level: 'standard', signals: {} }; }
+
+    function notifNoteMsg(text, isErr) {
+      const note = document.getElementById('notifNote');
+      note.textContent = text;
+      note.className = isErr ? 'footnote err' : 'footnote';
+    }
+
+    function renderNotifications() {
+      const n = notifData();
+      document.getElementById('notifLevel').value = n.level === 'verbose' ? 'verbose' : 'standard';
+      document.getElementById('notifSignals').hidden = n.level !== 'verbose';
+      document.getElementById('notifLevelSub').textContent = n.level === 'verbose'
+        ? 'Verbose: everything in Standard plus the extras ticked below.'
+        : 'Standard: leads, requests to speak with you, and the Monday report.';
+      const sig = n.signals || {};
+      document.querySelectorAll('#notifSignals input[data-signal]').forEach(function(box) {
+        box.checked = !!sig[box.getAttribute('data-signal')];
+      });
+      if (n.digest_hour !== undefined) {
+        const h = n.digest_hour;
+        const label = h === 0 ? '12am' : h < 12 ? h + 'am' : h === 12 ? '12pm' : (h - 12) + 'pm';
+        document.getElementById('notifDigestSub').textContent = 'The last 24 hours, every day at ' + label + ' Sydney time.';
+      }
+      document.getElementById('notifEntryPoints').checked = !!n.entry_points_live;
+      if (n.email_configured === false) notifNoteMsg('Email alerts are not configured on the server, so Verbose emails cannot be sent.', true);
+    }
+
+    async function saveNotifications() {
+      const level = document.getElementById('notifLevel').value;
+      const signals = [];
+      document.querySelectorAll('#notifSignals input[data-signal]').forEach(function(box) {
+        if (box.checked) signals.push(box.getAttribute('data-signal'));
+      });
+      let res;
+      try {
+        res = await fetch('/api/notifications', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ level: level, signals: signals })
+        });
+      } catch (e) {
+        renderNotifications();
+        notifNoteMsg('Network error. Nothing was changed.', true);
+        return;
+      }
+      const body = await res.json().catch(function() { return {}; });
+      if (!res.ok) {
+        renderNotifications();
+        notifNoteMsg(body.error || 'Could not save. Nothing was changed.', true);
+        return;
+      }
+      window.__OS_ADMIN_DATA__.notifications = Object.assign({}, notifData(), body);
+      renderNotifications();
+      notifNoteMsg(body.level === 'verbose' ? 'Saved. Verbose mode is on.' : 'Saved. Standard alerts only.', false);
+    }
+
+    function initNotifications() {
+      document.getElementById('notifLevel').addEventListener('change', function() {
+        if (this.value === 'verbose') {
+          // Switching up ticks everything: the dial is then turned DOWN by unticking.
+          document.querySelectorAll('#notifSignals input[data-signal]').forEach(function(box) { box.checked = true; });
+        }
+        saveNotifications();
+      });
+      document.querySelectorAll('#notifSignals input[data-signal]').forEach(function(box) {
+        box.addEventListener('change', saveNotifications);
+      });
+      document.getElementById('notifEntryPoints').addEventListener('change', async function() {
+        const live = this.checked;
+        let res;
+        try {
+          res = await fetch('/api/wa/entry-points', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ live: live })
+          });
+        } catch (e) {
+          this.checked = !live;
+          notifNoteMsg('Network error. Nothing was changed.', true);
+          return;
+        }
+        const body = await res.json().catch(function() { return {}; });
+        if (!res.ok) {
+          this.checked = !live;
+          notifNoteMsg(body.error || 'Could not save. Nothing was changed.', true);
+          return;
+        }
+        window.__OS_ADMIN_DATA__.notifications = Object.assign({}, notifData(), { entry_points_live: live });
+        notifNoteMsg(live ? 'Saved. The Monday report will say the number is publicly reachable.' : 'Saved. The Monday report will say no public buttons point at the number yet.', false);
+      });
+    }
+
     function waNoteMsg(text, isErr) {
       const note = document.getElementById('waNote');
       note.textContent = text;
@@ -12633,6 +13126,8 @@ ADMIN_HTML = """
       renderWaThreads();
       renderWaDetail();
       initWaActions();
+      renderNotifications();
+      initNotifications();
       renderOverview();
 
       document.getElementById('search').addEventListener('input', function() {
