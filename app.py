@@ -5437,8 +5437,13 @@ def _human_session_ids(events: list[dict]) -> set:
     return {sid for sid, session_events in by_session.items() if is_human_session(session_events)}
 
 
-# The greeting A/B went live 6 Aug 2026; running totals in the report count
-# from here so the "running since 6 Aug" label matches the numbers under it.
+# The greeting A/B ran 6 Aug 2026 - 22 Sep 2026, when it was retired: Nick's
+# line won and is now the sole default in widget.js (TEASER_VARIANT is a
+# fixed 'nick' stamp, no more random assignment). GREETING_TEST_START stays
+# so this historical section keeps reading correctly for as long as any
+# report window still spans the old test period; once every window is fully
+# past it, teaser_variants/_total will hold only 'nick' and the section
+# below stops rendering on its own (it requires >=2 variants).
 GREETING_TEST_START = datetime(2026, 8, 6)
 
 

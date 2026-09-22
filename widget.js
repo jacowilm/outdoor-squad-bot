@@ -97,23 +97,16 @@
     // Stamped on every event so we can MEASURE how many visitors still run an
     // old cached copy after a rollout (Nicholas's 7-Aug question). Bump on
     // every user-visible widget change.
-    const WIDGET_VERSION = '2026-08-07';
+    const WIDGET_VERSION = '2026-09-22';
 
-    // Greeting copy A/B (Nicholas's Robo-Coach line vs the original, 2026-08-06):
-    // assigned once per visit, sticky in sessionStorage, stamped on every event
-    // so the weekly report can compare open rates per greeting line.
-    const TEASER_VARIANT = (() => {
-        try {
-            let v = sessionStorage.getItem('os-teaser-variant');
-            if (!v) {
-                v = Math.random() < 0.5 ? 'control' : 'nick';
-                sessionStorage.setItem('os-teaser-variant', v);
-            }
-            return v;
-        } catch (e) {
-            return Math.random() < 0.5 ? 'control' : 'nick';
-        }
-    })();
+    // Greeting copy A/B (Nicholas's Robo-Coach line vs the original, ran
+    // 2026-08-06 to 2026-09-22) is retired: Nick's line won and is now the
+    // sole default greeting, no more random assignment. TEASER_VARIANT stays
+    // a fixed stamp (rather than being deleted outright) purely so the
+    // weekly report's historical A/B section keeps reading old 'control' vs
+    // 'nick' events correctly; every visit now stamps 'nick' since there is
+    // nothing left to split-test.
+    const TEASER_VARIANT = 'nick';
 
     function track(eventType, metadata) {
         try {
@@ -507,7 +500,7 @@
         </div>
         <div id="os-teaser" role="button" tabindex="0" aria-label="Open chat with Robo-Nick">
             <button id="os-teaser-close" type="button" aria-label="Dismiss">✕</button>
-            <span id="os-teaser-text">Got a question about times, prices or where to start? Ask me — I'm quick 👋</span>
+            <span id="os-teaser-text">G'day — Robo-Nick here. The real Nick's mid-session, but I know the timetable, the prices, and where to park.</span>
             <div class="os-teaser-chips">
                 <button class="os-chip" data-message="How does the free trial work?">Free trial</button>
                 <button class="os-chip" data-message="What's the timetable?">Timetable</button>
@@ -582,11 +575,6 @@
     }
 
     if (teaser) {
-        // Nicholas's Robo-Coach greeting line as the B variant.
-        if (TEASER_VARIANT === 'nick') {
-            const teaserText = document.getElementById('os-teaser-text');
-            if (teaserText) teaserText.textContent = "G'day — Robo-Nick here. The real Nick's mid-session, but I know the timetable, the prices, and where to park.";
-        }
         teaser.addEventListener('click', (ev) => {
             if (ev.target.closest('#os-teaser-close')) return;
             const chip = ev.target.closest('.os-chip');

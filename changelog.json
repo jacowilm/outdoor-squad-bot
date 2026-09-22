@@ -222,5 +222,9 @@
   {
     "date": "2026-09-22",
     "line": "Verbose notification mode: a dial on the dashboard's Overview tab. Standard (the default) is exactly what you had: lead and human-request alerts plus the Monday report. Verbose adds an email for every new conversation (website and WhatsApp, test sessions left out), an email when a WhatsApp message is refused or not delivered, and a daily digest every evening; each of the three can be turned off on its own. Alerts are capped and never repeated for the same conversation. Missed calls are not part of this: that is the separate missed-call add-on. The dashboard can also mark the public WhatsApp buttons as live so the Monday report stops saying the number is not publicly reachable."
+  },
+  {
+    "date": "2026-09-22",
+    "line": "Website widget greeting: Nick's line is now the sole default greeting. The 6 Aug to 22 Sep A/B test against the original line is retired, Nick's line won; the weekly report's greeting-test section still reads the historical split correctly and drops off on its own now that every visit is the same line."
   }
 ]
