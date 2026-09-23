@@ -1424,6 +1424,35 @@ def wa_rewrite_contact_asks(text: str) -> str:
     return "".join(sentences)
 
 
+WA_DETERMINISTIC_INTRO = (
+    "Quick hello first: I\u2019m Robo-Nick, the automated helper here while "
+    "Humanoid-Nick is out coaching."
+)
+
+
+def wa_prepend_intro(reply: str, session_id: str) -> str:
+    """Give a deterministic first answer the introduction the AI path gets.
+
+    The AI path is told to introduce itself by whatsapp_channel_prompt(), but
+    should_use_local_tone_handler() answers most real questions from the
+    scripted handler, which never sees that prompt. wa_first_contact_greeting()
+    only defers the VAGUE openers ("hi") to the AI, so a cold customer whose
+    first WhatsApp message is an ordinary question ("do you have parking")
+    got the answer with no introduction at all, while the reply was still
+    logged as kind="intro" (23 Sep 2026, first real fresh-phone contact
+    wa-61413629790: the greengrocer check Nick ran).
+
+    Only ever prepends on the first reply of an episode, and never when the
+    scripted answer already introduces Robo-Nick itself (the identity and
+    "is this The Outdoor Squad?" branches do).
+    """
+    if not reply or not wa_needs_intro(session_id):
+        return reply
+    if "Robo-Nick" in reply:
+        return reply
+    return f"{WA_DETERMINISTIC_INTRO}\n\n{reply}"
+
+
 _WA_BOLD_RE = re.compile(r"\*\*([^*\n]+?)\*\*")
 _WA_MD_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s]+)\)")
 _WA_HEADING_RE = re.compile(r"(?m)^#{1,6}\s+")
@@ -7306,6 +7335,7 @@ def _wa_answer_one(message: str, session_id: str, sender_digits: str,
         # behind a greeting still gets the scripted ladder, just after the
         # greeting rather than ahead of it (11 Sep 2026 diff, finding #10).
         reply = demo_fallback_reply(message, session_id=session_id)
+        reply = wa_prepend_intro(reply, session_id)
         log_event("local_tone_handler_used", session_id=session_id, channel="whatsapp")
     else:
         try:
@@ -7602,6 +7632,7 @@ async def twilio_wa_webhook(request: Request):
 
     if should_use_local_tone_handler(message, session_id) and not wa_first_contact_greeting(message, session_id):
         reply = demo_fallback_reply(message, session_id=session_id)
+        reply = wa_prepend_intro(reply, session_id)
         reply = prevent_repetitive_reply(reply, message, session_id)
         # Render BEFORE persisting so the transcript, the repetition guard and
         # the dashboard hold exactly what the customer received; _twiml_message

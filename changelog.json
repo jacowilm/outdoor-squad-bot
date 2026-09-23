@@ -1,5 +1,9 @@
 [
   {
+    "date": "2026-09-23",
+    "line": "WhatsApp: a first-time caller who opens with a real question (not just “hi”) now gets Robo-Nick's introduction before the answer, instead of only the answer."
+  },
+  {
     "date": "2026-07-03",
     "line": "Instant email alert to innerwest@ whenever the bot captures a lead"
   },
@@ -21,11 +25,11 @@
   },
   {
     "date": "2026-07-27",
-    "line": "Crawler filtering \u2014 the report now counts real visitors, not bots"
+    "line": "Crawler filtering — the report now counts real visitors, not bots"
   },
   {
     "date": "2026-08-06",
-    "line": "Quick-reply chips on the greeting (Free trial / Timetable / Prices / Where do you meet?) \u2014 one tap starts the chat"
+    "line": "Quick-reply chips on the greeting (Free trial / Timetable / Prices / Where do you meet?) — one tap starts the chat"
   },
   {
     "date": "2026-08-06",
@@ -61,7 +65,7 @@
   },
   {
     "date": "2026-08-17",
-    "line": "Report and lead-alert emails redesigned \u2014 cleaner layout, easier to scan on a phone"
+    "line": "Report and lead-alert emails redesigned — cleaner layout, easier to scan on a phone"
   },
   {
     "date": "2026-08-17",
@@ -69,7 +73,7 @@
   },
   {
     "date": "2026-08-17",
-    "line": "You can now change your dashboard password yourself (top-right, \u201cChange password\u201d)"
+    "line": "You can now change your dashboard password yourself (top-right, “Change password”)"
   },
   {
     "date": "2026-08-17",
@@ -97,7 +101,7 @@
   },
   {
     "date": "2026-09-07",
-    "line": "Weekly report: your own test chats (the 31 Aug\u20131 Sep sessions from your three devices) are now excluded from the numbers, and future test sessions can be excluded the same way without a code change"
+    "line": "Weekly report: your own test chats (the 31 Aug–1 Sep sessions from your three devices) are now excluded from the numbers, and future test sessions can be excluded the same way without a code change"
   },
   {
     "date": "2026-09-10",
