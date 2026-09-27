@@ -14216,6 +14216,12 @@ ADMIN_HTML = """
       whatsapp: ['wa', 'transcripts'],
       sms: ['sms']
     };
+    // The Overview tiles are all-time totals built from up to 5000 events,
+    // about 3 seconds of server work on 27 Sep 2026 (measured against the live
+    // service), and they cannot move enough in 8 seconds to be worth that. So
+    // they refresh once a minute; everything else refreshes every poll.
+    const PART_MIN_MS = { metrics: 60000 };
+    const partFetchedAt = {};
     const partSig = {};
     let pollTimer = null, pollBusy = false, pollStopped = false, pollStarted = false;
 
@@ -14287,7 +14293,12 @@ ADMIN_HTML = """
     }
 
     async function fetchSnapshot(parts) {
-      if (!parts || !parts.length) return;
+      const now = Date.now();
+      parts = (parts || []).filter(function(part) {
+        return !PART_MIN_MS[part] || !partFetchedAt[part] || now - partFetchedAt[part] >= PART_MIN_MS[part];
+      });
+      if (!parts.length) return;
+      parts.forEach(function(part) { partFetchedAt[part] = now; });
       const res = await fetch('/api/admin/snapshot?parts=' + encodeURIComponent(parts.join(',')), {
         credentials: 'include', cache: 'no-store'
       });
@@ -14330,6 +14341,7 @@ ADMIN_HTML = """
         TAB_PARTS[tab].forEach(function(part) {
           if (window.__OS_ADMIN_DATA__[part] !== undefined && partSig[part] === undefined) {
             partSig[part] = JSON.stringify(window.__OS_ADMIN_DATA__[part]);
+            partFetchedAt[part] = Date.now();
           }
         });
       });

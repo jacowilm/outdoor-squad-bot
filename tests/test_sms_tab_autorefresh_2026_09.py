@@ -247,3 +247,11 @@ def test_no_dashes_in_the_new_copy():
     js = app.ADMIN_HTML[app.ADMIN_HTML.index("// ── SMS ──"):app.ADMIN_HTML.index("function notifData()")]
     for chunk in (panel, js):
         assert "—" not in chunk and "–" not in chunk
+
+
+def test_overview_tiles_poll_slower_than_the_messages():
+    # build_metrics_payload reads up to 5000 events (about 3s live); polling it
+    # every 8s would keep a worker busy nearly full time for numbers that are
+    # all-time totals.
+    ms = int(re.search(r"const PART_MIN_MS = \{ metrics: (\d+) \};", app.ADMIN_HTML).group(1))
+    assert ms >= 30000
