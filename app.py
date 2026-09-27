@@ -480,14 +480,17 @@ def sanitize_session_id(raw) -> str:
     return sid or "default"
 
 
-RESERVED_SESSION_PREFIXES = ("wa-",)
+RESERVED_SESSION_PREFIXES = ("wa-", "fb-", "ig-")
 
 
 def is_reserved_channel_session_id(session_id: str) -> bool:
     """Session ids that belong to a signature-authenticated channel. Public
     endpoints (/api/chat, /api/event) must never act on one of these: the id is
-    the customer's phone number, so it is guessable, and the thread behind it is
-    their private WhatsApp conversation."""
+    the customer's phone number (wa-) or their Messenger / Instagram scoped id
+    (fb-, ig-), both of which a third party can learn, and the thread behind it
+    is their private conversation. fb- and ig- joined the list with the Meta
+    channel (27 Sep 2026) BEFORE the first real thread existed, so the 11 Sep
+    WhatsApp hole never had a Messenger twin."""
     sid = str(session_id or "").lower()
     return any(sid.startswith(prefix) for prefix in RESERVED_SESSION_PREFIXES)
 
@@ -1189,11 +1192,42 @@ Contact rule: if the conversation history already includes a phone number or ema
     ]
     if is_whatsapp_session(session_id):
         system_blocks.append({"role": "system", "content": whatsapp_channel_prompt(session_id)})
+    elif is_meta_session(session_id):
+        system_blocks.append({"role": "system", "content": meta_channel_prompt(session_id)})
     return system_blocks + recent
 
 
 def is_whatsapp_session(session_id: str) -> bool:
     return str(session_id or "").startswith("wa-")
+
+
+# Session prefix -> channel name for the Meta inbox channels (27 Sep 2026).
+# The id after the prefix is the Page-scoped (Messenger) or Instagram-scoped id
+# Meta gives us for the sender; it is NOT a phone number, so none of the
+# WhatsApp "we already know your mobile" logic applies to these threads.
+META_SESSION_CHANNELS = {"fb-": "messenger", "ig-": "instagram"}
+_CHANNEL_LABELS = {"whatsapp": "WhatsApp", "messenger": "Messenger", "instagram": "Instagram"}
+
+
+def is_meta_session(session_id: str) -> bool:
+    sid = str(session_id or "")
+    return any(sid.startswith(prefix) for prefix in META_SESSION_CHANNELS)
+
+
+def session_channel(session_id: str) -> str:
+    """whatsapp, messenger, instagram or website, from the session id alone."""
+    sid = str(session_id or "")
+    if is_whatsapp_session(sid):
+        return "whatsapp"
+    for prefix, channel in META_SESSION_CHANNELS.items():
+        if sid.startswith(prefix):
+            return channel
+    return "website"
+
+
+def channel_display_label(channel: str) -> str:
+    """The word Nick reads in an alert: WhatsApp, Messenger, Instagram, Website."""
+    return _CHANNEL_LABELS.get(str(channel or ""), "Website")
 
 
 def wa_sender_e164(session_id: str) -> str:
@@ -1470,6 +1504,51 @@ def render_for_whatsapp(text: str) -> str:
     out = _WA_HEADING_RE.sub("", out)
     out = _WA_MD_LINK_RE.sub(lambda m: f"{m.group(1).strip()}: {m.group(2)}", out)
     out = _WA_BOLD_RE.sub(lambda m: f"*{m.group(1).strip()}*", out)
+    out = out.replace("**", "")
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
+
+
+def meta_needs_intro(session_id: str) -> bool:
+    """True until Robo-Nick has said anything in this Messenger / Instagram
+    thread. No episodes on these channels yet (the WhatsApp boundary logic is
+    wa- only), so this is once per thread."""
+    return not any(m.get("role") == "assistant" for m in load_conversation(session_id))
+
+
+def meta_channel_prompt(session_id: str) -> str:
+    """The Messenger / Instagram twin of whatsapp_channel_prompt(). Same
+    formatting problem (neither app renders markdown), same disclosure need
+    (there is no widget header saying this is a bot), but the opposite contact
+    rule: here we do NOT know the person's number, so the website's contact
+    asks stay as they are."""
+    where = "an Instagram DM" if session_channel(session_id) == "instagram" else "Facebook Messenger"
+    intro = (
+        "This is your FIRST reply in this conversation: open by saying you are Robo-Nick, "
+        "the automated helper, in one light line (Humanoid-Nick is coaching, asleep or near coffee), then answer. "
+        if meta_needs_intro(session_id) else
+        "You have already introduced yourself as Robo-Nick in this conversation; do not introduce yourself again. "
+    )
+    return (
+        f"Channel: you are replying in {where}, not the website widget. "
+        + intro
+        + "Plain text only: no markdown, no **bold**, no headings, no [label](url) links; paste any link bare on its own line. "
+        "Keep it short: a few short paragraphs at most, one blank line between them; a list is one item per line starting with '- '. "
+        "Do not quote a phone number as the way to reach the team: Humanoid-Nick or Lyn reply in this same chat."
+    )
+
+
+def render_for_meta(text: str) -> str:
+    """Deterministic backstop for Messenger and Instagram: neither renders
+    markdown, and unlike WhatsApp neither turns *single* asterisks into bold,
+    so bold markers are dropped rather than converted. Links survive as
+    "label: url". The WhatsApp contact-ask rewrite is deliberately NOT applied:
+    on these channels asking for a mobile is a real ask, not a redundant one."""
+    if not text:
+        return text
+    out = _WA_HEADING_RE.sub("", text)
+    out = _WA_MD_LINK_RE.sub(lambda m: f"{m.group(1).strip()}: {m.group(2)}", out)
+    out = _WA_BOLD_RE.sub(lambda m: m.group(1).strip(), out)
     out = out.replace("**", "")
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
@@ -3021,6 +3100,12 @@ def contextual_short_reply(message: str, session_id: str) -> str | None:
         if is_whatsapp_session(session_id):
             set_wa_setting(f"opted_out:{session_id}", "1")
             log_event("wa_opted_out", session_id=session_id, channel="whatsapp")
+        elif is_meta_session(session_id):
+            # Same lifetime flag on Messenger and Instagram: the worker checks
+            # it before every send, so an answer already being written when
+            # the STOP arrived is dropped too.
+            set_wa_setting(f"opted_out:{session_id}", "1")
+            log_event("meta_opted_out", session_id=session_id, channel=session_channel(session_id))
         return "No worries, I'll stop here. If you ever want to pick this up again, just message and I'll be around."
 
     # "Yes" to the follow-up nudge must produce the link the nudge offered,
@@ -4705,6 +4790,10 @@ def annotate_lead_channel(lead_info: dict, session_id: str) -> dict:
                 # earlier, so the alert never presents it as verified.
                 lead_info["name"] = fallback
                 lead_info["name_source"] = "whatsapp_profile"
+    elif is_meta_session(session_id):
+        # Messenger / Instagram: only what they TYPED identifies them; the
+        # scoped sender id is not a phone and never becomes the lead's phone.
+        lead_info["channel"] = session_channel(session_id)
     else:
         lead_info.setdefault("channel", "website")
     return lead_info
@@ -6029,7 +6118,7 @@ def format_lead_summary_html(lead_info: dict) -> str:
     phone = lead_info.get("phone")
     email_addr = lead_info.get("email")
     is_whatsapp = str(lead_info.get("channel") or "website") == "whatsapp"
-    inner.append(_email_row("Channel", "WhatsApp" if is_whatsapp else "Website"))
+    inner.append(_email_row("Channel", channel_display_label(str(lead_info.get("channel") or "website"))))
     inner.append(_email_row(
         "Phone",
         f'<a href="tel:{e(phone)}" style="color:{REALTIQ_NAVY};text-decoration:none;">{e(phone)}</a>' if phone else "not provided",
@@ -6345,7 +6434,7 @@ def send_verbose_alert(signal: str, session_id: str, subject: str, lines: list,
 
 
 def notify_new_conversation(session_id: str, message: str, channel: str, episode=None) -> bool:
-    label = "WhatsApp" if channel == "whatsapp" else "Website"
+    label = channel_display_label(channel)
     ekey = wa_episode_key(session_id) if channel == "whatsapp" else session_id
     subject = f"New {label} conversation started"
     if episode and episode > 1:
@@ -7085,7 +7174,8 @@ def wa_status_callback_url() -> str:
 
 
 def _wa_capture_lead(message: str, session_id: str, human_request_handled: bool, reason: str) -> None:
-    """The ONE lead-capture path for every WhatsApp branch. Extracted after
+    """The ONE lead-capture path for every WhatsApp branch, and since 27 Sep
+    2026 for every Messenger and Instagram branch too. Extracted after
     review found the copy-pasted block had drifted: the AI-outage branch had
     no capture at all (a lead arriving during an incident was simply lost),
     and the Momence push sat inside the owner-alert dedupe guard, so the
@@ -7115,7 +7205,9 @@ def _wa_capture_lead(message: str, session_id: str, human_request_handled: bool,
         notify_lead_summary_async(lead_info, reason=reason)
     # CRM push: NOT deduped against alerts (different concern); the shared
     # gate handles the email requirement and the once-per-session dedupe.
-    maybe_push_lead_to_momence(lead_info, session_id, source="whatsapp")
+    # The source is the thread's own channel: a Messenger or Instagram lead
+    # gets the generic Lead tag and "(via instagram)", never the WhatsApp badge.
+    maybe_push_lead_to_momence(lead_info, session_id, source=session_channel(session_id))
 
 
 @app.post("/twilio-voice-webhook")
@@ -7270,7 +7362,7 @@ def _wa_async_dispatch(target, args) -> None:
 
 def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
                           human_request_handled: bool, message_sid: str,
-                          inflight_token=None) -> None:
+                          inflight_token=None, *, answer_one=None) -> None:
     """Answer this inbound, then drain anything that arrived while we wrote it.
 
     One worker owns a thread at a time (see _wa_queue_if_inflight): messages
@@ -7282,12 +7374,20 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
 
     The claim is released in a finally, and it also has a max age, so a worker
     that crashes or hangs cannot leave the thread mute.
+
+    answer_one is the per-channel "write and deliver one answer" step. The
+    default is WhatsApp's; Messenger and Instagram pass _meta_answer_one, so
+    the queue, the coalescing and the claim handling are the same code on
+    every channel (27 Sep 2026).
     """
+    answer = answer_one or _wa_answer_one
+    prefix = "wa" if is_whatsapp_session(session_id) else "meta"
+    channel = session_channel(session_id)
     try:
         gate = False
         while True:
-            _wa_answer_one(message, session_id, sender_digits, human_request_handled,
-                           message_sid, gate=gate, inflight_token=inflight_token)
+            answer(message, session_id, sender_digits, human_request_handled,
+                   message_sid, gate=gate, inflight_token=inflight_token)
             queued, inflight_token = _wa_take_pending(session_id, inflight_token)
             if not queued:
                 return
@@ -7299,7 +7399,7 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
             human_request_handled = any(item.get("human_request_handled") for item in queued)
             message_sid = str(queued[-1].get("message_sid", ""))
             if len(queued) > 1:
-                log_event("wa_reply_coalesced", session_id=session_id, channel="whatsapp",
+                log_event(f"{prefix}_reply_coalesced", session_id=session_id, channel=channel,
                           count=len(queued), chars=sum(len(t) for t in texts))
             # A queued message never met the webhook's deterministic gate, so
             # the drained turn asks it here instead.
@@ -7307,7 +7407,7 @@ def _wa_generate_and_send(message: str, session_id: str, sender_digits: str,
     finally:
         dropped, had_opt_out = _wa_release_inflight(session_id, inflight_token)
         if dropped:
-            log_event("wa_queue_dropped", session_id=session_id, channel="whatsapp",
+            log_event(f"{prefix}_queue_dropped", session_id=session_id, channel=channel,
                       count=dropped, had_opt_out="1" if had_opt_out else "0")
 
 
@@ -7759,16 +7859,22 @@ async def wa_mute_endpoint(request: Request, _: str = Depends(require_admin)):
     except Exception:
         return JSONResponse({"ok": False, "error": "invalid body"}, status_code=400)
     session_id = sanitize_session_id(body.get("session_id", ""))
-    if not session_id.startswith("wa-"):
-        return JSONResponse({"ok": False, "error": "session_id must be a wa- session"}, status_code=400)
+    # Same mute key on every channel: on Messenger and Instagram the mute is
+    # also set automatically when Nick replies natively in the app, and this
+    # is how the thread is handed back (27 Sep 2026).
+    if not (session_id.startswith("wa-") or is_meta_session(session_id)):
+        return JSONResponse({"ok": False, "error": "session_id must be a wa-, fb- or ig- session"},
+                            status_code=400)
+    prefix = "wa" if session_id.startswith("wa-") else "meta"
+    channel = session_channel(session_id)
     if body.get("clear"):
         set_wa_mute(session_id, None)
-        log_event("wa_bot_unmuted", session_id=session_id, channel="whatsapp")
+        log_event(f"{prefix}_bot_unmuted", session_id=session_id, channel=channel)
         return JSONResponse({"ok": True, "muted": False})
     minutes = float(body.get("minutes", 30))
     minutes = max(1.0, min(minutes, 24 * 60))
     set_wa_mute(session_id, minutes)
-    log_event("wa_bot_muted", session_id=session_id, channel="whatsapp", minutes=minutes)
+    log_event(f"{prefix}_bot_muted", session_id=session_id, channel=channel, minutes=minutes)
     return JSONResponse({"ok": True, "muted": True, "minutes": minutes})
 
 
@@ -7996,35 +8102,50 @@ TWILIO_WA_FROM = (
 WA_BODY_LIMIT = 1600
 
 
-def split_whatsapp_body(body: str, limit: int = WA_BODY_LIMIT) -> list[str]:
+def _fit_prefix(line: str, limit: int, measure) -> int:
+    """How many characters of line fit in limit under measure (at least one,
+    so a single oversized character can never loop forever)."""
+    if measure is len:
+        return max(1, limit)
+    cut = min(len(line), limit)
+    while cut > 1 and measure(line[:cut]) > limit:
+        cut -= 1
+    return max(1, cut)
+
+
+def split_whatsapp_body(body: str, limit: int = WA_BODY_LIMIT, measure=len) -> list[str]:
     """Split at blank lines, then single lines, then hard-cut, so each part fits
-    Twilio's WhatsApp body limit. Returns [body] when it already fits."""
+    Twilio's WhatsApp body limit. Returns [body] when it already fits.
+
+    measure is how a part's size is counted: characters for WhatsApp, UTF-8
+    bytes for Instagram, whose limit is 1000 bytes (27 Sep 2026)."""
     text = (body or "").strip()
-    if len(text) <= limit:
+    if measure(text) <= limit:
         return [text]
     parts: list[str] = []
     current = ""
     for para in re.split(r"\n{2,}", text):
         candidate = f"{current}\n\n{para}" if current else para
-        if len(candidate) <= limit:
+        if measure(candidate) <= limit:
             current = candidate
             continue
         if current:
             parts.append(current)
             current = ""
-        if len(para) <= limit:
+        if measure(para) <= limit:
             current = para
             continue
         for line in para.split("\n"):
             candidate = f"{current}\n{line}" if current else line
-            if len(candidate) <= limit:
+            if measure(candidate) <= limit:
                 current = candidate
                 continue
             if current:
                 parts.append(current)
-            while len(line) > limit:
-                parts.append(line[:limit])
-                line = line[limit:]
+            while measure(line) > limit:
+                cut = _fit_prefix(line, limit, measure)
+                parts.append(line[:cut])
+                line = line[cut:]
             current = line
     if current:
         parts.append(current)
@@ -8445,13 +8566,29 @@ def wa_window_state(session_id: str, now: datetime | None = None) -> dict:
 
 @app.post("/api/wa/kill")
 async def wa_kill_switch(request: Request, _: str = Depends(require_admin)):
-    """The stage-1 kill switch: Nick can turn the WhatsApp channel off himself."""
+    """The stage-1 kill switch: Nick can turn the WhatsApp channel off himself.
+
+    Optional "channel": "messenger" or "instagram" flips that Meta channel's
+    own switch instead (27 Sep 2026). Those two default OFF, unlike WhatsApp."""
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"ok": False, "error": "invalid body"}, status_code=400)
     raw = body.get("enabled", True)
     enabled = raw if isinstance(raw, bool) else str(raw).strip().lower() not in ("false", "0", "")
+    channel = str(body.get("channel") or "whatsapp").strip().lower()
+    if channel in META_CHANNEL_SWITCH_KEYS:
+        persisted = set_wa_setting(META_CHANNEL_SWITCH_KEYS[channel], "1" if enabled else "0")
+        log_event("meta_channel_toggled", session_id="meta-system", channel=channel,
+                  enabled=enabled, persisted=persisted)
+        if not persisted:
+            return JSONResponse({"ok": False, "channel": channel, "enabled": enabled,
+                                 "error": "could not persist the switch; it may reset on redeploy"},
+                                status_code=503)
+        return JSONResponse({"ok": True, "channel": channel, "enabled": enabled})
+    if channel != "whatsapp":
+        return JSONResponse({"ok": False, "error": "channel must be whatsapp, messenger or instagram"},
+                            status_code=400)
     persisted = set_wa_setting("channel_enabled", "1" if enabled else "0")
     log_event("wa_channel_toggled", session_id="wa-system", enabled=enabled, persisted=persisted)
     if not persisted:
@@ -8474,8 +8611,13 @@ async def wa_manual_reply(request: Request, _: str = Depends(require_admin)):
         return JSONResponse({"ok": False, "error": "invalid body"}, status_code=400)
     session_id = sanitize_session_id(body.get("session_id", ""))
     message = str(body.get("message", "")).strip()
+    if is_meta_session(session_id):
+        if not message:
+            return JSONResponse({"ok": False, "error": "empty message"}, status_code=400)
+        return await run_in_threadpool(meta_manual_reply, session_id, message)
     if not session_id.startswith("wa-"):
-        return JSONResponse({"ok": False, "error": "session_id must be a wa- session"}, status_code=400)
+        return JSONResponse({"ok": False, "error": "session_id must be a wa-, fb- or ig- session"},
+                            status_code=400)
     if not message:
         return JSONResponse({"ok": False, "error": "empty message"}, status_code=400)
 
@@ -8646,6 +8788,793 @@ def wa_conversations(_: str = Depends(require_admin)):
     # worker that blocked inbound Twilio webhooks for as long as Nick's phone
     # took to load the dashboard (11 Sep 2026 diff, finding #20 review).
     return JSONResponse(wa_dashboard_payload())
+
+
+# ── Facebook Messenger + Instagram DM channel (Stage 2, 27 Sep 2026) ─────────
+# One webhook for both: Meta delivers Messenger ("object": "page") and
+# Instagram DMs ("object": "instagram") in the same shape, entry[].messaging[]
+# with sender, recipient and timestamp, and when the Instagram account is linked
+# to the Page, replies to both go through the same Send API with the Page
+# access token. The brain, the lead capture, the mute and the per-thread answer
+# queue are the WhatsApp ones; only the transport is new.
+#
+# Three things differ from WhatsApp and shape this code:
+# - Meta wants the webhook answered within seconds and disables a webhook that
+#   keeps failing, so the request only checks the signature and the payload is
+#   processed off the request thread.
+# - Nick can reply NATIVELY in the Facebook or Instagram inbox, which we only
+#   hear about as an echo. A business-sent echo that is not ours means a human
+#   took over, so the thread is muted exactly as a dashboard reply mutes it
+#   (vault note, 10 Aug 2026: "Instagram breaks the mute assumption").
+# - Each channel has its own switch and both default OFF, so a deploy activates
+#   nothing. Switched off, an inbound is stored and logged and NOTHING leaves
+#   the building, not even an owner alert or a CRM push: the WhatsApp switch is
+#   an emergency stop on a live channel and keeps alerting, this one is a
+#   launch gate.
+#
+# Settings keys (same store as WhatsApp): fb::channel_enabled and
+# ig::channel_enabled (the switches), meta_outbound:{sid} (our recent sends,
+# for telling our own echoes from Nick's), meta_media_ack:{sid} (when the "text
+# only" line was last sent). mute:{sid} and opted_out:{sid} are shared with
+# WhatsApp on purpose.
+META_APP_SECRET = os.environ.get("META_APP_SECRET", "").strip()
+META_VERIFY_TOKEN = os.environ.get("META_VERIFY_TOKEN", "").strip()
+META_PAGE_ACCESS_TOKEN = os.environ.get("META_PAGE_ACCESS_TOKEN", "").strip()
+# Messenger echoes carry the id of the app that sent the message, so an echo
+# with our own app id is the bot and anything else is a person or another tool.
+META_APP_ID = os.environ.get("META_APP_ID", "").strip()
+# When set, events addressed to any other Page / Instagram account are ignored:
+# Robo-Nick answers for exactly one of each, like the WhatsApp recipient check.
+META_PAGE_ID = os.environ.get("META_PAGE_ID", "").strip()
+META_IG_ACCOUNT_ID = os.environ.get("META_IG_ACCOUNT_ID", "").strip()
+# Newest Graph API version on 27 Sep 2026 (v26.0, released 29 Jul 2026).
+META_GRAPH_VERSION = os.environ.get("META_GRAPH_VERSION", "").strip() or "v26.0"
+META_GRAPH_BASE = "https://graph.facebook.com"
+META_CHANNEL_SWITCH_KEYS = {"messenger": "fb::channel_enabled", "instagram": "ig::channel_enabled"}
+# Instagram documents a 1000-byte text limit. One conservative byte limit for
+# both channels: a long answer is split at paragraph boundaries, never refused.
+META_TEXT_LIMIT_BYTES = 1000
+META_WINDOW_HOURS = 24
+META_WEBHOOK_MAX_BYTES = 1_000_000
+# An echo can reach us before the Send API has told us the message id, so text
+# we queued in the last few minutes also counts as ours.
+META_OWN_ECHO_SECONDS = 600
+META_OUTBOUND_KEEP = 20
+META_MEDIA_ACK_TEXT = "G'day, I can only read text for now. Type your question and I'll sort you out."
+META_MEDIA_ACK_HOURS = 12
+# Things people send expecting us to look at them. Stickers, story mentions,
+# hearts and link previews are gestures, not enquiries, and are left for Nick.
+_META_ACKED_ATTACHMENTS = frozenset({"image", "video", "audio", "file", "share", "ig_reel", "reel"})
+
+_meta_seen_mids: "collections.OrderedDict[str, None]" = collections.OrderedDict()
+_META_SEEN_MAX = 1000
+_meta_seen_lock = threading.Lock()
+_meta_outbound_lock = threading.Lock()
+
+
+def meta_channel_enabled(channel: str) -> bool:
+    """Per-channel launch gate. Default OFF: only an explicit '1' turns it on."""
+    key = META_CHANNEL_SWITCH_KEYS.get(str(channel or ""))
+    return bool(key) and _cached_wa_setting(key, "0") == "1"
+
+
+def meta_config_state() -> dict:
+    """Which Meta settings exist, as booleans only: safe for /api/health."""
+    return {
+        "webhook_secret_set": bool(META_APP_SECRET),
+        "verify_token_set": bool(META_VERIFY_TOKEN),
+        "page_token_set": bool(META_PAGE_ACCESS_TOKEN),
+        "app_id_set": bool(META_APP_ID),
+        "page_id_set": bool(META_PAGE_ID),
+        "ig_account_id_set": bool(META_IG_ACCOUNT_ID),
+        "graph_version": META_GRAPH_VERSION,
+    }
+
+
+def meta_signature_valid(raw: bytes, header: str) -> bool:
+    """X-Hub-Signature-256 is "sha256=" + HMAC-SHA256(app secret, raw body).
+    Fail-closed: no secret means nothing validates."""
+    if not META_APP_SECRET:
+        return False
+    supplied = str(header or "").strip().lower()
+    if not supplied:
+        return False
+    expected = "sha256=" + hmac.new(META_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    return secrets.compare_digest(supplied.encode(), expected.encode())
+
+
+def _meta_scoped_id(raw) -> str:
+    """A PSID / IGSID as a session-safe token. Meta's are numeric; anything
+    else is reduced to letters and digits so it can never escape the prefix."""
+    return re.sub(r"[^0-9A-Za-z]", "", str(raw or ""))[:64]
+
+
+def _meta_first_sighting(mid: str) -> bool:
+    """Dedupe on the message id. Meta retries a delivery it thinks failed, and
+    a retried inbound must not be answered or logged twice."""
+    if not mid:
+        return True
+    with _meta_seen_lock:
+        if mid in _meta_seen_mids:
+            return False
+        _meta_seen_mids[mid] = None
+        while len(_meta_seen_mids) > _META_SEEN_MAX:
+            _meta_seen_mids.popitem(last=False)
+    return True
+
+
+def _meta_text_hash(text) -> str:
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    return hashlib.sha256(clean.encode()).hexdigest()[:24] if clean else ""
+
+
+def _meta_outbound_entries(session_id: str) -> list:
+    try:
+        data = json.loads(get_wa_setting(f"meta_outbound:{session_id}") or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []
+
+
+def _meta_outbound_note(session_id: str, text: str, kind: str, mid: str = "") -> None:
+    """Remember one outbound part so its echo is recognised as ours.
+
+    Written BEFORE the send (text hash only, because the echo can arrive
+    before the Send API response) and again after it with the message id.
+    Durable, not in-process: during a deploy the old instance can send and the
+    new one receive the echo, and mistaking our own echo for Nick would mute
+    the bot in that thread for a day."""
+    digest = _meta_text_hash(text)
+    with _meta_outbound_lock:
+        ledger = _meta_outbound_entries(session_id)
+        entry = None
+        if mid:
+            entry = next((e for e in reversed(ledger) if e.get("h") == digest and not e.get("mid")), None)
+        if entry is None:
+            entry = {"h": digest, "mid": "", "kind": kind, "ts": time.time()}
+            ledger.append(entry)
+        if mid:
+            entry["mid"] = mid
+        set_wa_setting(f"meta_outbound:{session_id}", json.dumps(ledger[-META_OUTBOUND_KEEP:]))
+
+
+def meta_is_own_echo(session_id: str, message: dict) -> bool:
+    """Whether a business-sent echo is the bot's own message.
+
+    Messenger names the sending app on every echo (the Page inbox has its own
+    app id since Graph v12), so with META_APP_ID set that settles it. Instagram
+    echoes carry no app id, so our own sent-message ledger decides: the message
+    id, or the same text sent in the last META_OWN_ECHO_SECONDS."""
+    app_id = str(message.get("app_id") or "").strip()
+    if META_APP_ID and app_id:
+        return app_id == META_APP_ID
+    mid = str(message.get("mid") or "")
+    digest = _meta_text_hash(message.get("text"))
+    now = time.time()
+    for entry in _meta_outbound_entries(session_id):
+        if mid and entry.get("mid") == mid:
+            return True
+        try:
+            age = now - float(entry.get("ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        if digest and entry.get("h") == digest and age <= META_OWN_ECHO_SECONDS:
+            return True
+    return False
+
+
+def meta_split_body(body: str) -> list:
+    return split_whatsapp_body(body, limit=META_TEXT_LIMIT_BYTES,
+                               measure=lambda s: len(s.encode("utf-8")))
+
+
+def _meta_error_summary(detail: str) -> str:
+    """Graph answers a refusal with {"error": {"message", "code", "error_subcode"}};
+    the codes are what can be looked up, so they lead."""
+    try:
+        err = (json.loads(detail) or {}).get("error") or {}
+    except (TypeError, ValueError, json.JSONDecodeError, AttributeError):
+        return detail[:200]
+    code = err.get("code")
+    sub = err.get("error_subcode")
+    tag = f"code {code}" + (f"/{sub}" if sub else "")
+    return f"{tag}: {str(err.get('message') or '')[:160]}"
+
+
+def send_meta_message(channel: str, recipient_id: str, text: str) -> tuple[bool, str]:
+    """One text message through the Send API. Returns (ok, message_id_or_error).
+
+    POST /me/messages with the Page access token serves both channels: "me" is
+    the Page, and an Instagram account linked to that Page is messaged through
+    it with the IGSID as recipient. messaging_type is documented for Messenger
+    only, so it is sent for Messenger only. The token is never logged: it is
+    stripped from any error text before that text leaves this function."""
+    if not META_PAGE_ACCESS_TOKEN:
+        return False, "meta sending not configured"
+    payload = {"recipient": {"id": recipient_id}, "message": {"text": text}}
+    if channel == "messenger":
+        payload["messaging_type"] = "RESPONSE"
+    url = (f"{META_GRAPH_BASE}/{META_GRAPH_VERSION}/me/messages?"
+           + urllib.parse.urlencode({"access_token": META_PAGE_ACCESS_TOKEN}))
+    request = urllib.request.Request(
+        url, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+
+    def _scrub(value: str) -> str:
+        return value.replace(META_PAGE_ACCESS_TOKEN, "[token]") if META_PAGE_ACCESS_TOKEN else value
+
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode())
+        mid = str((data or {}).get("message_id") or "")
+        return (True, mid) if mid else (False, "no message_id in the Send API response")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:600]
+        return False, _scrub(f"HTTP {exc.code}: {_meta_error_summary(detail)}")
+    except Exception as exc:
+        return False, _scrub(f"{type(exc).__name__}: {str(exc)[:200]}")
+
+
+def meta_send_and_register(session_id: str, body: str, kind: str) -> tuple[str, str, int]:
+    """Send an answer, part by part, recording each part for echo matching.
+
+    Returns (outcome, last_message_id_or_error, sent_parts) with outcome ok,
+    partial or failed, the same vocabulary as _wa_send_and_register. No retry:
+    Graph gives no reliable "try again" class the way Twilio's 429 is, and a
+    resend after an ambiguous failure is how a customer gets the answer twice."""
+    channel = session_channel(session_id)
+    recipient = str(session_id).split("-", 1)[1] if "-" in str(session_id) else ""
+    parts = meta_split_body(body)
+    if len(parts) > 1:
+        log_event("meta_reply_split", session_id=session_id, channel=channel, parts=len(parts))
+    last = ""
+    sent = 0
+    for part in parts:
+        _meta_outbound_note(session_id, part, kind)
+        ok, detail = send_meta_message(channel, recipient, part)
+        if not ok:
+            log_event("meta_send_failed", session_id=session_id, channel=channel, kind=kind,
+                      error=str(detail)[:200], sent_parts=sent)
+            return ("partial" if sent else "failed"), str(detail), sent
+        _meta_outbound_note(session_id, part, kind, mid=str(detail))
+        last = str(detail)
+        sent += 1
+    return "ok", last, sent
+
+
+def meta_window_state(session_id: str, now: "datetime | None" = None) -> dict:
+    """Meta's standard messaging window: a business may reply for 24 hours
+    after the person's last message, and not at all after that without a
+    message tag (HUMAN_AGENT, seven days, needs its own Meta approval, not
+    requested). Anchored on the newest stored user turn, falling back to the
+    transcript for turns stored without a timestamp."""
+    last_in = None
+    for turn in reversed(load_conversation(session_id)):
+        if turn.get("role") == "user":
+            last_in = _parse_any_ts(turn.get("at"))
+            break
+    if last_in is None:
+        last_in = wa_last_inbound_at_fast(session_id)
+    if last_in is None:
+        return {"window_open": False, "minutes_remaining": 0, "last_inbound_at": None}
+    elapsed = ((now or datetime.now()) - last_in).total_seconds()
+    limit = META_WINDOW_HOURS * 3600
+    return {
+        "window_open": elapsed < limit,
+        "minutes_remaining": max(0, int((limit - elapsed) // 60)),
+        "last_inbound_at": last_in.isoformat(),
+    }
+
+
+def _meta_reply_block_reason(session_id: str, message: str) -> str:
+    """Why an answer that is ready must NOT be sent, or "" when it may go.
+    Checked after generating, because generating takes seconds and Nick may
+    have switched the channel off or replied himself in the meantime."""
+    if not meta_channel_enabled(session_channel(session_id)):
+        return "channel_off"
+    if wa_muted(session_id):
+        return "muted"
+    if (get_wa_setting(f"opted_out:{session_id}") == "1"
+            and not is_opt_out_message(normalise_chat_text(message))):
+        # The acknowledgement of the STOP itself still goes: it is the one
+        # message the flag it just set must not swallow.
+        return "opted_out"
+    if not meta_window_state(session_id)["window_open"]:
+        return "window_closed"
+    return ""
+
+
+def _meta_answer_one(message: str, session_id: str, sender_digits: str,
+                     human_request_handled: bool, message_sid: str,
+                     *, gate: bool = False, inflight_token=None) -> None:
+    """Write one answer and deliver it through the Send API.
+
+    The Messenger / Instagram twin of _wa_answer_one, driven by the same
+    _wa_generate_and_send loop. Nothing here is answered inside the webhook
+    request, so the deterministic gate is asked on EVERY answer rather than
+    only on drained ones. sender_digits is unused: the recipient is the scoped
+    id inside the session id."""
+    channel = session_channel(session_id)
+    is_intro = meta_needs_intro(session_id)
+    kind = "intro" if is_intro else "reply"
+    ai_provider = None
+    fallback = False
+    if should_use_local_tone_handler(message, session_id):
+        reply = demo_fallback_reply(message, session_id=session_id)
+        if is_intro and reply and "Robo-Nick" not in reply:
+            reply = f"{WA_DETERMINISTIC_INTRO}\n\n{reply}"
+        log_event("local_tone_handler_used", session_id=session_id, channel=channel)
+    else:
+        try:
+            reply, ai_provider = generate_ai_reply(message, session_id)
+        except Exception:
+            fallback = True
+            if (os.environ.get("OUTDOOR_SQUAD_ENABLE_DEMO_FALLBACK") == "1" or should_use_outage_fallback(message)
+                    or is_vague_message(normalise_chat_text(message))):
+                reply = demo_fallback_reply(message, session_id=session_id)
+            else:
+                reply = "I\u2019m having a moment reaching my brain. Give me a minute and message again."
+
+    suppressed = _meta_reply_block_reason(session_id, message)
+    if suppressed:
+        log_event("meta_reply_suppressed", session_id=session_id, channel=channel, reason=suppressed)
+        if suppressed != "channel_off":
+            _wa_capture_lead(message, session_id, human_request_handled, "meta_suppressed_contact_capture")
+        return
+
+    if inflight_token is not None and _wa_inflight.get(session_id) != inflight_token:
+        log_event("meta_reply_superseded", session_id=session_id, channel=channel, kind=kind)
+        return
+
+    reply = render_for_meta(reply)
+    try:
+        reply = render_for_meta(prevent_repetitive_reply(reply, message, session_id))
+    except Exception as exc:
+        log_event("meta_async_persist_error", session_id=session_id, error=str(exc)[:200])
+    if not reply:
+        log_event("meta_reply_empty", session_id=session_id, channel=channel)
+        return
+
+    # Send first, persist afterwards, exactly as WhatsApp learned to (11 Sep
+    # 2026 diff, finding #5): the transcript never shows an answer that the
+    # customer did not get.
+    outcome, detail, sent_parts = meta_send_and_register(session_id, reply, kind)
+    if outcome == "failed":
+        log_event("meta_reply_undelivered", session_id=session_id, channel=channel,
+                  kind=kind, error=str(detail)[:200])
+        _wa_capture_lead(message, session_id, human_request_handled, "meta_undelivered_contact_capture")
+        return
+    if outcome == "partial":
+        parts = meta_split_body(reply)
+        reply = "\n\n".join(parts[:sent_parts])
+        log_event("meta_reply_partial", session_id=session_id, channel=channel, kind=kind,
+                  sent_parts=sent_parts, total_parts=len(parts), error=str(detail)[:200])
+
+    try:
+        history = load_conversation(session_id)
+        history.append({"role": "assistant", "content": reply})
+        persist_conversation(session_id)
+        log_chat_message(session_id, "assistant", reply)
+        log_bot_reply(session_id, reply, fallback=fallback)
+        if outcome == "ok":
+            log_event("meta_reply_fallback" if fallback else "meta_reply_sent",
+                      session_id=session_id, channel=channel, ai_provider=ai_provider,
+                      message_id=str(detail)[:80], kind=kind)
+    except Exception as exc:
+        log_event("meta_async_persist_error", session_id=session_id, error=str(exc)[:200])
+
+    _wa_capture_lead(
+        message, session_id, human_request_handled,
+        "meta_fallback_contact_capture" if fallback else "meta_ai_contact_capture",
+    )
+
+
+def _meta_generate_and_send(message: str, session_id: str, human_request_handled: bool,
+                            message_mid: str, inflight_token=None) -> None:
+    _wa_generate_and_send(message, session_id, "", human_request_handled, message_mid,
+                          inflight_token, answer_one=_meta_answer_one)
+
+
+def _meta_ingest_text(channel: str, session_id: str, text: str, mid: str, *,
+                      kind: str = "text", answer: bool = True) -> None:
+    """One inbound text: record it, then hand the answer to a worker.
+
+    The same steps and the same order as the WhatsApp webhook: record first
+    so the enquiry is never lost, then the switch, the mute, the opt-out and
+    the per-thread queue decide whether the bot speaks."""
+    if is_rate_limited(session_id, scope="meta", max_per_window=WA_SENDER_MAX_PER_10_MIN, window=600):
+        log_event("meta_rate_limited", session_id=session_id, channel=channel)
+        return
+    message = str(text or "").strip()[:MAX_MESSAGE_LEN]
+    if not message:
+        return
+    enabled = meta_channel_enabled(channel)
+    history = load_conversation(session_id)
+    is_new = not history
+    history.append({"role": "user", "content": message, "at": now_iso()})
+    persist_conversation(session_id)
+    log_chat_message(session_id, "user", message)
+    if is_new:
+        log_event("conversation_started", session_id=session_id, channel=channel)
+        if enabled:
+            notify_new_conversation_async(session_id, message, channel)
+    log_event("message_received", session_id=session_id, channel=channel,
+              route=classify_route(message.lower()), message_length=len(message), kind=kind)
+
+    if not enabled:
+        # Launch gate: stored and logged above, nothing else. No reply, no
+        # owner alert, no CRM push until the channel is switched on.
+        log_event("meta_channel_off_skip", session_id=session_id, channel=channel)
+        return
+
+    # The webhook is signed by Meta and the sender is a real account, so an
+    # explicit "can I talk to Nick" is trusted like a WhatsApp one.
+    human_request_handled = notify_human_request_if_needed(
+        message, session_id, trusted_widget=True, internal_qa=False)
+
+    if not answer:
+        # A reply to one of Nick's stories: the bot cannot see the story, so
+        # anything it said about it would be a guess. Left for Nick, who sees
+        # it in his own inbox.
+        log_event("meta_story_reply_left_for_owner", session_id=session_id, channel=channel)
+        _wa_capture_lead(message, session_id, human_request_handled, "meta_story_reply_contact_capture")
+        return
+
+    if wa_muted(session_id):
+        log_event("meta_bot_muted_skip", session_id=session_id, channel=channel)
+        _wa_capture_lead(message, session_id, human_request_handled, "meta_muted_contact_capture")
+        return
+
+    is_opt_out = is_opt_out_message(normalise_chat_text(message))
+    if get_wa_setting(f"opted_out:{session_id}") == "1" and not is_opt_out:
+        log_event("meta_reply_suppressed", session_id=session_id, channel=channel, reason="opted_out")
+        _wa_capture_lead(message, session_id, human_request_handled, "meta_opted_out_contact_capture")
+        return
+
+    if not is_opt_out:
+        queued = _wa_queue_if_inflight(session_id, {
+            "message": message,
+            "message_sid": mid,
+            "human_request_handled": human_request_handled,
+        })
+        if queued:
+            log_event("meta_reply_queued", session_id=session_id, channel=channel, queued=queued)
+            return
+
+    # An opt-out takes the claim even from an answer in flight: that answer
+    # is then superseded and never sent, and the STOP gets its one reply.
+    inflight_token = _wa_claim_inflight(session_id)
+    _wa_async_dispatch(
+        target=_meta_generate_and_send,
+        args=(message, session_id, human_request_handled, mid, inflight_token),
+    )
+    log_event("meta_reply_deferred", session_id=session_id, channel=channel, kind=kind)
+
+
+def _meta_ingest_media(channel: str, session_id: str, attachments: list) -> None:
+    """An inbound with attachments and no text. Never sent to the model: it
+    cannot see images, and a guess about one is the hallucination we refuse.
+    Photos, videos, voice notes and shared posts get one honest "text only"
+    line, at most every META_MEDIA_ACK_HOURS; stickers, story mentions and
+    hearts are gestures and get nothing."""
+    types = [str(a.get("type") or "")[:20] for a in attachments]
+    sticker = any(isinstance(a.get("payload"), dict) and a["payload"].get("sticker_id") for a in attachments)
+    log_event("meta_media_received", session_id=session_id, channel=channel,
+              types=",".join(types)[:80], sticker="1" if sticker else "0")
+    if sticker or not any(t in _META_ACKED_ATTACHMENTS for t in types):
+        return
+    if is_rate_limited(session_id, scope="meta", max_per_window=WA_SENDER_MAX_PER_10_MIN, window=600):
+        log_event("meta_rate_limited", session_id=session_id, channel=channel)
+        return
+    if (not meta_channel_enabled(channel) or wa_muted(session_id)
+            or get_wa_setting(f"opted_out:{session_id}") == "1"):
+        return
+    try:
+        last = float(get_wa_setting(f"meta_media_ack:{session_id}") or 0)
+    except (TypeError, ValueError):
+        last = 0.0
+    if time.time() - last < META_MEDIA_ACK_HOURS * 3600:
+        return
+    # Claimed before sending, like the nudge: two photos in one burst get one line.
+    set_wa_setting(f"meta_media_ack:{session_id}", str(time.time()))
+    outcome, detail, sent_parts = meta_send_and_register(session_id, META_MEDIA_ACK_TEXT, "media_ack")
+    if not sent_parts:
+        log_event("meta_reply_undelivered", session_id=session_id, channel=channel,
+                  kind="media_ack", error=str(detail)[:200])
+        return
+    history = load_conversation(session_id)
+    history.append({"role": "assistant", "content": META_MEDIA_ACK_TEXT})
+    persist_conversation(session_id)
+    log_chat_message(session_id, "assistant", META_MEDIA_ACK_TEXT)
+    log_event("meta_media_ack_sent", session_id=session_id, channel=channel)
+
+
+def _meta_handle_echo(channel: str, session_id: str, message: dict) -> None:
+    """A message the business account sent. Ours: ignored, never a reply and
+    never a mute. Anyone else's (Nick in the Facebook or Instagram inbox, or
+    another tool): the same promise as a dashboard reply, the bot goes quiet in
+    this thread until handed back through /api/wa/mute, and his words join the
+    transcript so the bot has the context when it is handed back."""
+    if meta_is_own_echo(session_id, message):
+        return
+    text = str(message.get("text") or "").strip()[:MAX_MESSAGE_LEN]
+    set_wa_mute(session_id, 24 * 60)
+    content = text or "[sent an attachment from the inbox]"
+    history = load_conversation(session_id)
+    history.append({"role": "assistant", "content": content, "at": now_iso(), "by": "owner"})
+    persist_conversation(session_id)
+    log_chat_message(session_id, "assistant", content)
+    log_event("meta_native_reply_detected", session_id=session_id, channel=channel,
+              has_text="1" if text else "0", app=str(message.get("app_id") or "")[-6:])
+
+
+def _meta_handle_event(channel: str, event: dict, account_id: str) -> None:
+    """Route one entry.messaging[] event. Every shape Meta documents for these
+    webhooks lands somewhere explicit; nothing unknown reaches the model."""
+    prefix = "ig-" if channel == "instagram" else "fb-"
+    message = event.get("message") if isinstance(event.get("message"), dict) else None
+    sender = _meta_scoped_id((event.get("sender") or {}).get("id") if isinstance(event.get("sender"), dict) else "")
+    recipient = _meta_scoped_id((event.get("recipient") or {}).get("id") if isinstance(event.get("recipient"), dict) else "")
+
+    if message is not None and message.get("is_echo"):
+        # Business to customer: the customer is the RECIPIENT of an echo.
+        if recipient and _meta_first_sighting(str(message.get("mid") or "")[:200]):
+            _meta_handle_echo(channel, sanitize_session_id(prefix + recipient), message)
+        return
+    if not sender or (account_id and sender == _meta_scoped_id(account_id)):
+        return
+    session_id = sanitize_session_id(prefix + sender)
+
+    if message is not None:
+        mid = str(message.get("mid") or "")[:200]
+        if not _meta_first_sighting(mid):
+            return
+        if message.get("is_deleted") or message.get("is_unsupported"):
+            log_event("meta_event_ignored", session_id=session_id, channel=channel,
+                      kind="deleted" if message.get("is_deleted") else "unsupported")
+            return
+        text = str(message.get("text") or "").strip()
+        reply_to = message.get("reply_to") if isinstance(message.get("reply_to"), dict) else {}
+        if reply_to.get("story"):
+            if text:
+                _meta_ingest_text(channel, session_id, text, mid, kind="story_reply", answer=False)
+            else:
+                log_event("meta_event_ignored", session_id=session_id, channel=channel, kind="story_reply")
+            return
+        if text:
+            _meta_ingest_text(channel, session_id, text, mid)
+            return
+        attachments = [a for a in (message.get("attachments") or []) if isinstance(a, dict)]
+        if attachments:
+            _meta_ingest_media(channel, session_id, attachments)
+        else:
+            log_event("meta_event_ignored", session_id=session_id, channel=channel, kind="empty")
+        return
+
+    postback = event.get("postback")
+    if isinstance(postback, dict):
+        # A tapped button (Get Started, an ice breaker): its title is the words
+        # the person chose to send, so it is answered as if typed.
+        mid = str(postback.get("mid") or "")[:200]
+        title = str(postback.get("title") or "").strip()
+        if not _meta_first_sighting(mid):
+            return
+        if title:
+            _meta_ingest_text(channel, session_id, title, mid, kind="postback")
+        else:
+            log_event("meta_event_ignored", session_id=session_id, channel=channel, kind="postback")
+        return
+
+    kind = next((k for k in ("reaction", "read", "delivery", "message_edit", "referral", "optin", "account_linking",
+                             "pass_thread_control", "take_thread_control", "request_thread_control",
+                             "policy_enforcement") if k in event), "unknown")
+    if kind in ("read", "delivery"):
+        # One per message; a row each would multiply the events table for no
+        # fact anyone reads (same reasoning as WhatsApp receipts).
+        return
+    log_event("meta_event_ignored", session_id=session_id, channel=channel, kind=kind)
+
+
+def _meta_process_payload(payload: dict) -> None:
+    """Everything the webhook acknowledged, off the request thread. Each event
+    is isolated so one malformed event cannot cost the rest of the batch."""
+    channel = "instagram" if payload.get("object") == "instagram" else "messenger"
+    own_account = META_IG_ACCOUNT_ID if channel == "instagram" else META_PAGE_ID
+    for entry in payload.get("entry") or []:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("id") or "")
+        if own_account and entry_id != own_account:
+            log_event("meta_wrong_account", session_id="meta-system", channel=channel,
+                      account=entry_id[-6:])
+            continue
+        for event in entry.get("messaging") or []:
+            if not isinstance(event, dict):
+                continue
+            try:
+                _meta_handle_event(channel, event, entry_id)
+            except Exception as exc:
+                log_event("meta_event_error", session_id="meta-system", channel=channel,
+                          error=f"{type(exc).__name__}: {str(exc)[:160]}")
+        if entry.get("standby"):
+            # Handover protocol: another app owns these threads. Not ours to answer.
+            log_event("meta_event_ignored", session_id="meta-system", channel=channel,
+                      kind="standby", count=len(entry.get("standby") or []))
+        if entry.get("changes"):
+            # Comments and other feed changes: not subscribed, not answered.
+            log_event("meta_event_ignored", session_id="meta-system", channel=channel,
+                      kind="changes", count=len(entry.get("changes") or []))
+
+
+@app.get("/meta-webhook")
+async def meta_webhook_verify(request: Request):
+    """Meta's subscription handshake for the Messenger and Instagram webhooks:
+    echo hub.challenge only when hub.verify_token matches META_VERIFY_TOKEN."""
+    q = request.query_params
+    if (
+        META_VERIFY_TOKEN
+        and q.get("hub.mode") == "subscribe"
+        and secrets.compare_digest(q.get("hub.verify_token", "").encode(), META_VERIFY_TOKEN.encode())
+    ):
+        log_event("meta_webhook_verified", session_id="meta-system")
+        return Response(content=q.get("hub.challenge", "")[:256], media_type="text/plain")
+    return Response(status_code=403)
+
+
+def _meta_log_refusal(request: Request, event_type: str) -> None:
+    """Refusals are logged, but at most twenty per caller per ten minutes: the
+    URL is public, and junk traffic must not be able to grow the events table.
+    Only refusals count against the budget, never Meta's real deliveries."""
+    if not is_rate_limited(client_ip(request), scope="meta_refused", max_per_window=20, window=600):
+        log_event(event_type, session_id="meta-system")
+
+
+@app.post("/meta-webhook")
+async def meta_webhook_receive(request: Request):
+    """Messenger and Instagram events. Fail-closed without the app secret,
+    403 on a bad signature, otherwise acknowledged at once and processed on a
+    worker thread (Meta disables a webhook that keeps answering slowly)."""
+    if not META_APP_SECRET:
+        _meta_log_refusal(request, "meta_webhook_unconfigured")
+        return Response(status_code=503)
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > META_WEBHOOK_MAX_BYTES:
+        return Response(status_code=413)
+    raw = await request.body()
+    if len(raw) > META_WEBHOOK_MAX_BYTES:
+        return Response(status_code=413)
+    if not meta_signature_valid(raw, request.headers.get("x-hub-signature-256", "")):
+        _meta_log_refusal(request, "meta_bad_signature")
+        return Response(status_code=403)
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return Response(status_code=400)
+    if not isinstance(payload, dict):
+        return Response(status_code=400)
+    obj = str(payload.get("object") or "")
+    if obj not in ("page", "instagram"):
+        log_event("meta_webhook_ignored", session_id="meta-system", object=obj[:24])
+        return JSONResponse({"status": "ignored"})
+    _wa_async_dispatch(target=_meta_process_payload, args=(payload,))
+    return JSONResponse({"status": "received"})
+
+
+def meta_manual_reply(session_id: str, message: str) -> JSONResponse:
+    """/api/wa/reply for an fb- or ig- thread: same contract as WhatsApp (send,
+    then record, then mute the bot for 24h), Meta's 24h window, and the launch
+    gate applies to Nick's own sends too while the channel is switched off."""
+    channel = session_channel(session_id)
+    if not meta_channel_enabled(channel):
+        return JSONResponse(
+            {"ok": False, "error": "channel_off",
+             "detail": f"The {channel_display_label(channel)} channel is switched off, so nothing is sent."},
+            status_code=409,
+        )
+    window = meta_window_state(session_id)
+    if not window["window_open"]:
+        return JSONResponse(
+            {"ok": False, "error": "outside_24h_window",
+             "detail": "Messenger and Instagram only allow a business reply within 24h of the "
+                       "customer's last message, and this thread's window has closed."},
+            status_code=422,
+        )
+    outcome, detail, sent_parts = meta_send_and_register(session_id, message, "manual")
+    if not sent_parts:
+        log_event("meta_manual_reply_error", session_id=session_id, channel=channel,
+                  error=str(detail)[:200], outcome=outcome)
+        return JSONResponse({"ok": False, "error": detail}, status_code=502)
+    history = load_conversation(session_id)
+    history.append({"role": "assistant", "content": message})
+    persist_conversation(session_id)
+    log_chat_message(session_id, "assistant", message)
+    set_wa_mute(session_id, 24 * 60)
+    log_event("meta_manual_reply_sent", session_id=session_id, channel=channel, message_id=str(detail)[:80])
+    return JSONResponse({"ok": True, "message_id": detail, "muted": True, "outcome": outcome})
+
+
+def meta_dashboard_payload() -> dict:
+    """Messenger and Instagram threads for the dashboard: last message, the
+    24h window, mute and opt-out. A separate payload rather than a widened
+    /api/wa/conversations, whose screen renders every thread as a WhatsApp
+    number; the dashboard tab for these is follow-up work."""
+    threads: dict[str, dict] = {}
+    last_user_ts: dict[str, datetime] = {}
+    for row in read_conversation_logs():
+        sid = str(row.get("session_id", ""))
+        if not is_meta_session(sid):
+            continue
+        entry = threads.setdefault(sid, {"session_id": sid, "channel": session_channel(sid),
+                                         "message_count": 0, "last_message": None})
+        entry["message_count"] += 1
+        ts = str(row.get("timestamp", ""))
+        if entry["last_message"] is None or ts > entry["last_message"]["timestamp"]:
+            entry["last_message"] = {"timestamp": ts, "role": row.get("role"),
+                                     "content": str(row.get("content", ""))[:280]}
+        if row.get("role") == "user":
+            parsed = _parse_any_ts(ts)
+            if parsed and (sid not in last_user_ts or parsed > last_user_ts[sid]):
+                last_user_ts[sid] = parsed
+    now = datetime.now()
+    for sid, entry in threads.items():
+        last_in = last_user_ts.get(sid)
+        elapsed = (now - last_in).total_seconds() if last_in else None
+        entry.update({
+            "window_open": elapsed is not None and elapsed < META_WINDOW_HOURS * 3600,
+            "minutes_remaining": max(0, int((META_WINDOW_HOURS * 3600 - elapsed) // 60)) if elapsed is not None else 0,
+            "last_inbound_at": last_in.isoformat() if last_in else None,
+            "muted": wa_muted(sid),
+            "opted_out": get_wa_setting(f"opted_out:{sid}") == "1",
+        })
+    return {
+        "channels_enabled": {c: meta_channel_enabled(c) for c in META_CHANNEL_SWITCH_KEYS},
+        "configured": meta_config_state(),
+        "conversations": sorted(threads.values(),
+                                key=lambda t: (t["last_message"] or {}).get("timestamp", ""),
+                                reverse=True),
+    }
+
+
+@app.get("/api/meta/conversations")
+def meta_conversations(_: str = Depends(require_admin)):
+    # Sync on purpose, like /api/wa/conversations: it reads the whole
+    # transcript log, so FastAPI runs it in the threadpool.
+    return JSONResponse(meta_dashboard_payload())
+
+
+DATA_DELETION_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robo-Nick data deletion</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#1f2937;line-height:1.55;background:#fff}
+h1{font-size:1.5rem;margin-bottom:.25rem}h2{font-size:1.05rem;margin-top:1.6rem}a{color:#0b3d91}
+</style></head><body>
+<h1>Robo-Nick data deletion instructions</h1>
+<p>Robo-Nick is the automated chat assistant of The Outdoor Squad, Sydney. It answers messages sent to The Outdoor Squad through the website chat, WhatsApp, Facebook Messenger and Instagram, and is run for The Outdoor Squad by its technology provider, Realtiq.</p>
+<h2>What is kept</h2>
+<p>For a Facebook Messenger or Instagram conversation: the messages you send and the replies you receive, the conversation ID that Facebook or Instagram gives the business for your chat, and any name, email address or phone number you choose to type in the chat.</p>
+<h2>How to have it deleted</h2>
+<p>Email <a href="mailto:__EMAIL__">__EMAIL__</a> and ask for your Robo-Nick chat records to be deleted. Include the name of the Facebook or Instagram account you messaged from and roughly when you messaged, so the right conversation is found, and we will take care of it.</p>
+<p>More detail is in The Outdoor Squad privacy policy: <a href="https://www.outdoorsquad.com.au/privacy-policy">outdoorsquad.com.au/privacy-policy</a>.</p>
+</body></html>
+"""
+
+
+@app.get("/data-deletion", response_class=HTMLResponse)
+async def data_deletion_page():
+    """Public data deletion instructions: the "Data Deletion Instructions URL"
+    Meta's app settings ask for. Instructions rather than a signed_request
+    callback, because that callback identifies people by their Facebook Login
+    app-scoped id, which a messaging-only app never sees and could not match
+    to a conversation: it would confirm deletions it cannot perform."""
+    email = html.escape(HUMAN_EMAIL or "innerwest@outdoorsquad.com.au")
+    return HTMLResponse(DATA_DELETION_HTML.replace("__EMAIL__", email))
 
 
 # ── Follow-up nudge (the "single follow-up nudge" on the invoice) ────────────
@@ -9870,6 +10799,11 @@ async def health():
         # "Sent" and the report's delivered/failed pair reads 0 / 0 because
         # nothing is measuring it (review of the 11 Sep 2026 diff work).
         "wa_delivery_receipts_configured": bool(wa_status_callback_url()),
+        # Messenger / Instagram (27 Sep 2026): booleans only, never a value.
+        # The switches default OFF, so a deploy alone answers nobody.
+        "meta_webhook_configured": bool(META_APP_SECRET and META_VERIFY_TOKEN),
+        "meta_send_configured": bool(META_PAGE_ACCESS_TOKEN),
+        "meta_channels_enabled": {c: meta_channel_enabled(c) for c in META_CHANNEL_SWITCH_KEYS},
         "smtp_configured": bool(SMTP_HOST and SMTP_FROM),
         "source_chunks": len(SOURCE_CHUNKS),
     })
@@ -10931,7 +11865,7 @@ def format_lead_summary(lead_info: dict) -> str:
     else:
         concerns_text = str(concerns)
     channel = str(lead_info.get("channel") or "website")
-    channel_label = "WhatsApp" if channel == "whatsapp" else "Website"
+    channel_label = channel_display_label(channel)
     heading = (
         f"Outdoor Squad {channel_label} customer asked for a human"
         if lead_info.get("alert_type") == "human_request"
@@ -10940,7 +11874,10 @@ def format_lead_summary(lead_info: dict) -> str:
     reply_hint = (
         "Reply to them inside the WhatsApp thread on the dashboard within 24 hours "
         "(after that WhatsApp only allows an approved template).\n"
-        if channel == "whatsapp" else ""
+        if channel == "whatsapp" else
+        f"Reply to them in the {channel_label} inbox within 24 hours "
+        "(after that Meta blocks replies from the business).\n"
+        if channel in ("messenger", "instagram") else ""
     )
     # The WhatsApp display name is whatever the sender typed into their own
     # phone, so it is labelled rather than presented as the customer's name
@@ -11115,7 +12052,8 @@ def _send_twilio_sms(body: str) -> bool:
 def send_lead_summary_twilio(lead_info: dict) -> bool:
     if not lead_summary_twilio_configured():
         return False
-    channel_label = "WhatsApp" if lead_info.get("channel") == "whatsapp" else "website"
+    channel = str(lead_info.get("channel") or "website")
+    channel_label = channel_display_label(channel) if channel != "website" else "website"
     name = lead_info.get("name") or lead_info.get("route") or f"{channel_label} enquiry"
     phone = str(lead_info.get("phone") or "no phone")
     body = (
