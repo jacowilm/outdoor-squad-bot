@@ -7256,7 +7256,19 @@ async def twilio_sms_webhook(request: Request):
         return Response(status_code=403)
     sender = str(form.get("From", ""))
     body = str(form.get("Body", ""))[:800]
-    log_event("sms_inbound", session_id="sms-system", sender=sender[:24], length=len(body))
+    try:
+        media = int(form.get("NumMedia") or 0)
+    except (TypeError, ValueError):
+        media = 0
+    # Since 27 Sep 2026 the event carries the text itself, because this row IS
+    # the dashboard's SMS tab. Until then it held only the length, so a text to
+    # the number reached Nick's inbox and nowhere else, and "where is it
+    # supposed to show?" had no answer. Stored as-is, like the email he already
+    # gets: redacting it the way the chat transcripts are would blank out the
+    # very callback number a texter types. media=0 is dropped by log_event, so
+    # it only appears on a picture message.
+    log_event("sms_inbound", session_id="sms-system", sender=sender[:24], length=len(body),
+              body=body, media=media or None)
     threading.Thread(
         target=send_email_resend,
         args=(
@@ -7269,6 +7281,84 @@ async def twilio_sms_webhook(request: Request):
     ).start()
     return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
                     media_type="application/xml")
+
+
+# The SMS tab reads the sms_inbound events above rather than a table of its
+# own. SMS to this number is one-way on purpose (Nick answers from his own
+# phone), so there is no thread state to keep: no window, no mute, no replies.
+# The events table already has an (event_type, timestamp) index, so no
+# migration was needed. The conversation logs were the other candidate and
+# were rejected: the Website tab lists every non-WhatsApp session in them, so
+# texts would have shown up as website chats too.
+SMS_DASHBOARD_READ_LIMIT = 500
+
+
+def read_sms_inbound(limit: int = SMS_DASHBOARD_READ_LIMIT) -> list[dict]:
+    """Inbound texts to the business number, oldest first, newest `limit` only."""
+    if supabase_enabled():
+        try:
+            rows = supabase_request(
+                "GET",
+                SUPABASE_TABLES["events"],
+                params={
+                    "select": "timestamp,metadata",
+                    "event_type": "eq.sms_inbound",
+                    "order": "timestamp.desc",
+                    "limit": str(limit),
+                },
+            ) or []
+            texts = []
+            for row in rows:
+                metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+                texts.append({**metadata, "timestamp": row.get("timestamp")})
+            return sort_rows_by_timestamp(texts)
+        except Exception:
+            pass
+    texts = [e for e in read_events() if e.get("event_type") == "sms_inbound"]
+    return sort_rows_by_timestamp(texts)[-limit:]
+
+
+def sms_dashboard_payload() -> dict:
+    """Texts grouped by the number that sent them, most recent sender first.
+
+    `body` is None on texts received before 27 Sep 2026, when only the length
+    was recorded, so the tab can say the words were never stored instead of
+    showing them as an empty message.
+    """
+    threads: dict[str, dict] = {}
+    for row in read_sms_inbound():
+        sender = str(row.get("sender") or "").strip() or "Unknown number"
+        thread = threads.setdefault(sender, {"sender": sender, "message_count": 0, "messages": []})
+        body = row.get("body")
+        try:
+            length = int(row.get("length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        try:
+            media = int(row.get("media") or 0)
+        except (TypeError, ValueError):
+            media = 0
+        thread["messages"].append({
+            "timestamp": row.get("timestamp"),
+            # log_event drops empty values, so an empty text has no body key
+            # at all; length 0 tells it apart from a pre-27-Sep row.
+            "body": body if isinstance(body, str) else ("" if length == 0 else None),
+            "length": length,
+            "media": media,
+        })
+        thread["message_count"] += 1
+        thread["last_at"] = row.get("timestamp")
+    ordered = sorted(threads.values(), key=lambda t: t.get("last_at") or "", reverse=True)
+    return {
+        "threads": ordered,
+        "message_count": sum(t["message_count"] for t in ordered),
+    }
+
+
+@app.get("/api/sms/messages")
+def sms_messages(_: str = Depends(require_admin)):
+    # Sync, so FastAPI runs it in the threadpool like /api/wa/conversations.
+    return JSONResponse(sms_dashboard_payload())
 
 
 def _wa_claim_live(session_id: str) -> bool:
@@ -10367,12 +10457,44 @@ async def admin_dashboard(_: str = Depends(require_admin)):
         "logs": read_conversation_logs(120),
         "transcripts": grouped_transcripts(1000),
         "wa": wa_dashboard_payload(),
+        "sms": sms_dashboard_payload(),
         "notifications": notification_settings_payload(),
     }
     # html_safe_json (not plain json.dumps): a visitor's chat message containing
     # "</script>" would otherwise break out of this inline <script> and run in the
     # authenticated owner's browser (stored XSS). See html_safe_json().
     return HTMLResponse(ADMIN_HTML.replace("__ADMIN_DATA__", html_safe_json(admin_data)))
+
+
+# What the dashboard's background refresh may ask for, built by the SAME
+# functions the /admin page load uses, so a polled tab can never show a
+# different shape from a freshly loaded one.
+ADMIN_SNAPSHOT_PARTS = {
+    "metrics": build_metrics_payload,
+    "leads": read_leads,
+    "transcripts": lambda: grouped_transcripts(1000),
+    "wa": wa_dashboard_payload,
+    "sms": sms_dashboard_payload,
+}
+
+
+@app.get("/api/admin/snapshot")
+def admin_snapshot(parts: str = "", _: str = Depends(require_admin)):
+    """Only the parts the visible tab needs (27 Sep 2026 auto-refresh).
+
+    Jacobo, watching live conversations, had to reload the page to see each new
+    message. The page now polls this every few seconds for the ACTIVE tab only,
+    so the cost of a refresh is one tab's worth of reads, not the whole
+    dashboard's. Sync on purpose, like /api/wa/conversations, so a slow read
+    runs in the threadpool instead of holding up the Twilio webhooks.
+    """
+    wanted = []
+    for part in parts.split(","):
+        part = part.strip()
+        if part in ADMIN_SNAPSHOT_PARTS and part not in wanted:
+            wanted.append(part)
+    payload = {part: ADMIN_SNAPSHOT_PARTS[part]() for part in wanted}
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -12910,6 +13032,7 @@ ADMIN_HTML = """
     .chip svg { width: 14px; height: 14px; }
     .chip.website { background: var(--canvas); color: var(--ink-2); }
     .chip.whatsapp { background: var(--green-tint); color: var(--green); }
+    .chip.sms { background: var(--amber-tint); color: var(--amber-ink); }
     .feed-main { min-width: 0; flex: 1; }
     .feed-name { display: block; font-size: .8rem; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .feed-preview { display: block; font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
@@ -13091,6 +13214,9 @@ ADMIN_HTML = """
     }
     .replybar input:focus { border-color: var(--amber-deep); box-shadow: 0 0 0 3px rgba(255,208,112,.25); }
     .replybar input:disabled { background: var(--canvas); color: var(--faint); }
+    /* An SMS row with no words to show (stored before 27 Sep 2026, or a
+       picture) says so in the bubble itself, set apart from real text. */
+    .sms-note { font-style: italic; opacity: .78; }
     .footnote { padding: 0 16px 12px; font-size: .72rem; color: var(--muted); min-height: 16px; }
     .footnote.err { color: var(--red); }
 
@@ -13239,6 +13365,10 @@ ADMIN_HTML = """
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8a8.5 8.5 0 0 1-7.6 4.7a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8a8.5 8.5 0 0 1 4.7-7.6a8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
         WhatsApp <span class="tab-count" id="waCount">0</span>
       </button>
+      <button class="tab" data-tab="sms" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
+        SMS <span class="tab-count" id="smsCount">0</span>
+      </button>
     </div>
   </div>
 
@@ -13379,6 +13509,28 @@ ADMIN_HTML = """
         </div>
       </div>
     </section>
+
+    <section class="panel" data-panel="sms">
+      <div class="section-head">
+        <div class="page-head">
+          <h2 class="page-title">Text messages</h2>
+          <p class="page-sub">Texts sent to the business number. Nobody answers these automatically: reply from your own phone. This tab just shows what came in, and every text is emailed to you as well.</p>
+        </div>
+      </div>
+      <div class="split">
+        <div class="list-pane" id="smsThreads"></div>
+        <div class="detail-pane">
+          <div class="detail-head">
+            <div class="detail-head-meta" id="smsMeta">Select a number on the left.</div>
+            <div class="detail-actions">
+              <a class="btn ghost" id="smsCallBtn" aria-disabled="true">Call</a>
+              <a class="btn primary" id="smsTextBtn" aria-disabled="true">Text back</a>
+            </div>
+          </div>
+          <div class="messages" id="smsMessages"></div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <div class="modal-backdrop" id="pwModal" hidden>
@@ -13404,6 +13556,8 @@ ADMIN_HTML = """
 
     var ICON_GLOBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13.5 13.5 0 0 1 0 18a13.5 13.5 0 0 1 0-18"/></svg>';
     var ICON_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8a8.5 8.5 0 0 1-7.6 4.7a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8a8.5 8.5 0 0 1 4.7-7.6a8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>';
+    var ICON_PHONE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>';
+    var CHANNEL_ICONS = { website: ICON_GLOBE, whatsapp: ICON_CHAT, sms: ICON_PHONE };
 
     function esc(value) {
       return String(value == null ? '' : value).replace(/[&<>"']/g, function(c) {
@@ -13467,10 +13621,19 @@ ADMIN_HTML = """
     function activateTab(name) {
       document.querySelectorAll('.tab').forEach(function(t) {
         t.classList.toggle('active', t.getAttribute('data-tab') === name);
+        // On a phone the fifth tab (SMS) sits past the edge of the scrolling
+        // tab bar, so a jump from the Overview feed would light up a tab
+        // nobody can see.
+        if (t.getAttribute('data-tab') === name && t.scrollIntoView) {
+          t.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
       });
       document.querySelectorAll('.panel').forEach(function(p) {
         p.classList.toggle('active', p.getAttribute('data-panel') === name);
       });
+      // A tab that was not being polled may be several cycles out of date,
+      // so switching to it fetches its data now instead of on the next tick.
+      pollNow();
     }
     function initTabs() {
       document.querySelectorAll('.tab').forEach(function(tab) {
@@ -13504,11 +13667,18 @@ ADMIN_HTML = """
           preview: last.content || ''
         });
       });
+      (smsData().threads || []).forEach(function(t) {
+        const last = (t.messages || [])[(t.messages || []).length - 1] || {};
+        items.push({
+          channel: 'sms', id: t.sender, ts: t.last_at,
+          name: t.sender + ' \u00b7 text', preview: smsPreview(last)
+        });
+      });
       items.sort(function(a, b) { return new Date(b.ts || 0) - new Date(a.ts || 0); });
       const feed = document.getElementById('ovActivity');
       feed.innerHTML = items.length ? items.slice(0, 8).map(function(it) {
         return '<button class="feed-row" type="button" data-open-channel="' + esc(it.channel) + '" data-open-id="' + esc(it.id) + '">'
-          + '<span class="chip ' + esc(it.channel) + '">' + (it.channel === 'whatsapp' ? ICON_CHAT : ICON_GLOBE) + '</span>'
+          + '<span class="chip ' + esc(it.channel) + '">' + (CHANNEL_ICONS[it.channel] || ICON_GLOBE) + '</span>'
           + '<span class="feed-main">'
           +   '<span class="feed-name">' + esc(it.name) + '</span>'
           +   '<span class="feed-preview">' + esc(it.preview) + '</span>'
@@ -13524,6 +13694,10 @@ ADMIN_HTML = """
             waSelectedId = id;
             renderWaThreads(); renderWaDetail();
             activateTab('whatsapp');
+          } else if (channel === 'sms') {
+            smsSelected = id;
+            renderSmsThreads(); renderSmsDetail();
+            activateTab('sms');
           } else {
             const searchEl = document.getElementById('search');
             if (searchEl) searchEl.value = '';
@@ -13537,6 +13711,7 @@ ADMIN_HTML = """
       // Channel status.
       const webCount = websiteTranscripts().length;
       const waCountN = (wa.conversations || []).length;
+      const smsCountN = (smsData().threads || []).length;
       document.getElementById('ovChannels').innerHTML = ''
         + '<div class="plain-row">'
         +   '<span class="chip website">' + ICON_GLOBE + '</span>'
@@ -13553,6 +13728,14 @@ ADMIN_HTML = """
         +     '<span class="feed-preview">' + (waCountN ? num(waCountN) + (waCountN === 1 ? ' conversation' : ' conversations') : 'No conversations yet') + '</span>'
         +   '</span>'
         +   (wa.channel_enabled ? '<span class="badge">On</span>' : '<span class="badge red">Off</span>')
+        + '</div>'
+        + '<div class="plain-row">'
+        +   '<span class="chip sms">' + ICON_PHONE + '</span>'
+        +   '<span class="feed-main">'
+        +     '<span class="feed-name">Text messages (SMS)</span>'
+        +     '<span class="feed-preview">' + (smsCountN ? num(smsCountN) + (smsCountN === 1 ? ' number has texted' : ' numbers have texted') : 'No texts yet') + '</span>'
+        +   '</span>'
+        +   '<span class="badge">You reply</span>'
         + '</div>';
 
       // Latest leads.
@@ -13771,6 +13954,12 @@ ADMIN_HTML = """
       });
     }
 
+    // Which thread the detail pane last drew. A render for the SAME thread is
+    // a refresh (the 8-second poll, or the one after a send or a mute), and a
+    // refresh must leave the reply box and the note under it alone.
+    let waDetailShownId = null;
+    let waSending = false;
+
     function renderWaDetail() {
       const thread = (waData().conversations || []).find(function(t) { return t.session_id === waSelectedId; });
       const meta = document.getElementById('waMeta');
@@ -13778,7 +13967,13 @@ ADMIN_HTML = """
       const input = document.getElementById('waReplyInput');
       const send = document.getElementById('waReplySend');
       const note = document.getElementById('waNote');
-      note.textContent = ''; note.className = 'footnote';
+      const sameThread = !!thread && thread.session_id === waDetailShownId;
+      waDetailShownId = thread ? thread.session_id : null;
+      // The note is cleared only when a DIFFERENT thread is opened. Clearing it
+      // on every render wiped "Sent, awaiting delivery" the instant after it
+      // was written (the send handler re-renders straight away), and with the
+      // auto-refresh an error Nick had not read yet would vanish within 8s.
+      if (!sameThread) { note.textContent = ''; note.className = 'footnote'; }
       if (!thread) {
         meta.textContent = 'Select a conversation on the left.';
         muteBtn.disabled = true; input.disabled = true; send.disabled = true;
@@ -13798,7 +13993,20 @@ ADMIN_HTML = """
       muteBtn.disabled = false;
       muteBtn.textContent = thread.muted ? 'Hand back to bot' : 'Mute bot';
       const canReply = !!thread.window_open;
-      input.disabled = !canReply; send.disabled = !canReply;
+      // Nothing here ever writes input.value: only the send handler clears it,
+      // and only after the server accepted the message. On a refresh of the
+      // same thread the box is not disabled under someone who is in it either
+      // (focused, or holding unsent text): disabling a focused input throws
+      // the focus away mid-word. If the 24h window really did close meanwhile,
+      // the server refuses the send, says so in the note, and the text is
+      // still in the box to copy elsewhere.
+      const typing = document.activeElement === input || input.value.trim() !== '';
+      if (canReply || !(sameThread && typing)) {
+        input.disabled = !canReply;
+        // A poll landing while a reply is on its way must not re-enable Send
+        // and invite a double-tap that sends the message twice.
+        send.disabled = !canReply || waSending;
+      }
       input.placeholder = canReply ? 'Reply as Nick…' : 'Window closed. WhatsApp only allows template messages now.';
       // Draw the episode boundaries in the transcript itself: the same gap
       // rule the server uses, applied to the customer's own messages, so a
@@ -13885,14 +14093,256 @@ ADMIN_HTML = """
       }).join('') || '<div class="empty">No messages recorded for this thread.</div>';
     }
 
+    // After a send, a mute or the channel switch. Goes through the same
+    // snapshot as the poll, and fetches the transcripts too: it used to fetch
+    // the thread list alone, so the customer's newest messages (which live in
+    // the transcripts) still needed a full reload to appear.
     async function waRefresh() {
-      try {
-        const res = await fetch('/api/wa/conversations', { credentials: 'include' });
-        if (res.ok) {
-          window.__OS_ADMIN_DATA__.wa = await res.json();
-          renderWaThreads(); renderWaDetail(); renderOverview();
+      try { await fetchSnapshot(['wa', 'transcripts']); } catch (e) {}
+    }
+
+    // ── SMS ─────────────────────────────────────────────────────
+    // One-way by design: texts to the business number are recorded and emailed
+    // to Nick, and he answers from his own phone. So this tab has no reply box,
+    // no window and no mute; the buttons open the phone's own dialler and
+    // Messages app with the number filled in.
+    let smsSelected = null;
+
+    function smsData() { return (window.__OS_ADMIN_DATA__ || {}).sms || { threads: [] }; }
+
+    function smsPreview(m) {
+      if (!m) return '';
+      if (m.body === null || m.body === undefined) return 'Text not stored (arrived before 27 Sep 2026)';
+      if (!m.body) return m.media ? 'Sent a picture or file' : 'Empty message';
+      return m.body;
+    }
+
+    function smsBodyHtml(m) {
+      if (m.body === null || m.body === undefined) {
+        return '<span class="sms-note">The words were not stored: this text arrived before 27 Sep 2026, when only its length ('
+          + esc(m.length || 0) + ' characters) was kept. The email alert about it has the full text.</span>';
+      }
+      if (!m.body) {
+        return '<span class="sms-note">' + (m.media ? 'Sent a picture or file, which cannot be shown here.' : 'Empty message.') + '</span>';
+      }
+      return esc(m.body) + (m.media ? '<div class="sms-note">Also sent a picture or file, not shown here.</div>' : '');
+    }
+
+    function smsHref(scheme, number) {
+      // Keep the leading + readable, as in the leads table.
+      return scheme + ':' + encodeURIComponent(number).replace(/%2B/g, '+');
+    }
+
+    function renderSmsThreads() {
+      const threads = smsData().threads || [];
+      document.getElementById('smsCount').textContent = num(threads.length);
+      if (smsSelected && !threads.some(function(t) { return t.sender === smsSelected; })) smsSelected = null;
+      if (!smsSelected && threads.length) smsSelected = threads[0].sender;
+      const wrap = document.getElementById('smsThreads');
+      wrap.innerHTML = threads.length ? threads.map(function(t) {
+        const active = t.sender === smsSelected ? ' active' : '';
+        const msgs = t.messages || [];
+        const count = t.message_count || msgs.length;
+        return '<button class="session-row' + active + '" type="button" data-sms-sender="' + esc(t.sender) + '">'
+          + '<div class="session-avatar">' + ICON_PHONE + '</div>'
+          + '<div class="session-meta">'
+          +   '<span class="session-id">' + esc(t.sender) + '</span>'
+          +   '<div class="session-time">' + esc(fmtRelative(t.last_at)) + ' · ' + esc(count) + (count === 1 ? ' text' : ' texts') + '</div>'
+          +   '<div class="session-preview">' + esc(smsPreview(msgs[msgs.length - 1])) + '</div>'
+          + '</div>'
+          + '</button>';
+      }).join('') : '<div class="empty">No texts yet. When someone texts the business number, it shows up here within a few seconds.</div>';
+      wrap.querySelectorAll('[data-sms-sender]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          smsSelected = btn.getAttribute('data-sms-sender');
+          renderSmsThreads(); renderSmsDetail();
+        });
+      });
+    }
+
+    function renderSmsDetail() {
+      const thread = (smsData().threads || []).find(function(t) { return t.sender === smsSelected; });
+      const meta = document.getElementById('smsMeta');
+      const callBtn = document.getElementById('smsCallBtn');
+      const textBtn = document.getElementById('smsTextBtn');
+      const msgs = document.getElementById('smsMessages');
+      // Only a real number gets live buttons; a blank sender would dial nothing.
+      const dialable = !!thread && /^[+0-9]/.test(thread.sender);
+      [[callBtn, 'tel'], [textBtn, 'sms']].forEach(function(pair) {
+        if (dialable) {
+          pair[0].href = smsHref(pair[1], thread.sender);
+          pair[0].removeAttribute('aria-disabled');
+        } else {
+          pair[0].removeAttribute('href');
+          pair[0].setAttribute('aria-disabled', 'true');
         }
-      } catch (e) {}
+      });
+      if (!thread) {
+        meta.textContent = 'Select a number on the left.';
+        msgs.innerHTML = '';
+        return;
+      }
+      meta.innerHTML = '<strong>' + esc(thread.sender) + '</strong> <span class="badge amber">Reply from your own phone</span>';
+      msgs.innerHTML = (thread.messages || []).map(function(m) {
+        return '<article class="chat-message user">'
+          + '<div class="role">Text · ' + esc(fmtDate(m.timestamp)) + '</div>'
+          + smsBodyHtml(m)
+          + '</article>';
+      }).join('') || '<div class="empty">No texts recorded from this number.</div>';
+    }
+
+    // ── Auto-refresh (27 Sep 2026) ──────────────────────────────
+    // Jacobo, watching live conversations, had to press Refresh to see every
+    // new message. The page now asks /api/admin/snapshot for the ACTIVE tab's
+    // data every POLL_MS, and only while the browser tab is visible (a hidden
+    // tab stops polling; it catches up the moment it is shown again). The
+    // rules that keep a refresh out of the way of whoever is using the page:
+    //  1. A part whose JSON has not changed is not re-rendered, so most polls
+    //     touch nothing on screen at all.
+    //  2. Nothing writes to the WhatsApp reply box; a refresh of the same thread
+    //     keeps its note and does not disable it under someone typing (see
+    //     renderWaDetail).
+    //  3. The open thread stays open (the selections live in their own
+    //     variables, not in the DOM), list panes keep their scroll position,
+    //     and a message pane keeps it too unless it was already at the bottom,
+    //     in which case it follows the new message down.
+    // setTimeout, not setInterval: a slow response delays the next poll
+    // instead of stacking requests behind it on a single uvicorn worker.
+    const POLL_MS = 8000;
+    const TAB_PARTS = {
+      overview: ['metrics', 'leads', 'transcripts', 'wa', 'sms'],
+      leads: ['leads'],
+      website: ['transcripts'],
+      whatsapp: ['wa', 'transcripts'],
+      sms: ['sms']
+    };
+    const partSig = {};
+    let pollTimer = null, pollBusy = false, pollStopped = false, pollStarted = false;
+
+    function activeTabName() {
+      const tab = document.querySelector('.tab.active');
+      return tab ? tab.getAttribute('data-tab') : 'overview';
+    }
+
+    // Re-render with the scroll positions put back. `follow` panes (message
+    // lists, newest at the bottom) stay pinned to the bottom if they were
+    // there; list panes (newest at the top) always keep their offset.
+    function keepScroll(panes, render) {
+      const saved = panes.map(function(p) {
+        const el = document.getElementById(p.id);
+        if (!el) return null;
+        return {
+          el: el, top: el.scrollTop, follow: p.follow,
+          atBottom: el.scrollHeight - el.scrollTop - el.clientHeight < 24
+        };
+      });
+      render();
+      saved.forEach(function(p) {
+        if (!p) return;
+        p.el.scrollTop = (p.follow && p.atBottom) ? p.el.scrollHeight : p.top;
+      });
+    }
+
+    function renderCounts() {
+      const data = window.__OS_ADMIN_DATA__ || {};
+      document.getElementById('leadsCount').textContent = num((data.leads || []).length);
+      document.getElementById('websiteCount').textContent = num(websiteTranscripts().length);
+      document.getElementById('smsCount').textContent = num((smsData().threads || []).length);
+    }
+
+    function applySnapshot(data) {
+      const changed = {};
+      Object.keys(data || {}).forEach(function(part) {
+        const sig = JSON.stringify(data[part]);
+        if (sig === partSig[part]) return;
+        partSig[part] = sig;
+        window.__OS_ADMIN_DATA__[part] = data[part];
+        changed[part] = true;
+      });
+      if (changed.metrics) renderMetrics();
+      if (changed.leads) renderLeads(window.__OS_ADMIN_DATA__.leads || []);
+      if (changed.transcripts) {
+        keepScroll([{ id: 'sessions' }, { id: 'messages', follow: true }], function() {
+          renderSessions(); renderTranscript();
+        });
+      }
+      // WhatsApp messages live in the transcripts, so either part redraws it.
+      if (changed.wa || changed.transcripts) {
+        keepScroll([{ id: 'waThreads' }, { id: 'waMessages', follow: true }], function() {
+          renderWaThreads(); renderWaDetail();
+        });
+      }
+      if (changed.sms) {
+        keepScroll([{ id: 'smsThreads' }, { id: 'smsMessages', follow: true }], function() {
+          renderSmsThreads(); renderSmsDetail();
+        });
+      }
+      if (Object.keys(changed).length) { renderCounts(); renderOverview(); }
+    }
+
+    function stopPolling(reason) {
+      pollStopped = true;
+      window.clearTimeout(pollTimer);
+      document.getElementById('lastUpdated').textContent = reason;
+    }
+
+    async function fetchSnapshot(parts) {
+      if (!parts || !parts.length) return;
+      const res = await fetch('/api/admin/snapshot?parts=' + encodeURIComponent(parts.join(',')), {
+        credentials: 'include', cache: 'no-store'
+      });
+      // A 401 means the session cookie expired or someone signed out
+      // elsewhere. Polling on would only repeat the 401 every 8 seconds.
+      if (res.status === 401 || res.redirected) {
+        stopPolling('Signed out. Reload to sign in again.');
+        return;
+      }
+      if (!res.ok) return;
+      applySnapshot(await res.json());
+      document.getElementById('lastUpdated').textContent = 'Updated '
+        + new Date().toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function schedulePoll() {
+      window.clearTimeout(pollTimer);
+      pollTimer = null;
+      if (pollStopped || document.visibilityState === 'hidden') return;
+      pollTimer = window.setTimeout(pollNow, POLL_MS);
+    }
+
+    async function pollNow() {
+      if (!pollStarted || pollStopped) return;
+      window.clearTimeout(pollTimer);
+      pollTimer = null;
+      if (document.visibilityState === 'hidden') return;
+      // One request in flight at a time; the running one reschedules.
+      if (pollBusy) return;
+      pollBusy = true;
+      try { await fetchSnapshot(TAB_PARTS[activeTabName()] || []); } catch (e) {}
+      pollBusy = false;
+      schedulePoll();
+    }
+
+    function initPolling() {
+      // Seed the signatures from the data the page was served with, so the
+      // first poll does not redraw everything just because nothing was known.
+      Object.keys(TAB_PARTS).forEach(function(tab) {
+        TAB_PARTS[tab].forEach(function(part) {
+          if (window.__OS_ADMIN_DATA__[part] !== undefined && partSig[part] === undefined) {
+            partSig[part] = JSON.stringify(window.__OS_ADMIN_DATA__[part]);
+          }
+        });
+      });
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'hidden') {
+          window.clearTimeout(pollTimer);
+          pollTimer = null;
+        } else {
+          pollNow();
+        }
+      });
+      pollStarted = true;
+      schedulePoll();
     }
 
     function notifData() { return (window.__OS_ADMIN_DATA__ || {}).notifications || { level: 'standard', signals: {} }; }
@@ -14045,6 +14495,7 @@ ADMIN_HTML = """
         if (!message || !waSelectedId) return;
         const send = document.getElementById('waReplySend');
         send.disabled = true;
+        waSending = true;
         let res;
         try {
           res = await fetch('/api/wa/reply', {
@@ -14053,11 +14504,13 @@ ADMIN_HTML = """
             body: JSON.stringify({ session_id: waSelectedId, message: message })
           });
         } catch (e) {
+          waSending = false;
           send.disabled = false;
           waNoteMsg('Network error. Nothing was sent.', true);
           return;
         }
         const body = await res.json().catch(function() { return {}; });
+        waSending = false;
         send.disabled = false;
         if (!res.ok) {
           waNoteMsg(body.detail || body.error || 'Send failed.', true);
@@ -14076,15 +14529,9 @@ ADMIN_HTML = """
       });
     }
 
-    function boot() {
-      const data = window.__OS_ADMIN_DATA__ || {};
-      const metrics = data.metrics || { outcomes: {} };
-      const leads = data.leads || [];
-
-      document.getElementById('lastUpdated').textContent = 'Updated ' + fmtRelative(metrics.last_event_at || new Date().toISOString());
-      document.getElementById('leadsCount').textContent = num(leads.length);
-      document.getElementById('websiteCount').textContent = num(websiteTranscripts().length);
-
+    function renderMetrics() {
+      const metrics = (window.__OS_ADMIN_DATA__ || {}).metrics || { outcomes: {} };
+      metrics.outcomes = metrics.outcomes || {};
       document.getElementById('metrics').innerHTML = [
         kpi('Conversations', num(metrics.conversations_started), 'total sessions'),
         kpi('Leads captured', num(metrics.leads_captured), 'contacts + trial clicks'),
@@ -14093,6 +14540,16 @@ ADMIN_HTML = """
         kpi('Completion', pct(metrics.completion_rate), 'of conversations completed'),
         kpi('Drop-off', pct(metrics.dropoff_rate), 'left mid-chat')
       ].join('');
+    }
+
+    function boot() {
+      const data = window.__OS_ADMIN_DATA__ || {};
+      const metrics = data.metrics || { outcomes: {} };
+      const leads = data.leads || [];
+
+      document.getElementById('lastUpdated').textContent = 'Updated ' + fmtRelative(metrics.last_event_at || new Date().toISOString());
+      renderCounts();
+      renderMetrics();
 
       renderLeads(leads);
       renderSessions();
@@ -14100,9 +14557,12 @@ ADMIN_HTML = """
       renderWaThreads();
       renderWaDetail();
       initWaActions();
+      renderSmsThreads();
+      renderSmsDetail();
       renderNotifications();
       initNotifications();
       renderOverview();
+      initPolling();
 
       document.getElementById('search').addEventListener('input', function() {
         renderSessions();
