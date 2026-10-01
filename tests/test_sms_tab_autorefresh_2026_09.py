@@ -195,7 +195,7 @@ def test_snapshot_parts_match_what_each_tab_polls():
     asked = set(re.findall(r"'([a-z]+)'", block))
     assert asked <= set(app.ADMIN_SNAPSHOT_PARTS)
     tabs = set(re.findall(r"^\s*([a-z]+):", block, re.M))
-    assert tabs == {"overview", "leads", "website", "whatsapp", "sms"}
+    assert tabs == {"overview", "leads", "website", "whatsapp", "sms", "meta"}
 
 
 def test_admin_page_has_the_sms_tab_and_data(_isolated):
@@ -226,11 +226,12 @@ def test_polling_pauses_when_the_browser_tab_is_hidden():
 
 def test_nothing_but_a_successful_send_clears_the_reply_box():
     html = app.ADMIN_HTML
-    # One write to the reply input in the whole page, and it sits after the
-    # server said yes.
-    assert len(re.findall(r"\binput\.value\s*=", html)) == 1
-    handler = html[html.index("getElementById('waReplyForm').addEventListener"):]
-    assert handler.index("if (!res.ok)") < handler.index("input.value = ''")
+    # One write per reply box (WhatsApp, and since 1 Oct 2026 the DMs tab),
+    # and each sits after the server said yes.
+    assert len(re.findall(r"\binput\.value\s*=", html)) == 2
+    for form in ("waReplyForm", "metaReplyForm"):
+        handler = html[html.index(f"getElementById('{form}').addEventListener"):]
+        assert handler.index("if (!res.ok)") < handler.index("input.value = ''")
 
 
 def test_refresh_of_the_same_thread_keeps_the_reply_box_usable():

@@ -729,9 +729,9 @@ def _lead_channel(row: dict) -> str:
     """Rows written before 11 Sep 2026 have no channel column; the session id
     still says which channel they came from, so the leads tab and the CSV are
     never blank for historical rows (diff finding #19)."""
-    return str(row.get("channel") or "") or (
-        "whatsapp" if str(row.get("session_id") or "").startswith("wa-") else "website"
-    )
+    # session_channel, not a wa- check: a Messenger or Instagram lead stored
+    # without its channel would otherwise read as a website lead (1 Oct 2026).
+    return str(row.get("channel") or "") or session_channel(str(row.get("session_id") or ""))
 
 
 def read_leads() -> list[dict]:
@@ -9591,7 +9591,9 @@ def meta_dashboard_payload() -> dict:
     """Messenger and Instagram threads for the dashboard: last message, the
     24h window, mute and opt-out. A separate payload rather than a widened
     /api/wa/conversations, whose screen renders every thread as a WhatsApp
-    number; the dashboard tab for these is follow-up work."""
+    number. Since 1 Oct 2026 it is the dashboard's DMs tab (the "meta" part
+    of /admin and /api/admin/snapshot), so the flags are read from ONE
+    settings snapshot like wa_dashboard_payload, not one read per thread."""
     threads: dict[str, dict] = {}
     last_user_ts: dict[str, datetime] = {}
     for row in read_conversation_logs():
@@ -9610,6 +9612,16 @@ def meta_dashboard_payload() -> dict:
             if parsed and (sid not in last_user_ts or parsed > last_user_ts[sid]):
                 last_user_ts[sid] = parsed
     now = datetime.now()
+    snapshot = wa_settings_snapshot() if threads else {}
+    flag = (lambda key: snapshot.get(key, "")) if snapshot else (lambda key: get_wa_setting(key))
+
+    def _muted(sid: str) -> bool:
+        raw = flag(f"mute:{sid}")
+        try:
+            return bool(raw) and float(raw) > time.time()
+        except (TypeError, ValueError):
+            return False
+
     for sid, entry in threads.items():
         last_in = last_user_ts.get(sid)
         elapsed = (now - last_in).total_seconds() if last_in else None
@@ -9617,8 +9629,8 @@ def meta_dashboard_payload() -> dict:
             "window_open": elapsed is not None and elapsed < META_WINDOW_HOURS * 3600,
             "minutes_remaining": max(0, int((META_WINDOW_HOURS * 3600 - elapsed) // 60)) if elapsed is not None else 0,
             "last_inbound_at": last_in.isoformat() if last_in else None,
-            "muted": wa_muted(sid),
-            "opted_out": get_wa_setting(f"opted_out:{sid}") == "1",
+            "muted": _muted(sid),
+            "opted_out": flag(f"opted_out:{sid}") == "1",
         })
     return {
         "channels_enabled": {c: meta_channel_enabled(c) for c in META_CHANNEL_SWITCH_KEYS},
@@ -10458,6 +10470,7 @@ async def admin_dashboard(_: str = Depends(require_admin)):
         "transcripts": grouped_transcripts(1000),
         "wa": wa_dashboard_payload(),
         "sms": sms_dashboard_payload(),
+        "meta": meta_dashboard_payload(),
         "notifications": notification_settings_payload(),
     }
     # html_safe_json (not plain json.dumps): a visitor's chat message containing
@@ -10475,6 +10488,7 @@ ADMIN_SNAPSHOT_PARTS = {
     "transcripts": lambda: grouped_transcripts(1000),
     "wa": wa_dashboard_payload,
     "sms": sms_dashboard_payload,
+    "meta": meta_dashboard_payload,
 }
 
 
@@ -13033,6 +13047,8 @@ ADMIN_HTML = """
     .chip.website { background: var(--canvas); color: var(--ink-2); }
     .chip.whatsapp { background: var(--green-tint); color: var(--green); }
     .chip.sms { background: var(--amber-tint); color: var(--amber-ink); }
+    .chip.messenger { background: #e8f0fe; color: #1a5fd6; }
+    .chip.instagram { background: #fdecf3; color: #c1306b; }
     .feed-main { min-width: 0; flex: 1; }
     .feed-name { display: block; font-size: .8rem; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .feed-preview { display: block; font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
@@ -13217,6 +13233,17 @@ ADMIN_HTML = """
     /* An SMS row with no words to show (stored before 27 Sep 2026, or a
        picture) says so in the bubble itself, set apart from real text. */
     .sms-note { font-style: italic; opacity: .78; }
+    /* DMs tab (1 Oct 2026): one list for Messenger and Instagram, filtered by
+       these pills, with each channel's own switch in the header. */
+    .seg { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+    .seg button {
+      font-family: inherit; font-size: .76rem; font-weight: 600; cursor: pointer;
+      padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line);
+      background: var(--paper); color: var(--ink-2);
+    }
+    .seg button.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .meta-switches { display: flex; gap: 16px; flex-wrap: wrap; }
+    .detail-head-meta .chip { display: inline-grid; vertical-align: middle; width: 24px; height: 24px; margin-right: 4px; }
     .footnote { padding: 0 16px 12px; font-size: .72rem; color: var(--muted); min-height: 16px; }
     .footnote.err { color: var(--red); }
 
@@ -13368,6 +13395,10 @@ ADMIN_HTML = """
       <button class="tab" data-tab="sms" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
         SMS <span class="tab-count" id="smsCount">0</span>
+      </button>
+      <button class="tab" data-tab="meta" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3C7 3 3 6.7 3 11.3c0 2.6 1.3 4.9 3.3 6.4V21l3-1.7c.9.3 1.8.4 2.7.4c5 0 9-3.7 9-8.4S17 3 12 3z"/><path d="M7.5 13.5l3-3l2.5 2l3.5-3"/></svg>
+        DMs <span class="tab-count" id="metaCount">0</span>
       </button>
     </div>
   </div>
@@ -13531,6 +13562,49 @@ ADMIN_HTML = """
         </div>
       </div>
     </section>
+
+    <section class="panel" data-panel="meta">
+      <div class="section-head">
+        <div class="page-head">
+          <h2 class="page-title">Messenger and Instagram</h2>
+          <p class="page-sub">Direct messages to the Facebook Page and the Instagram account. Reply here yourself and the bot goes quiet in that thread until you hand it back. A reply from the Facebook or Instagram app does the same.</p>
+        </div>
+        <div class="section-head-actions meta-switches">
+          <label class="switch">
+            <input type="checkbox" id="metaToggleMessenger" data-meta-channel="messenger">
+            <span class="switch-track"></span>
+            <span class="switch-label" id="metaLabelMessenger">Messenger off</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="metaToggleInstagram" data-meta-channel="instagram">
+            <span class="switch-track"></span>
+            <span class="switch-label" id="metaLabelInstagram">Instagram off</span>
+          </label>
+        </div>
+      </div>
+      <div class="seg" id="metaFilter" role="group" aria-label="Show channel">
+        <button type="button" data-meta-filter="all" class="active">All</button>
+        <button type="button" data-meta-filter="messenger">Messenger</button>
+        <button type="button" data-meta-filter="instagram">Instagram</button>
+      </div>
+      <div class="split">
+        <div class="list-pane" id="metaThreads"></div>
+        <div class="detail-pane">
+          <div class="detail-head">
+            <div class="detail-head-meta" id="metaMeta">Select a conversation on the left.</div>
+            <div class="detail-actions">
+              <button class="btn ghost" id="metaMuteBtn" type="button" disabled>Mute bot</button>
+            </div>
+          </div>
+          <div class="messages" id="metaMessages"></div>
+          <form class="replybar" id="metaReplyForm">
+            <input id="metaReplyInput" placeholder="Reply as Nick…" autocomplete="off" disabled>
+            <button class="btn primary" id="metaReplySend" type="submit" disabled>Send</button>
+          </form>
+          <div class="footnote" id="metaNote"></div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <div class="modal-backdrop" id="pwModal" hidden>
@@ -13557,7 +13631,9 @@ ADMIN_HTML = """
     var ICON_GLOBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13.5 13.5 0 0 1 0 18a13.5 13.5 0 0 1 0-18"/></svg>';
     var ICON_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8a8.5 8.5 0 0 1-7.6 4.7a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8a8.5 8.5 0 0 1 4.7-7.6a8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>';
     var ICON_PHONE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>';
-    var CHANNEL_ICONS = { website: ICON_GLOBE, whatsapp: ICON_CHAT, sms: ICON_PHONE };
+    var ICON_MESSENGER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3C7 3 3 6.7 3 11.3c0 2.6 1.3 4.9 3.3 6.4V21l3-1.7c.9.3 1.8.4 2.7.4c5 0 9-3.7 9-8.4S17 3 12 3z"/><path d="M7.5 13.5l3-3l2.5 2l3.5-3"/></svg>';
+    var ICON_INSTAGRAM = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/></svg>';
+    var CHANNEL_ICONS = { website: ICON_GLOBE, whatsapp: ICON_CHAT, sms: ICON_PHONE, messenger: ICON_MESSENGER, instagram: ICON_INSTAGRAM };
 
     function esc(value) {
       return String(value == null ? '' : value).replace(/[&<>"']/g, function(c) {
@@ -13599,9 +13675,15 @@ ADMIN_HTML = """
       else if (r.includes('drop') || r.includes('lost')) tone = 'red';
       return '<span class="badge ' + tone + '">' + esc(route || 'lead') + '</span>';
     }
+    // Sessions that belong to a tab of their own (WhatsApp, Messenger,
+    // Instagram): the server's RESERVED_SESSION_PREFIXES. Until 1 Oct 2026
+    // only wa- was left out, so every Messenger and Instagram thread was also
+    // listed, and counted, as a website chat.
+    const OWN_TAB_PREFIXES = ['wa-', 'fb-', 'ig-'];
     function websiteTranscripts() {
       return (window.__OS_ADMIN_DATA__.transcripts || []).filter(function(s) {
-        return !String(s.session_id || '').startsWith('wa-');
+        const sid = String(s.session_id || '');
+        return !OWN_TAB_PREFIXES.some(function(p) { return sid.startsWith(p); });
       });
     }
     function waPhone(sid) {
@@ -13674,6 +13756,13 @@ ADMIN_HTML = """
           name: t.sender + ' \u00b7 text', preview: smsPreview(last)
         });
       });
+      (metaData().conversations || []).forEach(function(t) {
+        const last = t.last_message || {};
+        items.push({
+          channel: t.channel, id: t.session_id, ts: last.timestamp,
+          name: metaThreadName(t), preview: last.content || ''
+        });
+      });
       items.sort(function(a, b) { return new Date(b.ts || 0) - new Date(a.ts || 0); });
       const feed = document.getElementById('ovActivity');
       feed.innerHTML = items.length ? items.slice(0, 8).map(function(it) {
@@ -13698,6 +13787,11 @@ ADMIN_HTML = """
             smsSelected = id;
             renderSmsThreads(); renderSmsDetail();
             activateTab('sms');
+          } else if (channel === 'messenger' || channel === 'instagram') {
+            metaSelectedId = id;
+            if (metaFilter !== 'all' && metaFilter !== channel) metaFilter = 'all';
+            renderMetaThreads(); renderMetaDetail();
+            activateTab('meta');
           } else {
             const searchEl = document.getElementById('search');
             if (searchEl) searchEl.value = '';
@@ -13736,7 +13830,19 @@ ADMIN_HTML = """
         +     '<span class="feed-preview">' + (smsCountN ? num(smsCountN) + (smsCountN === 1 ? ' number has texted' : ' numbers have texted') : 'No texts yet') + '</span>'
         +   '</span>'
         +   '<span class="badge">You reply</span>'
-        + '</div>';
+        + '</div>'
+        + ['messenger', 'instagram'].map(function(ch) {
+            const n = metaThreadsFor(ch).length;
+            const on = !!(metaData().channels_enabled || {})[ch];
+            return '<div class="plain-row">'
+              +   '<span class="chip ' + ch + '">' + CHANNEL_ICONS[ch] + '</span>'
+              +   '<span class="feed-main">'
+              +     '<span class="feed-name">' + META_LABELS[ch] + '</span>'
+              +     '<span class="feed-preview">' + (n ? num(n) + (n === 1 ? ' conversation' : ' conversations') : 'No conversations yet') + '</span>'
+              +   '</span>'
+              +   (on ? '<span class="badge">On</span>' : '<span class="badge red">Off</span>')
+              + '</div>';
+          }).join('');
 
       // Latest leads.
       const latest = leads.slice().reverse().slice(0, 5);
@@ -13873,10 +13979,10 @@ ADMIN_HTML = """
             if (lead.phone_typed && digits(lead.phone_typed) !== digits(lead.phone)) links.push('<a href="tel:' + tel(lead.phone_typed) + '">' + esc(lead.phone_typed) + '</a>');
             if (lead.email) links.push('<a href="mailto:' + encodeURIComponent(lead.email) + '">' + esc(lead.email) + '</a>');
             const contactCell = links.length ? links.join('<br>') : '<span class="dim">–</span>';
-            const channel = lead.channel || (String(lead.session_id || '').indexOf('wa-') === 0 ? 'whatsapp' : 'website');
+            const channel = lead.channel || leadChannelFromSession(lead.session_id);
             return '<tr>'
               + '<td class="nowrap mono" data-label="When">' + esc(fmtDate(lead.timestamp)) + '</td>'
-              + '<td data-label="Channel"><span class="chip ' + esc(channel) + '">' + (channel === 'whatsapp' ? ICON_CHAT : ICON_GLOBE) + '</span></td>'
+              + '<td data-label="Channel"><span class="chip ' + esc(channel) + '">' + (CHANNEL_ICONS[channel] || ICON_GLOBE) + '</span></td>'
               + '<td data-label="Name">' + esc(lead.name || '–') + '</td>'
               + '<td class="mono" data-label="Contact">' + contactCell + '</td>'
               + '<td data-label="Route">' + badgeFor(lead.route) + '</td>'
@@ -14191,6 +14297,276 @@ ADMIN_HTML = """
       }).join('') || '<div class="empty">No texts recorded from this number.</div>';
     }
 
+    // ── Messenger and Instagram (1 Oct 2026) ────────────────────
+    // One tab for both, filtered by channel, because they share everything
+    // that matters here: the same 24h reply window, the same mute (also set
+    // when Nick answers in the Facebook or Instagram app), the same reply
+    // endpoint (/api/wa/reply sends fb- and ig- threads through Meta) and the
+    // same per-channel switch endpoint (/api/wa/kill with "channel"). Each
+    // channel's switch is a launch gate that defaults OFF; while it is off the
+    // server refuses every send, Nick's own included, so the reply box says so.
+    const META_LABELS = { messenger: 'Messenger', instagram: 'Instagram' };
+    let metaSelectedId = null;
+    let metaFilter = 'all';
+    let metaDetailShownId = null;
+    let metaSending = false;
+
+    function metaData() {
+      return (window.__OS_ADMIN_DATA__ || {}).meta || { channels_enabled: {}, conversations: [] };
+    }
+    function metaThreadsFor(channel) {
+      return (metaData().conversations || []).filter(function(t) {
+        return channel === 'all' || t.channel === channel;
+      });
+    }
+    function leadChannelFromSession(sid) {
+      const s = String(sid || '');
+      if (s.indexOf('wa-') === 0) return 'whatsapp';
+      if (s.indexOf('fb-') === 0) return 'messenger';
+      if (s.indexOf('ig-') === 0) return 'instagram';
+      return 'website';
+    }
+    // Newest lead captured in that thread, if any. Meta gives us an opaque id,
+    // not a name or a number, so the lead is the only way to know who it is.
+    function metaLeadFor(sid) {
+      const leads = (window.__OS_ADMIN_DATA__ || {}).leads || [];
+      for (let i = leads.length - 1; i >= 0; i--) {
+        if (leads[i] && leads[i].session_id === sid) return leads[i];
+      }
+      return null;
+    }
+    function metaThreadName(t) {
+      const lead = metaLeadFor(t.session_id);
+      const label = META_LABELS[t.channel] || 'Message';
+      if (lead && lead.name) return lead.name + ' · ' + label;
+      const id = String(t.session_id || '').replace(/^(fb|ig)-/, '');
+      return label + ' user ' + (id.length > 4 ? '…' + id.slice(-4) : id);
+    }
+    function metaWindowBadge(thread) {
+      if (thread.window_open) {
+        const h = Math.floor(thread.minutes_remaining / 60), m = thread.minutes_remaining % 60;
+        return '<span class="badge green">Window open · ' + h + 'h ' + m + 'm left</span>';
+      }
+      return '<span class="badge">Window closed · Meta blocks replies</span>';
+    }
+    function metaNoteMsg(text, isErr) {
+      const note = document.getElementById('metaNote');
+      note.textContent = text;
+      note.className = isErr ? 'footnote err' : 'footnote';
+    }
+
+    function renderMetaSwitches() {
+      const enabled = metaData().channels_enabled || {};
+      ['messenger', 'instagram'].forEach(function(ch) {
+        const suffix = ch === 'messenger' ? 'Messenger' : 'Instagram';
+        const toggle = document.getElementById('metaToggle' + suffix);
+        if (toggle) toggle.checked = !!enabled[ch];
+        const label = document.getElementById('metaLabel' + suffix);
+        if (label) label.textContent = META_LABELS[ch] + (enabled[ch] ? ' on' : ' off, bot silent');
+      });
+    }
+
+    function renderMetaThreads() {
+      const all = metaData().conversations || [];
+      document.getElementById('metaCount').textContent = num(all.length);
+      renderMetaSwitches();
+      document.querySelectorAll('[data-meta-filter]').forEach(function(btn) {
+        const f = btn.getAttribute('data-meta-filter');
+        btn.classList.toggle('active', f === metaFilter);
+        const n = metaThreadsFor(f).length;
+        btn.textContent = (f === 'all' ? 'All' : META_LABELS[f]) + ' (' + n + ')';
+      });
+      const threads = metaThreadsFor(metaFilter);
+      if (metaSelectedId && !threads.some(function(t) { return t.session_id === metaSelectedId; })) metaSelectedId = null;
+      if (!metaSelectedId && threads.length) metaSelectedId = threads[0].session_id;
+      const wrap = document.getElementById('metaThreads');
+      wrap.innerHTML = threads.length ? threads.map(function(t) {
+        const active = t.session_id === metaSelectedId ? ' active' : '';
+        const last = t.last_message || {};
+        return '<button class="session-row' + active + '" type="button" data-meta-session="' + esc(t.session_id) + '">'
+          + '<div class="session-avatar">' + (CHANNEL_ICONS[t.channel] || ICON_CHAT) + '</div>'
+          + '<div class="session-meta">'
+          +   '<span class="session-id">' + esc(metaThreadName(t)) + '</span>'
+          +   '<div class="session-time">' + esc(fmtRelative(last.timestamp)) + ' · ' + esc(t.message_count || 0) + ' msgs'
+          +     (t.muted ? ' <span class="badge amber">Bot muted</span>' : '')
+          +     (t.opted_out ? ' <span class="badge red">Opted out</span>' : '') + '</div>'
+          +   '<div class="session-preview">' + esc(last.content || '') + '</div>'
+          + '</div>'
+          + '</button>';
+      }).join('') : '<div class="empty">' + (all.length
+          ? 'No ' + esc(META_LABELS[metaFilter] || '') + ' conversations yet.'
+          : 'No Messenger or Instagram messages yet. They show up here as soon as someone messages the Page or the Instagram account.') + '</div>';
+      wrap.querySelectorAll('[data-meta-session]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          metaSelectedId = btn.getAttribute('data-meta-session');
+          renderMetaThreads(); renderMetaDetail();
+        });
+      });
+    }
+
+    function renderMetaDetail() {
+      const thread = (metaData().conversations || []).find(function(t) { return t.session_id === metaSelectedId; });
+      const meta = document.getElementById('metaMeta');
+      const muteBtn = document.getElementById('metaMuteBtn');
+      const input = document.getElementById('metaReplyInput');
+      const send = document.getElementById('metaReplySend');
+      const note = document.getElementById('metaNote');
+      // Same refresh rules as the WhatsApp thread: the note is cleared only
+      // when a different thread opens, and a poll never disables the box under
+      // someone typing in it.
+      const sameThread = !!thread && thread.session_id === metaDetailShownId;
+      metaDetailShownId = thread ? thread.session_id : null;
+      if (!sameThread) { note.textContent = ''; note.className = 'footnote'; }
+      if (!thread) {
+        meta.textContent = 'Select a conversation on the left.';
+        muteBtn.disabled = true; input.disabled = true; send.disabled = true;
+        document.getElementById('metaMessages').innerHTML = '';
+        return;
+      }
+      const channelOn = !!(metaData().channels_enabled || {})[thread.channel];
+      const label = META_LABELS[thread.channel] || 'Message';
+      const lead = metaLeadFor(thread.session_id);
+      let leadHtml = '';
+      if (lead) {
+        const tel = function(n) { return encodeURIComponent(n).replace(/%2B/g, '+'); };
+        const bits = [];
+        if (lead.name) bits.push(esc(lead.name));
+        if (lead.phone) bits.push('<a href="tel:' + tel(lead.phone) + '">' + esc(lead.phone) + '</a>');
+        if (lead.email) bits.push('<a href="mailto:' + encodeURIComponent(lead.email) + '">' + esc(lead.email) + '</a>');
+        leadHtml = '<div class="footnote">Lead: ' + (bits.join(' · ') || 'captured, no contact details') + ' ' + badgeFor(lead.route) + '</div>';
+      }
+      meta.innerHTML = '<span class="chip ' + esc(thread.channel) + '">' + (CHANNEL_ICONS[thread.channel] || ICON_CHAT) + '</span> '
+        + '<strong>' + esc(metaThreadName(thread)) + '</strong> ' + metaWindowBadge(thread)
+        + (thread.muted ? ' <span class="badge amber">Bot muted, you are driving</span>' : '')
+        + (thread.opted_out ? ' <span class="badge red">Opted out</span>' : '')
+        + (channelOn ? '' : ' <span class="badge red">' + esc(label) + ' switched off</span>')
+        + leadHtml;
+      muteBtn.disabled = false;
+      muteBtn.textContent = thread.muted ? 'Hand back to bot' : 'Mute bot';
+      const canReply = !!thread.window_open && channelOn;
+      const typing = document.activeElement === input || input.value.trim() !== '';
+      if (canReply || !(sameThread && typing)) {
+        input.disabled = !canReply;
+        send.disabled = !canReply || metaSending;
+      }
+      // Short on purpose: the phone layout shows about 30 characters. The
+      // badges above say the rest.
+      input.placeholder = !channelOn
+        ? 'Turn ' + label + ' on to reply'
+        : (canReply ? 'Reply as Nick…' : 'Window closed, 24h rule');
+      const rows = waThreadMessages(thread.session_id);
+      document.getElementById('metaMessages').innerHTML = rows.map(function(m) {
+        const role = esc(m.role || 'unknown');
+        const who = m.role === 'user' ? 'Customer' : 'Robo-Nick';
+        return '<article class="chat-message ' + role + '">'
+          + '<div class="role">' + esc(who) + ' · ' + esc(fmtDate(m.timestamp)) + '</div>'
+          + esc(m.content || '')
+        + '</article>';
+      }).join('') || '<div class="empty">No messages recorded for this thread.</div>';
+    }
+
+    async function metaRefresh() {
+      try { await fetchSnapshot(['meta', 'transcripts']); } catch (e) {}
+    }
+
+    function initMetaActions() {
+      document.querySelectorAll('[data-meta-filter]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          metaFilter = btn.getAttribute('data-meta-filter');
+          renderMetaThreads(); renderMetaDetail();
+        });
+      });
+
+      document.querySelectorAll('[data-meta-channel]').forEach(function(toggle) {
+        toggle.addEventListener('change', async function() {
+          const channel = this.getAttribute('data-meta-channel');
+          const enabled = this.checked;
+          const label = META_LABELS[channel];
+          // Switching on launches the bot on a customer channel, so a stray tap
+          // must not do it.
+          if (enabled && !window.confirm('Turn on Robo-Nick for ' + label + '? It will start answering ' + label + ' messages automatically.')) {
+            this.checked = false;
+            return;
+          }
+          let res;
+          try {
+            res = await fetch('/api/wa/kill', {
+              method: 'POST', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ channel: channel, enabled: enabled })
+            });
+          } catch (e) {
+            this.checked = !enabled;
+            metaNoteMsg('Network error. Nothing was changed.', true);
+            return;
+          }
+          const body = await res.json().catch(function() { return {}; });
+          if (!res.ok) {
+            this.checked = !enabled;
+            metaNoteMsg(body.error || 'Could not change the switch. Nothing was changed.', true);
+            return;
+          }
+          metaNoteMsg(enabled ? label + ' on: Robo-Nick is answering.' : label + ' off: Robo-Nick is silent there. Messages are still recorded here.', false);
+          metaRefresh();
+        });
+      });
+
+      document.getElementById('metaMuteBtn').addEventListener('click', async function() {
+        const thread = (metaData().conversations || []).find(function(t) { return t.session_id === metaSelectedId; });
+        if (!thread) return;
+        const body = thread.muted ? { session_id: thread.session_id, clear: true }
+                                  : { session_id: thread.session_id, minutes: 24 * 60 };
+        let res;
+        try {
+          res = await fetch('/api/wa/mute', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+        } catch (e) {
+          metaNoteMsg('Network error. The mute was not changed.', true);
+          return;
+        }
+        if (res.ok) { metaRefresh(); } else { metaNoteMsg('Could not change the mute.', true); }
+      });
+
+      document.getElementById('metaReplyForm').addEventListener('submit', async function(ev) {
+        ev.preventDefault();
+        const input = document.getElementById('metaReplyInput');
+        const message = input.value.trim();
+        if (!message || !metaSelectedId) return;
+        const send = document.getElementById('metaReplySend');
+        send.disabled = true;
+        metaSending = true;
+        let res;
+        try {
+          res = await fetch('/api/wa/reply', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: metaSelectedId, message: message })
+          });
+        } catch (e) {
+          metaSending = false;
+          send.disabled = false;
+          metaNoteMsg('Network error. Nothing was sent.', true);
+          return;
+        }
+        const body = await res.json().catch(function() { return {}; });
+        metaSending = false;
+        send.disabled = false;
+        if (!res.ok) {
+          metaNoteMsg(body.detail || body.error || 'Send failed.', true);
+          return;
+        }
+        input.value = '';
+        const t = (window.__OS_ADMIN_DATA__.transcripts || []).find(function(x) { return x.session_id === metaSelectedId; });
+        if (t) t.messages.push({ role: 'assistant', content: message, timestamp: new Date().toISOString() });
+        metaNoteMsg('Sent. Robo-Nick is muted in this thread until you hand it back.', false);
+        renderMetaDetail();
+        metaRefresh();
+      });
+    }
+
     // ── Auto-refresh (27 Sep 2026) ──────────────────────────────
     // Jacobo, watching live conversations, had to press Refresh to see every
     // new message. The page now asks /api/admin/snapshot for the ACTIVE tab's
@@ -14210,11 +14586,13 @@ ADMIN_HTML = """
     // instead of stacking requests behind it on a single uvicorn worker.
     const POLL_MS = 8000;
     const TAB_PARTS = {
-      overview: ['metrics', 'leads', 'transcripts', 'wa', 'sms'],
+      overview: ['metrics', 'leads', 'transcripts', 'wa', 'sms', 'meta'],
       leads: ['leads'],
       website: ['transcripts'],
       whatsapp: ['wa', 'transcripts'],
-      sms: ['sms']
+      sms: ['sms'],
+      // leads too: a thread shows the lead captured in it, if any.
+      meta: ['meta', 'transcripts', 'leads']
     };
     // The Overview tiles are all-time totals built from up to 5000 events,
     // about 3 seconds of server work on 27 Sep 2026 (measured against the live
@@ -14254,6 +14632,7 @@ ADMIN_HTML = """
       document.getElementById('leadsCount').textContent = num((data.leads || []).length);
       document.getElementById('websiteCount').textContent = num(websiteTranscripts().length);
       document.getElementById('smsCount').textContent = num((smsData().threads || []).length);
+      document.getElementById('metaCount').textContent = num((metaData().conversations || []).length);
     }
 
     function applySnapshot(data) {
@@ -14281,6 +14660,13 @@ ADMIN_HTML = """
       if (changed.sms) {
         keepScroll([{ id: 'smsThreads' }, { id: 'smsMessages', follow: true }], function() {
           renderSmsThreads(); renderSmsDetail();
+        });
+      }
+      // Messenger and Instagram messages live in the transcripts and their
+      // names in the leads, so any of the three redraws the DMs tab.
+      if (changed.meta || changed.transcripts || changed.leads) {
+        keepScroll([{ id: 'metaThreads' }, { id: 'metaMessages', follow: true }], function() {
+          renderMetaThreads(); renderMetaDetail();
         });
       }
       if (Object.keys(changed).length) { renderCounts(); renderOverview(); }
@@ -14571,6 +14957,9 @@ ADMIN_HTML = """
       initWaActions();
       renderSmsThreads();
       renderSmsDetail();
+      renderMetaThreads();
+      renderMetaDetail();
+      initMetaActions();
       renderNotifications();
       initNotifications();
       renderOverview();
